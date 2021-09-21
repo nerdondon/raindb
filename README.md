@@ -1,6 +1,6 @@
 # RainDB
 
-A persistent key-value store implemented based on an LSM tree implemented in Rust
+A persistent key-value store based on an LSM tree implemented in Rust
 
 ## Motivation
 
