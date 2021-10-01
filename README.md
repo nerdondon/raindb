@@ -2,6 +2,8 @@
 
 A persistent key-value store based on an LSM tree implemented in Rust
 
+[![Build Status](https://github.com/nerdondon/raindb/actions/workflows/ci.yaml/badge.svg)](https://github.com/nerdondon/raindb/actions/workflows/ci.yaml)
+
 ## Motivation
 
 This project serves more as a toy project and tool for learning about database internals. As such,
@@ -17,7 +19,17 @@ the fact:
 1. Write ahead log
 1. Bloom filter
 
-Other components include a buffer pool manager and an API server implemented with gRPC.
+See the [docs](./docs) folder for more information on architecture and design.
+
+## Pedigree
+
+The work here builds heavily on the existing work of [LevelDB](https://github.com/golang/leveldb)
+and [RocksDB](https://github.com/facebook/rocksdb). A big thank you goes to the creators for making
+so much of their design documentation available along side the code itself. Because of the heavy
+basis in these projects, some of the options and documentation is pulled from these projects.
+
+Inspiration was also drawn from [Pebble](https://github.com/cockroachdb/pebble) and the
+[Go port of LevelDB](https://github.com/golang/leveldb).
 
 ## Future ideas
 
@@ -26,5 +38,6 @@ Other components include a buffer pool manager and an API server implemented wit
 
 ## References
 
-- More notes and references can be found on [my blog](https://blog.nerdondon.com)
+- Aside from the docs folder, more notes and references for various components can also be found on
+  [my blog](https://blog.nerdondon.com)
 - Database Internals by Alex Petrov
