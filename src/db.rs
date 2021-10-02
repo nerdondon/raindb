@@ -2,7 +2,9 @@
 The database module contains the primary API for interacting with the key-value store.
 */
 
+use crate::fs::{FileSystem, OsFileSystem};
 use crate::memtable::MemTable;
+use std::io;
 
 /**
 Holds options to control database behavior.
@@ -10,7 +12,9 @@ Holds options to control database behavior.
 There is a mix of options to configure here that are remniscent of those configurable in
 LevelDb and RocksDb.
 */
+#[derive(Debug)]
 pub struct DbOptions {
+    // TODO: Add option for users to set a custom comparator.
     /**
     The path of the director to use for the database's operations.
     */
@@ -37,7 +41,13 @@ pub struct DbOptions {
     **This defaults to 2 MiB.**
     */
     pub max_file_size: usize,
-    // TODO: Add option for users to set a custom comparator.
+
+    /**
+    A wrapper around a particular file system to use.
+
+    **This defaults to [`OsFileSystem`](crate::fs::OsFileSystem)**
+    */
+    filesystem_provider: Box<dyn FileSystem>,
 }
 
 impl Default for DbOptions {
@@ -46,6 +56,7 @@ impl Default for DbOptions {
             db_path: Default::default(),
             write_buffer_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
+            filesystem_provider: Box::new(OsFileSystem::new()),
         }
     }
 }
@@ -56,7 +67,7 @@ pub struct DB {
 }
 
 impl DB {
-    pub fn new(options: DbOptions) -> DB {
+    pub fn open(options: DbOptions) -> Result<DB, io::Error> {
         // Create WAL
 
         // Create memtable
