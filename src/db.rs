@@ -2,9 +2,13 @@
 The database module contains the primary API for interacting with the key-value store.
 */
 
+use std::io;
+use std::path::PathBuf;
+
+use crate::file_names::{DATA_DIR, WAL_DIR};
 use crate::fs::{FileSystem, OsFileSystem};
 use crate::memtable::MemTable;
-use std::io;
+use crate::write_ahead_log::WALWriter;
 
 /**
 Holds options to control database behavior.
@@ -17,6 +21,8 @@ pub struct DbOptions {
     // TODO: Add option for users to set a custom comparator.
     /**
     The path of the director to use for the database's operations.
+
+    **This defaults to the current working directory.**
     */
     pub db_path: String,
 
@@ -53,7 +59,11 @@ pub struct DbOptions {
 impl Default for DbOptions {
     fn default() -> Self {
         DbOptions {
-            db_path: Default::default(),
+            db_path: std::env::current_dir()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned(),
             write_buffer_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
             filesystem_provider: Box::new(OsFileSystem::new()),
@@ -61,13 +71,37 @@ impl Default for DbOptions {
     }
 }
 
-pub struct DB {
+pub struct DB<'fs> {
     options: DbOptions,
     memtable: MemTable,
+    wal: WALWriter<'fs>,
 }
 
-impl DB {
-    pub fn open(options: DbOptions) -> Result<DB, io::Error> {
+impl DB<'_> {
+    pub fn open<'fs>(options: DbOptions) -> Result<DB<'fs>, io::Error> {
+        log::info!(
+            "Initializing raindb with the following options {:#?}",
+            options
+        );
+
+        let DbOptions {
+            filesystem_provider: fs,
+            db_path,
+            ..
+        } = options;
+
+        // Create DB root directory
+        log::info!("Creating DB root directory at {}.", &db_path);
+        let root_path = PathBuf::from(&db_path);
+        let wal_path = PathBuf::from(&db_path);
+        wal_path.push(WAL_DIR);
+        let data_path = PathBuf::from(&db_path);
+        data_path.push(DATA_DIR);
+
+        fs.create_dir_all(&root_path);
+        fs.create_dir(&wal_path);
+        fs.create_dir(&data_path);
+
         // Create WAL
 
         // Create memtable
@@ -77,11 +111,19 @@ impl DB {
         DB { options }
     }
 
-    pub fn get() {}
+    pub fn get(&self) {
+        todo!("working on it!")
+    }
 
-    pub fn put() {}
+    pub fn put(&self) {
+        todo!("working on it!")
+    }
 
-    pub fn delete() {}
+    pub fn delete(&self) {
+        todo!("working on it!")
+    }
 
-    pub fn close() {}
+    pub fn close(&self) {
+        todo!("working on it!")
+    }
 }
