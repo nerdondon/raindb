@@ -103,12 +103,13 @@ impl DB<'_> {
         fs.create_dir(&data_path);
 
         // Create WAL
+        let wal = WALWriter::new(&fs, wal_path.to_str().unwrap())?;
 
         // Create memtable
 
         // Start compaction service
 
-        DB { options }
+        Ok(DB { options, wal })
     }
 
     pub fn get(&self) {

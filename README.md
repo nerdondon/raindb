@@ -16,7 +16,7 @@ the fact:
 
 1. Memtable - Initially a skip list but will be swappable in the future with other data structures
 1. SSTable (sorted string tables) - A simpler implementation at first e.g. no checksumming
-1. Write ahead log
+1. Write-ahead log
 1. Bloom filter
 
 See the [docs](./docs) folder for more information on architecture and design.
