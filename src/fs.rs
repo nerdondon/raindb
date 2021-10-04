@@ -33,6 +33,9 @@ pub trait FileSystem {
     existing file and sets the append mode.
     */
     fn create_file(&self, path: &Path) -> Result<File>;
+
+    /// Remove a file from the filesystem.
+    fn remove_file(&self, path: &Path) -> Result<()>;
 }
 
 impl Debug for dyn FileSystem {
@@ -73,6 +76,10 @@ impl FileSystem for OsFileSystem {
             .read(true)
             .append(true)
             .open(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        fs::remove_file(path)
     }
 }
 
@@ -117,5 +124,9 @@ impl FileSystem for TmpFileSystem {
             .read(true)
             .append(true)
             .open(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        fs::remove_file(path)
     }
 }
