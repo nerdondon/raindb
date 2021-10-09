@@ -7,6 +7,7 @@ Because writes are append-only, there may be multiple records with the same user
 The sequence number is used to denote which of the stored records is the most recent version.
 */
 
+#[derive(Eq)]
 pub(crate) struct InternalKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -26,8 +27,40 @@ impl InternalKey {
     }
 }
 
+impl Ord for InternalKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Return ordering by the user provided keys if they are not equal
+        if self.user_key.as_slice().ne(other.user_key.as_slice()) {
+            return self.user_key.as_slice().cmp(other.user_key.as_slice());
+        }
+
+        // Check the sequence number if the keys are equal
+        return self.sequence_number.cmp(&other.sequence_number);
+    }
+}
+
+impl PartialOrd for InternalKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for InternalKey {
+    fn eq(&self, other: &Self) -> bool {
+        // Operation is checked here but the equality relation should be implied by the check on
+        // `sequence_number`. More clearly, a sequence number is assigned per operation so if the
+        // sequence numbers of the elements being compared are equal it should mean that the
+        // operation tags is equal as well. It would be a sad day if this invariant was not true
+        // at runtime :/.
+        self.user_key.cmp(&other.user_key).is_eq()
+            && self.sequence_number == other.sequence_number
+            && self.operation == other.operation
+    }
+}
+
 /** The operation that is being applied to an entry in the database. */
 #[repr(u8)]
+#[derive(PartialEq, Eq)]
 pub(crate) enum Operation {
     /// This represents a tombstone. There should not be a value set for the operation.
     Delete = 0,
