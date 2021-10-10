@@ -7,7 +7,11 @@ Because writes are append-only, there may be multiple records with the same user
 The sequence number is used to denote which of the stored records is the most recent version.
 */
 
-#[derive(Eq)]
+use bincode::Options;
+use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
+
+#[derive(Deserialize, Eq, Serialize)]
 pub(crate) struct InternalKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -58,9 +62,19 @@ impl PartialEq for InternalKey {
     }
 }
 
+impl TryFrom<&[u8]> for InternalKey {
+    type Error = bincode::Error;
+
+    fn try_from(value: &[u8]) -> bincode::Result<InternalKey> {
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .deserialize(value)
+    }
+}
+
 /** The operation that is being applied to an entry in the database. */
 #[repr(u8)]
-#[derive(PartialEq, Eq)]
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum Operation {
     /// This represents a tombstone. There should not be a value set for the operation.
     Delete = 0,
