@@ -72,6 +72,16 @@ impl TryFrom<&[u8]> for InternalKey {
     }
 }
 
+impl TryFrom<&InternalKey> for Vec<u8> {
+    type Error = bincode::Error;
+
+    fn try_from(value: &InternalKey) -> Result<Self, Self::Error> {
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .serialize(value)
+    }
+}
+
 /** The operation that is being applied to an entry in the database. */
 #[repr(u8)]
 #[derive(Deserialize, Eq, PartialEq, Serialize)]
