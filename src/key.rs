@@ -11,6 +11,7 @@ use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 
+/** This is the actual key used by RainDB. It is the user provided key with additional metadata. */
 #[derive(Deserialize, Eq, Serialize)]
 pub(crate) struct InternalKey {
     /// The user suplied key.
@@ -22,6 +23,7 @@ pub(crate) struct InternalKey {
 }
 
 impl InternalKey {
+    /// Construct a new `InternalKey`.
     pub(crate) fn new(user_key: Vec<u8>, sequence_number: u64, operation: Operation) -> Self {
         InternalKey {
             user_key,
@@ -72,17 +74,16 @@ impl TryFrom<&[u8]> for InternalKey {
     }
 }
 
-impl TryFrom<&InternalKey> for Vec<u8> {
-    type Error = bincode::Error;
-
-    fn try_from(value: &InternalKey) -> Result<Self, Self::Error> {
+impl From<&InternalKey> for Vec<u8> {
+    fn from(value: &InternalKey) -> Vec<u8> {
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .serialize(value)
+            .unwrap()
     }
 }
 
-/** The operation that is being applied to an entry in the database. */
+/// The operation that is being applied to an entry in the database.
 #[repr(u8)]
 #[derive(Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum Operation {
