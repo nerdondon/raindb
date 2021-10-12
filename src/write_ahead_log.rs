@@ -4,31 +4,43 @@ the event of a crash.
 
 The log file contents are series of 32 KiB blocks.
 
-The current header of a block is 3 bytes and consists of a a 2-byte u16 length and a 1 byte record
+The current header of a block is 3 bytes and consists of a 2 byte u16 length and a 1 byte record
 type.
 
 A record never starts within the last 2 bytes of a block (since it won't fit). Any leftover bytes
 here form the trailer, which must consist entirely of zero bytes and must be skipped by readers.
 
 Aside: if exactly three bytes are left in the current block, and a new non-zero length record is
-added, the writer must emit a FIRST record (which contains zero bytes of user data) to fill up the
-trailing three bytes of the block and then emit all of the user data in subsequent blocks.
+added, the writer must emit a `[BlockType::First](BlockType::First)` record (which contains zero
+bytes of user data) to fill up the trailing three bytes of the block and then emit all of the user
+data in subsequent blocks.
 */
 
-use std::io::Result;
-use std::{fs::File, path::Path};
+use bincode::Options;
+use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
+use std::fs::File;
+use std::io::{Result, Write};
+use std::path::Path;
 
 use crate::{file_names::FileNameHandler, fs::FileSystem};
 
+const HEADER_LENGTH_BYTES: usize = 2 + 1;
+
+const BLOCK_SIZE_BYTES: usize = 32 * 1024;
+
+const BLOCK_SIZE_MASK: usize = BLOCK_SIZE_BYTES - 1;
+
 /**
-Block record types denotes whether the data contained in the record is split across multiple
-records or if they contain all of the data for a single user record.
+Block record types denote whether the data contained in the block is split across multiple
+blocks or if they contain all of the data for a single user record.
 
 Note, the use of record is overloaded here. Be aware of the distinction between a block record
 and the actual user record.
 */
 #[repr(u8)]
-pub(crate) enum RecordType {
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) enum BlockType {
     /// Denotes that the block contains the entirety of a user record.
     Full = 0,
     /// Denotes the first fragment of a user record.
@@ -40,22 +52,28 @@ pub(crate) enum RecordType {
 }
 
 /**
-A record that is stored in a particular block. It is potentially only a fragement of a full user
+A record that is stored in a particular block. It is potentially only a fragment of a full user
 record.
 */
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct BlockRecord {
     /// The size of the data within the block.
     length: u16,
 
-    /// The [`RecordType`] of the block.
-    record_type: RecordType,
+    /// The [`BlockType`] of the block.
+    block_type: BlockType,
 
     /// User data to be stored in a block.
     data: Vec<u8>,
 }
 
-impl BlockRecord {
-    pub fn to_bytes(&self) -> Vec<u8> {}
+impl From<&BlockRecord> for Vec<u8> {
+    fn from(value: &BlockRecord) -> Self {
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .serialize(value)
+            .unwrap()
+    }
 }
 
 /** Handles all write activity to the write-ahead log. */
