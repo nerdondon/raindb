@@ -94,7 +94,7 @@ pub struct WALWriter<'fs> {
     /**
     The offset within the last block that was written to or zero for the start of a new block.
     */
-    pub(crate) current_block_offset: usize,
+    current_block_offset: usize,
 }
 
 /// Public methods.
