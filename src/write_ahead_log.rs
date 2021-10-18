@@ -19,13 +19,12 @@ data in subsequent blocks.
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
-use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
 use crate::errors::WALWriteError;
 use crate::file_names::FileNameHandler;
-use crate::fs::FileSystem;
+use crate::fs::{FileSystem, RandomAccessFile};
 
 const HEADER_LENGTH_BYTES: usize = 2 + 1;
 
@@ -86,7 +85,7 @@ pub struct WALWriter<'fs> {
     fs: &'fs Box<dyn FileSystem>,
 
     /** The underlying file representing the WAL.  */
-    wal_file: File,
+    wal_file: Box<dyn RandomAccessFile>,
 
     /** Handler for databases filenames. */
     file_name_handler: FileNameHandler,
@@ -114,9 +113,9 @@ impl<'fs> WALWriter<'fs> {
         let wal_file = fs.create_file(wal_path.as_path())?;
 
         let mut block_offset = 0;
-        let wal_file_metadata = wal_file.metadata()?;
-        if wal_file_metadata.len() > 0 {
-            block_offset = (wal_file_metadata.len() as usize) % BLOCK_SIZE_BYTES;
+        let wal_file_size = fs.get_file_size(&wal_path)? as usize;
+        if wal_file_size > 0 {
+            block_offset = wal_file_size % BLOCK_SIZE_BYTES;
         }
 
         Ok(WALWriter {
