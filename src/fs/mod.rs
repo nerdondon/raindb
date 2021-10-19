@@ -1,5 +1,5 @@
 mod fs;
-pub use self::fs::FileSystem;
+pub use self::fs::{FileSystem, RandomAccessFile};
 
 mod fs_disk;
 pub use self::fs_disk::{OsFileSystem, TmpFileSystem};

@@ -6,14 +6,17 @@ systems.
 */
 
 use core::fmt::Debug;
-use std::fs::File;
-use std::io::{Read, Result, Write};
+use std::io::{Read, Result, Seek, Write};
 use std::path::{Path, PathBuf};
 
 /// Supertrait that wraps a source of binary content that is both readable and writeable.
-pub trait ReadWriteable: Read + Write {}
+pub trait RandomAccessFile: Read + Write + Seek {
+    /// Read a number of bytes starting from a given offset.
+    fn read_from(&self, buf: &mut [u8], offset: usize) -> Result<usize>;
 
-impl ReadWriteable for File {}
+    /// Append the buffer `buf` to the end of this writer.
+    fn append(&mut self, buf: &[u8]) -> Result<usize>;
+}
 
 pub trait FileSystem {
     /// Return the name of file system wrapper being used.
@@ -46,7 +49,7 @@ pub trait FileSystem {
     This function will create the file if it doesn't exist. Critically, it does not truncate an
     existing file and sets the append mode.
     */
-    fn create_file(&self, path: &Path) -> Result<Box<dyn ReadWriteable>>;
+    fn create_file(&self, path: &Path) -> Result<Box<dyn RandomAccessFile>>;
 
     /// Remove a file from the filesystem.
     fn remove_file(&self, path: &Path) -> Result<()>;
