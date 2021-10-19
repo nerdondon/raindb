@@ -4,11 +4,11 @@ This module contains a wrapper for an in-memory file system implementation.
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::fs::{FileSystem, ReadWriteable};
+use super::fs::{FileSystem, RandomAccessFile};
 
 /// File system implementation that is backed by memory.
 pub struct InMemoryFileSystem {
@@ -103,7 +103,7 @@ impl FileSystem for InMemoryFileSystem {
         Ok(())
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn ReadWriteable>> {
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
         let files = self.files.read();
         match files.get_mut(path) {
             Some(file) => {
@@ -143,8 +143,10 @@ impl FileSystem for InMemoryFileSystem {
 /// Represents a file in the in-memory file system.
 #[derive(Clone)]
 struct InMemoryFile {
-    /// The contents of the "file".
+    /// The contents of the file.
     contents: Arc<RwLock<Vec<u8>>>,
+    /// The current position in the file.
+    cursor: u64,
 }
 
 impl InMemoryFile {
@@ -152,6 +154,7 @@ impl InMemoryFile {
     fn new(contents: Arc<RwLock<Vec<u8>>>) -> Self {
         Self {
             contents: Arc::new(RwLock::new(vec![])),
+            cursor: 0,
         }
     }
 
@@ -186,7 +189,7 @@ impl Write for InMemoryFile {
         let file_contents = self.contents.write();
         // `copy_from_slice` only allows copying between slices of the same length
         file_contents.copy_from_slice(&buf[..file_contents.len()]);
-        // append the rest of the buffer
+        // Append the rest of the buffer
         file_contents.extend_from_slice(&buf[file_contents.len()..]);
 
         Ok(buf_length)
@@ -197,4 +200,78 @@ impl Write for InMemoryFile {
     }
 }
 
-impl ReadWriteable for InMemoryFile {}
+impl Seek for InMemoryFile {
+    /**
+    Seek to an offset, in bytes, in a stream.
+
+    To keep things simple, `SeekFrom::End` is not implemented and `SeekFrom::Current` only accepts
+    positive integers.
+    */
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        let mut offset: u64 = 0;
+        match pos {
+            SeekFrom::Start(off) => {
+                offset = off;
+            }
+            SeekFrom::Current(off) => {
+                if off < 0 {
+                    let error_message = format!(
+                        "Only integers >= 0 are accepted. The passed in offset was {}.",
+                        off
+                    );
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, error_message));
+                }
+
+                offset = (off as u64) + self.cursor;
+            }
+            SeekFrom::End(_) => {
+                unimplemented!("Not used as part of any database operations.");
+            }
+        };
+
+        // Truncate `offset` if it is too long. We only allow seeking to the end of the file.
+        offset = if offset > self.len() {
+            self.len()
+        } else {
+            offset
+        };
+
+        self.cursor = offset;
+        Ok(offset)
+    }
+}
+
+impl RandomAccessFile for InMemoryFile {
+    fn read_from(&self, buf: &mut [u8], offset: usize) -> io::Result<usize> {
+        let buf_length = buf.len();
+        if buf_length == 0 {
+            return Ok(0);
+        }
+
+        if offset > buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "The provided offset goes beyond the end of the file.",
+            ));
+        }
+
+        let file_contents = self.contents.read();
+        let end_of_copy_range = if file_contents.len() > (offset + buf.len()) {
+            offset + buf.len()
+        } else {
+            file_contents.len()
+        };
+
+        // `copy_from_slice` requires that slices are of the same length or it panics. this is the
+        // reason for the range syntax below.
+        (&mut buf[..offset]).copy_from_slice(&file_contents[offset..end_of_copy_range]);
+
+        Ok(buf_length)
+    }
+
+    fn append(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let content = self.contents.write();
+        content.extend_from_slice(&buf);
+        Ok(buf.len())
+    }
+}
