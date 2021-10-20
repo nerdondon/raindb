@@ -10,7 +10,7 @@ type.
 A record never starts within the last 2 bytes of a block (since it won't fit). Any leftover bytes
 here form the trailer, which must consist entirely of zero bytes and must be skipped by readers.
 
-Aside: if exactly three bytes are left in the current block, and a new non-zero length record is
+Note that if exactly three bytes are left in the current block, and a new non-zero length record is
 added, the writer must emit a `[BlockType::First](BlockType::First)` record (which contains zero
 bytes of user data) to fill up the trailing three bytes of the block and then emit all of the user
 data in subsequent blocks.
@@ -80,7 +80,7 @@ impl From<&BlockRecord> for Vec<u8> {
 }
 
 /** Handles all write activity to the write-ahead log. */
-pub struct WALWriter<'fs> {
+pub(crate) struct WALWriter<'fs> {
     /** A wrapper around a particular file system to use. */
     fs: &'fs Box<dyn FileSystem>,
 
