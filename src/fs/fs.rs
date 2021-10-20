@@ -9,11 +9,20 @@ use core::fmt::Debug;
 use std::io::{Read, Result, Seek, Write};
 use std::path::{Path, PathBuf};
 
-/// Supertrait that wraps a source of binary content that is both readable and writeable.
-pub trait RandomAccessFile: Read + Write + Seek {
+/**
+Supertrait that wraps a source of binary content that is readonly and can read from arbitrary offets
+into the content.
+*/
+pub trait ReadonlyRandomAccessFile: Read + Seek {
     /// Read a number of bytes starting from a given offset.
     fn read_from(&self, buf: &mut [u8], offset: usize) -> Result<usize>;
+}
 
+/**
+Supertrait that wraps a source of binary content that is readable and writable and can operate on
+arbitrary offets into the content.
+*/
+pub trait RandomAccessFile: ReadonlyRandomAccessFile + Write {
     /// Append the buffer `buf` to the end of this writer.
     fn append(&mut self, buf: &[u8]) -> Result<usize>;
 }
@@ -32,7 +41,7 @@ pub trait FileSystem {
     fn list_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;
 
     /// Open a file in read-only mode.
-    fn open_file(&self, path: &Path) -> Result<Box<dyn Read>>;
+    fn open_file(&self, path: &Path) -> Result<Box<dyn ReadonlyRandomAccessFile>>;
 
     /**
     Rename a file or directory. For files, it will attempt to replace a file if it already exists

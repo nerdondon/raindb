@@ -8,7 +8,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::fs::{FileSystem, RandomAccessFile};
+use super::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 /// File system implementation that is backed by memory.
 pub struct InMemoryFileSystem {
@@ -81,7 +81,7 @@ impl FileSystem for InMemoryFileSystem {
         Ok(children)
     }
 
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn ReadonlyRandomAccessFile>> {
         Ok(Box::new(self.open_mem_file(path)?))
     }
 
@@ -241,7 +241,7 @@ impl Seek for InMemoryFile {
     }
 }
 
-impl RandomAccessFile for InMemoryFile {
+impl ReadonlyRandomAccessFile for InMemoryFile {
     fn read_from(&self, buf: &mut [u8], offset: usize) -> io::Result<usize> {
         let buf_length = buf.len();
         if buf_length == 0 {
@@ -268,7 +268,9 @@ impl RandomAccessFile for InMemoryFile {
 
         Ok(buf_length)
     }
+}
 
+impl RandomAccessFile for InMemoryFile {
     fn append(&mut self, buf: &[u8]) -> io::Result<usize> {
         let content = self.contents.write();
         content.extend_from_slice(&buf);

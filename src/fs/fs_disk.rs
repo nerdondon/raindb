@@ -3,15 +3,40 @@ This module contains file system wrappers for disk-based file systems.
 */
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-use super::fs::{FileSystem, ReadWriteable};
+use super::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+
+impl ReadonlyRandomAccessFile for File {
+    #[cfg(target_family = "windows")]
+    fn read_from(&self, buf: &mut [u8], offset: usize) -> io::Result<usize> {
+        use std::os::windows::prelude::FileExt;
+
+        self.seek_read(buf, offset);
+    }
+
+    #[cfg(target_family = "unix")]
+    fn read_from(&self, buf: &mut [u8], offset: usize) -> io::Result<usize> {
+        use std::os::unix::prelude::FileExt;
+
+        self.read_at(buf, offset as u64)
+    }
+}
+
+impl RandomAccessFile for File {
+    fn append(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Seek to the end first
+        self.seek(SeekFrom::End(0))?;
+        Ok(self.write(buf)?)
+    }
+}
 
 /// File system implementation that delegates I/O to the operating system.
 pub struct OsFileSystem {}
 
+/// Public methods.
 impl OsFileSystem {
     pub fn new() -> Self {
         OsFileSystem {}
@@ -47,7 +72,7 @@ impl FileSystem for OsFileSystem {
         Ok(entries)
     }
 
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn ReadonlyRandomAccessFile>> {
         let file = self.open_disk_file(path)?;
         Ok(Box::new(file))
     }
@@ -56,7 +81,7 @@ impl FileSystem for OsFileSystem {
         fs::rename(from, to)
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn ReadWriteable>> {
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
         let file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -121,7 +146,7 @@ impl FileSystem for TmpFileSystem {
         Ok(entries)
     }
 
-    fn open_file(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn ReadonlyRandomAccessFile>> {
         let file = self.open_tmp_file(path)?;
         Ok(Box::new(file))
     }
@@ -130,7 +155,7 @@ impl FileSystem for TmpFileSystem {
         fs::rename(from, to)
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn ReadWriteable>> {
+    fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
         let file = OpenOptions::new()
             .create(true)
             .read(true)
