@@ -91,9 +91,12 @@ pub(crate) struct WALWriter<'fs> {
     file_name_handler: FileNameHandler,
 
     /**
-    The offset within the last block that was written to or zero for the start of a new block.
+    The byte offset within the file.
+
+    This cursor position is not necessarily aligned to a block i.e. it can be in the middle of a
+    lock during a write operation.
     */
-    current_block_offset: usize,
+    current_cursor_position: usize,
 }
 
 /// Public methods.
@@ -122,7 +125,7 @@ impl<'fs> WALWriter<'fs> {
             fs,
             file_name_handler,
             wal_file,
-            current_block_offset: block_offset,
+            current_cursor_position: block_offset,
         })
     }
 
@@ -132,7 +135,7 @@ impl<'fs> WALWriter<'fs> {
         let mut is_first_data_chunk = true;
 
         while !data_to_write.is_empty() {
-            let mut block_available_space = BLOCK_SIZE_BYTES - self.current_block_offset;
+            let mut block_available_space = BLOCK_SIZE_BYTES - self.current_cursor_position;
 
             if block_available_space < HEADER_LENGTH_BYTES {
                 log::debug!(
@@ -140,8 +143,8 @@ impl<'fs> WALWriter<'fs> {
                     Filling it with zeroes."
                 );
                 self.wal_file
-                    .write_all(&vec![0, 0, 0, 0][0..block_available_space])?;
-                self.current_block_offset = 0;
+                    .write_all(&vec![0, 0, 0][0..block_available_space])?;
+                self.current_cursor_position = 0;
                 block_available_space = BLOCK_SIZE_BYTES;
             }
 
@@ -195,7 +198,7 @@ impl<'fs> WALWriter<'fs> {
         self.wal_file.flush()?;
 
         let bytes_written = HEADER_LENGTH_BYTES + data_chunk.len();
-        self.current_block_offset += bytes_written;
+        self.current_cursor_position += bytes_written;
         log::info!("Wrote {} bytes to the WAL.", bytes_written);
         Ok(())
     }
