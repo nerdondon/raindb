@@ -9,34 +9,67 @@ use std::num::TryFromIntError;
 
 // TODO: consider using snafu (https://docs.rs/snafu/0.6.10/snafu/guide/index.html) to have less boilerplate
 
+/// Metadata describing the corruption detected in the WAL.
+#[derive(Debug)]
+struct WALCorruptionErrorMetadata {
+    bytes_corrupted: u64,
+    reason: String,
+}
+
 /**
 Errors related to writing to the write-ahead log (WAL).
 */
 #[derive(Debug)]
-pub enum WALWriteError {
+pub enum WALIOError {
+    /**
+    Variant for errors that are related to IO.
+    */
     IOError(io::Error),
+
+    /**
+    Variant for errors that are related to `try_from` conversions.
+    */
     ParseError(TryFromIntError),
+
+    /**
+    Variant for IO issues where the cause is malformed data on the file system.
+    */
+    CorruptionError(WALCorruptionErrorMetadata),
+
+    /**
+    Variant for parsing issues that arise specifically from deserializing data from the
+    file system.
+    */
+    SerializerError(bincode::Error),
 }
 
-impl std::error::Error for WALWriteError {}
+impl std::error::Error for WALIOError {}
 
-impl fmt::Display for WALWriteError {
+impl fmt::Display for WALIOError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WALWriteError::ParseError(baseErr) => write!(f, "{}", baseErr),
-            WALWriteError::IOError(baseErr) => write!(f, "{}", baseErr),
+            WALIOError::ParseError(baseErr) => write!(f, "{}", baseErr),
+            WALIOError::IOError(baseErr) => write!(f, "{}", baseErr),
+            WALIOError::CorruptionError(errMetadata) => write!(f, "{:?}", errMetadata),
+            WALIOError::SerializerError(baseErr) => write!(f, "{:?}", baseErr),
         }
     }
 }
 
-impl From<std::io::Error> for WALWriteError {
+impl From<std::io::Error> for WALIOError {
     fn from(err: std::io::Error) -> Self {
-        WALWriteError::IOError(err)
+        WALIOError::IOError(err)
     }
 }
 
-impl From<TryFromIntError> for WALWriteError {
+impl From<TryFromIntError> for WALIOError {
     fn from(err: TryFromIntError) -> Self {
-        WALWriteError::ParseError(err)
+        WALIOError::ParseError(err)
+    }
+}
+
+impl From<bincode::Error> for WALIOError {
+    fn from(err: bincode::Error) -> Self {
+        WALIOError::SerializerError(err)
     }
 }
