@@ -19,20 +19,18 @@ data in subsequent blocks.
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
-use std::io::Write;
+use std::io::{self, ErrorKind, SeekFrom, Write};
 use std::path::Path;
 
-use crate::errors::WALWriteError;
+use crate::errors::WALIOError;
 use crate::file_names::FileNameHandler;
-use crate::fs::{FileSystem, RandomAccessFile};
+use crate::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 const HEADER_LENGTH_BYTES: usize = 2 + 1;
 
 const BLOCK_SIZE_BYTES: usize = 32 * 1024;
 
-const BLOCK_SIZE_MASK: usize = BLOCK_SIZE_BYTES - 1;
-
-type WALWriteResult<T> = Result<T, WALWriteError>;
+type WALIOResult<T> = Result<T, WALIOError>;
 
 /**
 Block record types denote whether the data contained in the block is split across multiple
@@ -107,7 +105,7 @@ impl<'fs> WALWriter<'fs> {
     * `fs`- The wrapped file system to use for I/O.
     * `db_path` - The absolute path where the database files reside.
     */
-    pub fn new<P: AsRef<Path>>(fs: &'fs Box<dyn FileSystem>, db_path: P) -> WALWriteResult<Self> {
+    pub fn new<P: AsRef<Path>>(fs: &'fs Box<dyn FileSystem>, db_path: P) -> WALIOResult<Self> {
         let file_name_handler =
             FileNameHandler::new(db_path.as_ref().to_str().unwrap().to_string());
         let wal_path = file_name_handler.get_wal_path();
@@ -130,7 +128,7 @@ impl<'fs> WALWriter<'fs> {
     }
 
     /// Append `data` to the log.
-    pub fn append(&mut self, data: &[u8]) -> WALWriteResult<()> {
+    pub fn append(&mut self, data: &[u8]) -> WALIOResult<()> {
         let mut data_to_write = &data[..];
         let mut is_first_data_chunk = true;
 
