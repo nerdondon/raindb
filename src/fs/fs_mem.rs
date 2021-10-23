@@ -40,7 +40,7 @@ impl InMemoryFileSystem {
     */
     fn open_mem_file(&self, path: &Path) -> io::Result<InMemoryFile> {
         let files = self.files.read();
-        match files.get_mut(path) {
+        match files.get(path) {
             Some(file) => {
                 return Ok(file.clone());
             }
@@ -60,11 +60,11 @@ impl FileSystem for InMemoryFileSystem {
         return "InMemoryFileSystem".to_string();
     }
 
-    fn create_dir(&mut self, path: &Path) -> io::Result<()> {
+    fn create_dir(&mut self, _path: &Path) -> io::Result<()> {
         Ok(())
     }
 
-    fn create_dir_all(&mut self, path: &Path) -> io::Result<()> {
+    fn create_dir_all(&mut self, _path: &Path) -> io::Result<()> {
         Ok(())
     }
 
@@ -86,7 +86,7 @@ impl FileSystem for InMemoryFileSystem {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        let files = self.files.write();
+        let mut files = self.files.write();
         match files.remove(from) {
             Some(file) => {
                 files.insert(to.to_path_buf(), file);
@@ -104,7 +104,7 @@ impl FileSystem for InMemoryFileSystem {
     }
 
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
-        let files = self.files.read();
+        let mut files = self.files.write();
         match files.get_mut(path) {
             Some(file) => {
                 return Ok(Box::new(file.clone()));
@@ -120,9 +120,9 @@ impl FileSystem for InMemoryFileSystem {
     }
 
     fn remove_file(&self, path: &Path) -> io::Result<()> {
-        let files = self.files.write();
+        let mut files = self.files.write();
         match files.remove(path) {
-            Some(file) => {
+            Some(_removed_file) => {
                 return Ok(());
             }
             None => {
@@ -151,7 +151,7 @@ struct InMemoryFile {
 
 impl InMemoryFile {
     /// Create an instance of [`InMemoryFile`](self::InMemoryFile)
-    fn new(contents: Arc<RwLock<Vec<u8>>>) -> Self {
+    fn new() -> Self {
         Self {
             contents: Arc::new(RwLock::new(vec![])),
             cursor: 0,
@@ -160,7 +160,7 @@ impl InMemoryFile {
 
     /// Get the size of the file in bytes.
     pub fn len(&self) -> u64 {
-        let contents = self.contents.clone().read();
+        let contents = self.contents.read();
         contents.len() as u64
     }
 }
@@ -186,11 +186,12 @@ impl Write for InMemoryFile {
             return Ok(0);
         }
 
-        let file_contents = self.contents.write();
+        let mut file_contents = self.contents.write();
         // `copy_from_slice` only allows copying between slices of the same length
-        file_contents.copy_from_slice(&buf[..file_contents.len()]);
+        let file_content_length = file_contents.len();
+        file_contents.copy_from_slice(&buf[0..file_content_length]);
         // Append the rest of the buffer
-        file_contents.extend_from_slice(&buf[file_contents.len()..]);
+        file_contents.extend_from_slice(&buf[file_content_length..]);
 
         Ok(buf_length)
     }
@@ -208,7 +209,7 @@ impl Seek for InMemoryFile {
     positive integers.
     */
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        let mut offset: u64 = 0;
+        let mut offset: u64;
         match pos {
             SeekFrom::Start(off) => {
                 offset = off;
@@ -272,7 +273,7 @@ impl ReadonlyRandomAccessFile for InMemoryFile {
 
 impl RandomAccessFile for InMemoryFile {
     fn append(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let content = self.contents.write();
+        let mut content = self.contents.write();
         content.extend_from_slice(&buf);
         Ok(buf.len())
     }
