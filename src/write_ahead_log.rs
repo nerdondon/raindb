@@ -177,7 +177,7 @@ impl<'fs> WALWriter<'fs> {
 /// Private methods.
 impl<'fs> WALWriter<'fs> {
     /// Write the block out to the underlying medium.
-    fn emit_block(&mut self, block_type: BlockType, data_chunk: &[u8]) -> WALWriteResult<()> {
+    fn emit_block(&mut self, block_type: BlockType, data_chunk: &[u8]) -> WALIOResult<()> {
         // Convert `usize` to `u16` so that it fits in our header format.
         let data_length = u16::try_from(data_chunk.len())?;
         let block = BlockRecord {
@@ -189,7 +189,7 @@ impl<'fs> WALWriter<'fs> {
         log::info!(
             "Writing new record to WAL with length {} and block type {:?}.",
             data_length,
-            block_type
+            block.block_type
         );
         self.wal_file
             .write_all(Vec::<u8>::from(&block).as_slice())?;
