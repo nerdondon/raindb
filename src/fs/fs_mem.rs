@@ -8,7 +8,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+use super::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 /// File system implementation that is backed by memory.
 pub struct InMemoryFileSystem {

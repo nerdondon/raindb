@@ -7,7 +7,7 @@ use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-use super::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+use super::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 impl ReadonlyRandomAccessFile for File {
     #[cfg(target_family = "windows")]
