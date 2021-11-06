@@ -28,8 +28,13 @@ and [RocksDB](https://github.com/facebook/rocksdb). A big thank you goes to the 
 so much of their design documentation available along side the code itself. Because of the heavy
 basis in these projects, some of the options and documentation is pulled from these projects.
 
-Inspiration was also drawn from [Pebble](https://github.com/cockroachdb/pebble) and the
-[Go port of LevelDB](https://github.com/golang/leveldb).
+Inspiration was also drawn from the [Go port of LevelDB](https://github.com/golang/leveldb) and
+[dermesser's Rust port](https://github.com/dermesser/leveldb-rs).
+
+### Other art
+
+- [Pebble (Go)](https://github.com/cockroachdb/pebble)
+- [kezhuw/leveldb (Go)](https://github.com/kezhuw/leveldb)
 
 ## Future ideas
 
