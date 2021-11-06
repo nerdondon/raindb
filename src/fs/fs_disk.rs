@@ -29,7 +29,7 @@ impl RandomAccessFile for File {
     fn append(&mut self, buf: &[u8]) -> io::Result<usize> {
         // Seek to the end first
         self.seek(SeekFrom::End(0))?;
-        Ok(self.write(buf)?)
+        self.write(buf)
     }
 }
 
@@ -38,8 +38,15 @@ pub struct OsFileSystem {}
 
 /// Public methods.
 impl OsFileSystem {
+    /// Create an instance of the [`OsFileSystem`].
     pub fn new() -> Self {
         OsFileSystem {}
+    }
+}
+
+impl Default for OsFileSystem {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -53,7 +60,7 @@ impl OsFileSystem {
 
 impl FileSystem for OsFileSystem {
     fn get_name(&self) -> String {
-        return "OsFileSystem".to_owned();
+        "OsFileSystem".to_string()
     }
 
     fn create_dir(&mut self, path: &Path) -> io::Result<()> {
@@ -115,6 +122,12 @@ impl TmpFileSystem {
     }
 }
 
+impl Default for TmpFileSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Private methods.
 impl TmpFileSystem {
     /// Opens a file on disk in readonly mode.
@@ -125,7 +138,7 @@ impl TmpFileSystem {
 
 impl FileSystem for TmpFileSystem {
     fn get_name(&self) -> String {
-        return "TmpFileSystem".to_owned();
+        "TmpFileSystem".to_string()
     }
 
     fn create_dir(&mut self, path: &Path) -> io::Result<()> {
@@ -134,7 +147,7 @@ impl FileSystem for TmpFileSystem {
         Ok(())
     }
 
-    fn create_dir_all(&mut self, path: &Path) -> io::Result<()> {
+    fn create_dir_all(&mut self, _path: &Path) -> io::Result<()> {
         unimplemented!("Not supported by tempfile crate.")
     }
 
@@ -170,5 +183,107 @@ impl FileSystem for TmpFileSystem {
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         Ok(self.open_tmp_file(path)?.metadata()?.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const BASE_TESTING_DIR_NAME: &str = "testing_files/";
+
+    #[test]
+    fn create_dir_creates_an_empty_directory() {
+        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_dir";
+        fs::create_dir(BASE_TESTING_DIR_NAME).ok();
+
+        file_system.create_dir(Path::new(&test_dir)).unwrap();
+        assert_eq!(file_system.list_dir(Path::new(&test_dir)).unwrap().len(), 0);
+
+        // Clean up
+        assert!(fs::remove_dir_all(Path::new(&test_dir)).is_ok());
+    }
+
+    #[test]
+    fn create_dir_all_creates_paths_recursively() {
+        fs::create_dir(BASE_TESTING_DIR_NAME).ok();
+        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_dir_all";
+
+        let mut full_path = PathBuf::new();
+        full_path.push(&test_dir);
+        full_path.push("level1");
+        full_path.push("level2");
+
+        let mut level1_path = PathBuf::new();
+        level1_path.push(&test_dir);
+        level1_path.push("level1");
+
+        file_system.create_dir_all(&full_path).unwrap();
+        assert!(file_system.list_dir(Path::new(&test_dir)).unwrap()[0]
+            .to_str()
+            .unwrap()
+            .contains(level1_path.to_str().unwrap()));
+
+        assert!(file_system.list_dir(&level1_path).unwrap()[0]
+            .to_str()
+            .unwrap()
+            .contains(full_path.to_str().unwrap()));
+
+        // Clean up
+        assert!(fs::remove_dir_all(level1_path).is_ok());
+        assert!(fs::remove_dir_all(Path::new(&BASE_TESTING_DIR_NAME)).is_ok());
+    }
+
+    #[test]
+    fn create_file_creates_a_file_we_can_write_to() {
+        fs::create_dir(BASE_TESTING_DIR_NAME).ok();
+        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_file";
+        file_system.create_dir(Path::new(&test_dir)).unwrap();
+        let mut file_path = PathBuf::new();
+        file_path.push(&test_dir);
+        file_path.push("testing_file");
+
+        let mut file = file_system.create_file(&file_path).unwrap();
+        assert!(file.write(b"Hello World").is_ok());
+        assert!(file.flush().is_ok());
+
+        assert_eq!(file_system.list_dir(Path::new(&test_dir)).unwrap().len(), 1);
+        assert_eq!(file_system.get_file_size(&file_path).unwrap(), 11);
+
+        // Clean up
+        assert!(fs::remove_dir_all(Path::new(&test_dir)).is_ok());
+    }
+
+    #[test]
+    fn remove_file_removes_a_file() {
+        fs::create_dir(BASE_TESTING_DIR_NAME).ok();
+        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let test_dir = BASE_TESTING_DIR_NAME.to_string() + "remove_file";
+        file_system.create_dir(Path::new(&test_dir)).unwrap();
+        let mut file_path = PathBuf::new();
+        file_path.push(&test_dir);
+        file_path.push("testing_file");
+
+        let mut file = file_system.create_file(&file_path).unwrap();
+        assert!(file.write(b"Hello World").is_ok());
+        assert!(file.flush().is_ok());
+        assert_eq!(
+            file_system
+                .list_dir(Path::new(&BASE_TESTING_DIR_NAME))
+                .unwrap()
+                .len(),
+            1
+        );
+
+        assert!(file_system.remove_file(&file_path).is_ok());
+        assert_eq!(file_system.list_dir(Path::new(&test_dir)).unwrap().len(), 0);
+
+        // Clean-up
+        assert!(fs::remove_dir_all(Path::new(&test_dir)).is_ok());
     }
 }
