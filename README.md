@@ -46,3 +46,4 @@ Inspiration was also drawn from the [Go port of LevelDB](https://github.com/gola
 - Aside from the docs folder, more notes and references for various components can also be found on
   [my blog](https://blog.nerdondon.com)
 - Database Internals by Alex Petrov
+- [Oren Eini - Blog Series - Reviewing LevelDB](https://ayende.com/blog/posts/series/161410/reviewing-leveldb)
