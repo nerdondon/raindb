@@ -9,6 +9,40 @@ use std::num::TryFromIntError;
 
 // TODO: consider using snafu (https://docs.rs/snafu/0.6.10/snafu/guide/index.html) to have less boilerplate
 
+pub type RainDBResult<T> = Result<T, RainDBError>;
+
+/// Top-level database errors.
+#[derive(Debug)]
+pub enum RainDBError {
+    /// Variant for errors stemming from top-level I/O operations.
+    IO(io::Error),
+    /// Variant for errors stemming from WAL operations.
+    WAL(WALIOError),
+}
+
+impl std::error::Error for RainDBError {}
+
+impl fmt::Display for RainDBError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RainDBError::IO(base_err) => write!(f, "{}", base_err),
+            RainDBError::WAL(base_err) => write!(f, "{}", base_err),
+        }
+    }
+}
+
+impl From<io::Error> for RainDBError {
+    fn from(err: io::Error) -> Self {
+        RainDBError::IO(err)
+    }
+}
+
+impl From<WALIOError> for RainDBError {
+    fn from(err: WALIOError) -> Self {
+        RainDBError::WAL(err)
+    }
+}
+
 /// Metadata describing the corruption detected in the WAL.
 #[derive(Debug)]
 pub struct WALCorruptionErrorMetadata {
