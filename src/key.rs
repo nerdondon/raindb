@@ -13,7 +13,7 @@ use std::convert::TryFrom;
 
 /** This is the actual key used by RainDB. It is the user provided key with additional metadata. */
 #[derive(Deserialize, Eq, Serialize)]
-pub(crate) struct InternalKey {
+pub struct LookupKey {
     /// The user suplied key.
     user_key: Vec<u8>,
     /// The sequence number of the operation associated with this generated key.
@@ -22,18 +22,32 @@ pub(crate) struct InternalKey {
     operation: Operation,
 }
 
-impl InternalKey {
-    /// Construct a new `InternalKey`.
+impl LookupKey {
+    /// Construct a new `LookupKey`.
     pub(crate) fn new(user_key: Vec<u8>, sequence_number: u64, operation: Operation) -> Self {
-        InternalKey {
+        LookupKey {
             user_key,
             sequence_number,
             operation,
         }
     }
+
+    /// Return the user key.
+    pub(crate) fn get_user_key(&self) -> &Vec<u8> {
+        &self.user_key
+    }
+
+    /**
+    Return a key suitable for use in internal iterators.
+
+    This must be equivalent to the `Vec::<u8>::from`
+    */
+    pub(crate) fn get_internal_key(&self) -> Vec<u8> {
+        Vec::<u8>::from(self)
+    }
 }
 
-impl Ord for InternalKey {
+impl Ord for LookupKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Return ordering by the user provided keys if they are not equal
         if self.user_key.as_slice().ne(other.user_key.as_slice()) {
@@ -41,17 +55,17 @@ impl Ord for InternalKey {
         }
 
         // Check the sequence number if the keys are equal
-        return self.sequence_number.cmp(&other.sequence_number);
+        self.sequence_number.cmp(&other.sequence_number)
     }
 }
 
-impl PartialOrd for InternalKey {
+impl PartialOrd for LookupKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for InternalKey {
+impl PartialEq for LookupKey {
     fn eq(&self, other: &Self) -> bool {
         // Operation is checked here but the equality relation should be implied by the check on
         // `sequence_number`. More clearly, a sequence number is assigned per operation so if the
@@ -64,18 +78,18 @@ impl PartialEq for InternalKey {
     }
 }
 
-impl TryFrom<&[u8]> for InternalKey {
+impl TryFrom<&[u8]> for LookupKey {
     type Error = bincode::Error;
 
-    fn try_from(value: &[u8]) -> bincode::Result<InternalKey> {
+    fn try_from(value: &[u8]) -> bincode::Result<LookupKey> {
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .deserialize(value)
     }
 }
 
-impl From<&InternalKey> for Vec<u8> {
-    fn from(value: &InternalKey) -> Vec<u8> {
+impl From<&LookupKey> for Vec<u8> {
+    fn from(value: &LookupKey) -> Vec<u8> {
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .serialize(value)
