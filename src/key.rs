@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 
 /** This is the actual key used by RainDB. It is the user provided key with additional metadata. */
-#[derive(Deserialize, Eq, Serialize)]
+#[derive(Debug, Deserialize, Eq, Hash, Serialize)]
 pub struct LookupKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -54,8 +54,10 @@ impl Ord for LookupKey {
             return self.user_key.as_slice().cmp(other.user_key.as_slice());
         }
 
-        // Check the sequence number if the keys are equal
-        self.sequence_number.cmp(&other.sequence_number)
+        // Check the sequence number if the keys are equal.
+        // This orders the sequence numbers in descending order because we want to bias toward the
+        // most recent operations.
+        other.sequence_number.cmp(&self.sequence_number)
     }
 }
 
@@ -99,7 +101,7 @@ impl From<&LookupKey> for Vec<u8> {
 
 /// The operation that is being applied to an entry in the database.
 #[repr(u8)]
-#[derive(Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub(crate) enum Operation {
     /// This represents a tombstone. There should not be a value set for the operation.
     Delete = 0,
