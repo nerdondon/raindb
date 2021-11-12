@@ -23,6 +23,10 @@ impl ReadonlyRandomAccessFile for File {
 
         self.read_at(buf, offset as u64)
     }
+
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.metadata()?.len())
+    }
 }
 
 impl RandomAccessFile for File {

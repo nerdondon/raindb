@@ -136,7 +136,7 @@ impl FileSystem for InMemoryFileSystem {
     }
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
-        Ok(self.open_mem_file(path)?.len() as u64)
+        Ok(self.open_mem_file(path)?.len()?)
     }
 }
 
@@ -170,11 +170,6 @@ impl LockableInMemoryFile {
     /// Create an instance of [`LockableInMemoryFile`](self::LockableInMemoryFile).
     fn new() -> Self {
         LockableInMemoryFile(Arc::new(RwLock::new(InMemoryFile::new())))
-    }
-
-    /// Get the size of the file in bytes.
-    pub fn len(&self) -> u64 {
-        self.0.read().len() as u64
     }
 
     /// Make an `Arc` clone of the file.
@@ -288,6 +283,10 @@ impl ReadonlyRandomAccessFile for LockableInMemoryFile {
         (&mut buf[..offset]).copy_from_slice(&file.contents[offset..end_of_copy_range]);
 
         Ok(buf_length)
+    }
+
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.0.read().len() as u64)
     }
 }
 

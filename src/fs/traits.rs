@@ -16,6 +16,9 @@ into the content.
 pub trait ReadonlyRandomAccessFile: Read + Seek {
     /// Read a number of bytes starting from a given offset.
     fn read_from(&self, buf: &mut [u8], offset: usize) -> Result<usize>;
+
+    /// Get the length of the file.
+    fn len(&self) -> Result<u64>;
 }
 
 /**
