@@ -9,9 +9,20 @@ check out [my notes on my blog](https://https://www.nerdondon.com/posts/2021-08-
 The goal of this project is to create a well-annoated codebase for a key-value store backed by an
 LSM tree. In that vein, if anything is unclear and could use a comment please create an issue.
 
-We do not aim to create a highly performant and production ready database off the bat. At least
-starting out, this is more of a learning tool for those trying to get more familiar with database
-concepts.
+We do not aim to create a highly performant and production ready database off the bat...at least
+starting out. Currently, this is more of a learning tool for those trying to get more familiar with
+database concepts.
+
+LevelDB tends to only keep around byte buffers instead of deserializing those buffers into structs.
+LevelDB primarily works with this data using pointers to ranges within those buffers and doing
+pointer arithmetic to read or manipulate the data. I am uncertain if this is a memory saving measure
+(by reducing allocations), but it makes the LevelDB codebase pretty hard to follow. In our effort to
+make things mor readable, RainDB will take the opposite approach and eagerly deserialize into
+intermediate structs. Cases where this is evident are the following:
+
+1. The memtable will store keys as a struct (`LookupKey`) instead of constantly serializing and
+   deserializing byte buffers.
+1. Reading blocks from tables ([details](#data-block-format))
 
 ## Overview
 
@@ -193,32 +204,62 @@ file's footer consists of the following parts:
 
 #### Data block format
 
-Blocks stores entries of key-value pairs and some metadata related to the compression of the keys.
+Blocks store a sequence of entries of key-value pairs and some metadata related to the compression
+of the keys. The sequence of block entries if followed by a trailer containing some block metadata.
+
 Block entries are serialized in the following format:
 
 ```rust
 struct BlockEntry {
-    shared_bytes: varint32,
-    unshared_bytes: varint32,
+    key_num_shared_bytes: varint32,
+    key_num_unshared_bytes: varint32,
     value_length: varint32,
-    key_delta: Vec<u8>, // This is a buffer the size of `unshared_bytes`
+    key_delta: Vec<u8>, // This is a buffer the size of `key_num_unshared_bytes`
     value: Vec<u8>,
+}
+```
 
-    // Trailer
-    restart_points: Vec<u32> // This array is the size of `num_restarts`
+The block trailer is serialized in the following format:
+
+```rust
+struct BlockTrailer {
+    restart_point_offsets: Vec<u32> // This array is the size of `num_restart_points`
     num_restart_points: u32,
 }
 ```
+
+`restart_point_offsets[i]` contains the offset within the block of the `i`th restart point.
 
 When a key is stored, the prefix shared with the key of a previous key is dropped. This is to help
 reduce disk usage of table files. Once every 16 keys, the prefix compression is not applied and the
 full key is stored. This point is called a restart point. The 16 key number comes from LevelDB and
 I'm not sure why it was chosen yet. The number of restart points that a block has is based on the
-size of the file. The restart points are used to do a binary search for a key and a scan is done for
-the prefixed sections in order to improve lookup times.
+size of the block. `key_num_shared_bytes` will be zero for a restart point.
 
-`shared_bytes` will be zero if there are no restart points. `restart_points[i]` contains the offset
-within the block of the `i`th restart point.
+In LevelDB, the restart points are used to do a binary search for a range of keys sharing a prefix
+and a scan over that range is done to fetch data for a specific key. This is done in order to
+improve lookup times. LevelDB has a tendency to keep allocations to a minimum and only have
+references to byte buffers. As relates to the restart points, this means that block entries are
+lazily deserialized (e.g.
+[when an iterator is seeking](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/block.cc#L187-L226)).
+I do not know if saving allocations a goal of LevelDB, but the information for deserialized block
+entries is not stored. If a block is not fully iterated, I guess this is some work saved. If the
+block gets fully iterated or is iterated multiple times, then the deserialization is repetitive.
+
+An alternative is to just eat the cost of fully deserializing the entries of a block on
+initialization. LevelDB already does a linear scan to parse entries within a section after the
+restart point. The alternative approach just does a full scan upfront. On the whole, the difference
+in speed/memory is probably negligible given the small size of a block (to be benchmarked). But
+there is another pro to the alternative, which is that fully deserializing the entries to proper
+structs makes the code much more readable. Instead of maintaining a bunch of pointer information in
+the iterator and doing a bunch of pointer arithmetic to stitch together ranges of a byte buffer, we
+can just keep an array of block entry structs and access the fields on the structs as usual. This
+alternative aligns exactly with our goal of readability and is the approach that RainDB takes.
+
+Serializing eagerly kind of removes the need to maintain restart points, but RainDB will still keep
+the concept of restart points. Primarily, this is just to help tie concepts in RainDB back to
+LevelDB and serve as a bridge for learning about both databases. It's also nice to keep around in
+case we try to go for full compatibility with LevelDB later on.
 
 #### Meta block types
 
