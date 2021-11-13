@@ -80,10 +80,10 @@ impl PartialEq for LookupKey {
     }
 }
 
-impl TryFrom<&[u8]> for LookupKey {
+impl TryFrom<&Vec<u8>> for LookupKey {
     type Error = bincode::Error;
 
-    fn try_from(value: &[u8]) -> bincode::Result<LookupKey> {
+    fn try_from(value: &Vec<u8>) -> bincode::Result<LookupKey> {
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
             .deserialize(value)
