@@ -1,3 +1,5 @@
+use crate::key::LookupKey;
+
 /**
 A RainDB specific iterator implementation that has more cursor-like behavior.
 
@@ -6,27 +8,53 @@ moves one cursor back and forth on the range of values. The `DoubleEndedIterator
 two pointers toward each other and ends iteration onces the two pointers cross.
 */
 pub trait RainDbIterator {
-    /// Position cursor to the first key that is at or past the target.
-    fn seek(&self);
+    type Error;
 
-    /// Position cursor to the first element.
-    fn seek_to_first(&self);
+    /// The iterator is only valid if the cursor is currently positioned at a key-value pair.
+    fn is_valid(&self) -> bool;
 
-    /// Position cursor to the last element.
-    fn seek_to_last(&self);
+    /**
+    Position cursor to the first key that is at or past the target.
 
-    /// Move to the next element.
-    ///
-    /// Returns a tuple (&K, &V) at the position moved to.
-    fn next(&self) -> Option<(&Vec<u8>, &Vec<u8>)>;
+    Returns an error if there was an issue seeking the target and sets the iterator to invalid.
+    */
+    fn seek(&self, target: &LookupKey) -> Result<(), Self::Error>;
 
-    /// Move to the previous element.
-    ///
-    /// Returns a tuple (&K, &V) at the position moved to.
-    fn prev(&self) -> Option<(&Vec<u8>, &Vec<u8>)>;
+    /**
+    Position cursor to the first element.
 
-    /// Return the key and value at the current cursor position.
-    ///
-    /// Returns a tuple (&K, &V) at the position moved to.
-    fn current(&self) -> Option<(&Vec<u8>, &Vec<u8>)>;
+    Returns an error if there was an issue seeking the target and sets the iterator to invalid.
+    */
+    fn seek_to_first(&self) -> Result<(), Self::Error>;
+
+    /**
+    Position cursor to the last element.
+
+    Returns an error if there was an issue seeking the target and sets the iterator to invalid.
+    */
+    fn seek_to_last(&self) -> Result<(), Self::Error>;
+
+    /**
+    Move to the next element.
+
+    Returns a tuple (&K, &V) at the position moved to. If the cursor was on the last element, `None`
+    is returned.
+    */
+    fn next(&self) -> Option<(&LookupKey, &Vec<u8>)>;
+
+    /**
+    Move to the previous element.
+
+    Returns a tuple (&K, &V) at the position moved to. If the cursor was on the last element, `None`
+    is returned.
+    */
+    fn prev(&self) -> Option<(&LookupKey, &Vec<u8>)>;
+
+    /**
+    Return the key and value at the current cursor position.
+
+    Returns a tuple (&K, &V) at current position if the iterator is valid. Otherwise, returns
+    `None`.
+    */
+    fn current(&self) -> Option<(&LookupKey, &Vec<u8>)>;
 }
