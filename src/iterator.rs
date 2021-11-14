@@ -18,21 +18,21 @@ pub trait RainDbIterator {
 
     Returns an error if there was an issue seeking the target and sets the iterator to invalid.
     */
-    fn seek(&self, target: &LookupKey) -> Result<(), Self::Error>;
+    fn seek(&mut self, target: &LookupKey) -> Result<(), Self::Error>;
 
     /**
     Position cursor to the first element.
 
     Returns an error if there was an issue seeking the target and sets the iterator to invalid.
     */
-    fn seek_to_first(&self) -> Result<(), Self::Error>;
+    fn seek_to_first(&mut self) -> Result<(), Self::Error>;
 
     /**
     Position cursor to the last element.
 
     Returns an error if there was an issue seeking the target and sets the iterator to invalid.
     */
-    fn seek_to_last(&self) -> Result<(), Self::Error>;
+    fn seek_to_last(&mut self) -> Result<(), Self::Error>;
 
     /**
     Move to the next element.
@@ -40,7 +40,7 @@ pub trait RainDbIterator {
     Returns a tuple (&K, &V) at the position moved to. If the cursor was on the last element, `None`
     is returned.
     */
-    fn next(&self) -> Option<(&LookupKey, &Vec<u8>)>;
+    fn next(&mut self) -> Option<(&LookupKey, &Vec<u8>)>;
 
     /**
     Move to the previous element.
@@ -48,7 +48,7 @@ pub trait RainDbIterator {
     Returns a tuple (&K, &V) at the position moved to. If the cursor was on the last element, `None`
     is returned.
     */
-    fn prev(&self) -> Option<(&LookupKey, &Vec<u8>)>;
+    fn prev(&mut self) -> Option<(&LookupKey, &Vec<u8>)>;
 
     /**
     Return the key and value at the current cursor position.
