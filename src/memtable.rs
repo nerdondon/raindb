@@ -18,7 +18,7 @@ pub trait MemTable {
 }
 
 pub(crate) struct SkipListMemTable {
-    store: SkipList<Vec<u8>, Vec<u8>>,
+    store: SkipList<LookupKey, Vec<u8>>,
 }
 
 impl SkipListMemTable {
@@ -35,10 +35,10 @@ impl MemTable for SkipListMemTable {
     }
 
     fn insert(&mut self, key: LookupKey, value: Vec<u8>) {
-        self.store.insert(Vec::<u8>::from(&key), value)
+        self.store.insert(key, value)
     }
 
     fn get(&self, key: &LookupKey) -> Option<&Vec<u8>> {
-        self.store.get(&Vec::<u8>::from(key))
+        self.store.get(&key)
     }
 }
