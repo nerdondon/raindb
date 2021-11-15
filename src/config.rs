@@ -1,6 +1,21 @@
 /*!
 This module contains global configuration constants for RainDB.
+
+These values usually correspond to configurable options for LevelDB (in its `options.h` file). To
+get to an MVP and iterate, we keep static values here. These may be made configurable in future
+versions.
 */
+
+/**
+The approximate maximum size of user data that is allowed to be packed into a block of a table
+file.
+
+The data considered here is uncompressed data. The actual size of the data on disk may be smaller
+due to compression.
+
+In LevelDB this is configurable and has a default size of 4 KiB.
+*/
+pub(crate) const MAX_BLOCK_DATA_SIZE: usize = 4 * 1024;
 
 /// The maximum number of SSTable levels that is allowed.
 pub(crate) const MAX_NUM_LEVELS: usize = 7;
