@@ -1,6 +1,12 @@
-use std::ptr::NonNull;
+use parking_lot::RwLock;
+use std::sync::{Arc, Weak};
 
-pub type Link<T> = Option<NonNull<Node<T>>>;
+type Link<T> = Option<SharedNode<T>>;
+
+type WeakLink<T> = Option<Weak<RwLock<Node<T>>>>;
+
+/// A [`Node`] wrapped in concurrency primitives.
+pub type SharedNode<T> = Arc<RwLock<Node<T>>>;
 
 /// A node in the linked list.
 pub struct Node<T> {
@@ -11,15 +17,7 @@ pub struct Node<T> {
     pub next: Link<T>,
 
     /// A link to the previous node.
-    pub prev: Link<T>,
-
-    /**
-    Set to true if the node is not part of a [`LinkedList`].
-
-    This value is important for deallocating a node. The node's memory will only be deallocated
-    if `is_orphan` is set to `true`.
-    */
-    is_orphan: bool,
+    pub prev: WeakLink<T>,
 }
 
 impl<T> Node<T> {
@@ -29,40 +27,7 @@ impl<T> Node<T> {
             element,
             next: None,
             prev: None,
-            is_orphan: false,
         }
-    }
-
-    /// Set the node as orphaned.
-    pub fn set_orphaned(&mut self) {
-        self.is_orphan = true;
-    }
-}
-
-impl<T> Drop for Node<T> {
-    fn drop(&mut self) {
-        // Do not drop the node if it is still part of a list.
-        if !self.is_orphan {
-            return;
-        }
-
-        // Get a raw pointer to this node's memory allocation
-        let node_ptr = NonNull::new(self as *mut Node<T>).unwrap();
-
-        /*
-        Re-box the allocation the pointer represents so that it can get dropped. Insertions
-        leak the boxed node when it is created.
-        */
-        let current_node = unsafe {
-            /*
-            SAFETY:
-            The node was leaked out of a [`Box`] when it was created. This means that the allocation
-            will essentially have a static lifetime (duration of the program). Nothing else in
-            [`LinkedList`] will re-box and deallocate the memory so re-boxing here and dropping is
-            safe.
-            */
-            Box::from_raw(node_ptr.as_mut())
-        };
     }
 }
 
@@ -70,13 +35,6 @@ impl<T> Drop for Node<T> {
 A doubly-linked linked list that exposes it's structural nodes.
 
 The structural nodes are exposed to enable things like O(1) insertion and removal.
-
-# Safety
-
-This linked list exposes it's structural nodes for performance reasons, however clients should be
-careful about keeping references to nodes. There are no guarantees if the node reference is still
-valid. Specifically, the links of the node may be invalid. Therefore, methods returning [`Node`]'s
-are marked unsafe.
 */
 pub struct LinkedList<T> {
     head: Link<T>,
@@ -86,7 +44,7 @@ pub struct LinkedList<T> {
 
 impl<T> LinkedList<T> {
     /// Create a new instance of [`LinkedList`]
-    pub fn new(head: Link<T>, tail: Link<T>) -> Self {
+    pub fn new() -> Self {
         Self {
             head: None,
             tail: None,
@@ -94,124 +52,198 @@ impl<T> LinkedList<T> {
         }
     }
 
-    /**
-    Remove an element from the front of the list.
+    /// Remove an element from the tail of the list.
+    pub fn pop(&mut self) -> Option<T> {
+        self.tail.take().map(|tail_node| {
+            let old_tail_node = tail_node.write();
+            self.tail = match old_tail_node.prev {
+                None => None,
+                Some(prev_node) => Weak::upgrade(&prev_node),
+            };
 
-    # Safety
-
-    There are no guarantees if the node reference is still valid. Therefore, methods returning
-    [`Node`]'s are marked unsafe.
-    */
-    pub unsafe fn pop_front(&mut self) -> Option<T> {
-        self.head.take().map(|head_ptr| {
-            /*
-            SAFETY:
-            Only dereferencing pointers to nodes is done and nodes that exist in the list are
-            intrinsically valid.
-            */
-            unsafe {
-                let old_head_node = head_ptr.as_mut();
-                self.head = old_head_node.next;
-
-                if self.head.is_none() {
-                    self.tail = None;
-                } else {
+            match self.tail {
+                None => {
+                    // There is no new tail node so the list must be empty
+                    self.head = None;
+                }
+                Some(new_tail_node) => {
                     // The new head's previous should now be `None` since it pointed at the old,
                     // removed head
-                    let new_head_node = self.head.as_mut().unwrap().as_mut();
-                    new_head_node.prev = None;
+                    new_tail_node.write().prev = None;
                 }
-
-                self.length -= 1;
-                old_head_node.element
             }
+
+            self.length -= 1;
+
+            old_tail_node.element
         })
     }
 
-    /// Remove an element from the tail of the list.
-    pub unsafe fn pop(&mut self) -> Option<T> {
-        if self.tail.is_none() {
-            return None;
-        }
+    /// Remove an element from the front of the list.
+    pub fn pop_front(&mut self) -> Option<T> {
+        self.head.take().map(|head_node| {
+            let old_head_node = head_node.write();
+            self.head = old_head_node.next;
 
-        self.tail.take().map(|tail_ptr| {});
+            match self.head {
+                None => {
+                    // There is no new head node so the list must be empty
+                    self.tail = None;
+                }
+                Some(new_head_node) => {
+                    // The new head's previous should now be `None` since it pointed at the old,
+                    // removed head
+                    new_head_node.write().prev = None;
+                }
+            }
 
-        Ok(())
+            self.length -= 1;
+
+            old_head_node.element
+        })
     }
 
     /// Push an element onto the back of the list.
-    pub fn push(&mut self, element: T) -> &mut Node<T> {
-        let mut new_node = Box::new(Node::new(element));
-        new_node.prev = self.tail;
+    pub fn push(&mut self, element: T) -> SharedNode<T> {
+        let mut new_node = Arc::new(RwLock::new(Node::new(element)));
+        self.push_node(Arc::clone(&new_node));
 
-        /*
-        `Box::leak` is called so that the node does not get deallocated at the end of the function.
-        The `LinkedList::remove_node` method will ensure to reform the box from the pointer so that
-        node is de-allocated on removal.
-        */
-        let node_ptr = NonNull::new(Box::leak(new_node)).unwrap();
+        new_node
+    }
 
-        if self.tail.is_some() {
-            // SAFETY: Nodes that exist in the list are intrinsically valid.
-            unsafe {
-                let tail_node = self.tail.as_mut().unwrap().as_mut();
-                tail_node.next = Some(node_ptr);
+    /// Push a node onto the back of the list.
+    pub fn push_node(&mut self, node: SharedNode<T>) {
+        node.write().prev = self.tail.map(|tail| Arc::downgrade(&tail));
+        node.write().next = None;
+        let maybe_tail_node = self.tail.map(|tail_node| tail_node.write());
+
+        match maybe_tail_node {
+            Some(tail_node) => {
+                // Fix existing links
+                tail_node.next = Some(node)
             }
-        } else {
-            self.head = Some(node_ptr);
+            None => self.head = Some(node),
         }
 
-        self.tail = Some(node_ptr);
+        self.tail = Some(node);
         self.length += 1;
-
-        return &mut new_node;
     }
 
     /// Push an element onto the front of the list.
-    pub fn push_front(&mut self, elem: T) {
+    pub fn push_front(&mut self, element: T) -> SharedNode<T> {
+        let mut new_node = Arc::new(RwLock::new(Node::new(element)));
+        self.push_node_front(Arc::clone(&new_node));
+
+        new_node
+    }
+
+    /// Push a node onto the front of the list.
+    pub fn push_node_front(&mut self, node: SharedNode<T>) {
+        node.write().prev = None;
+        node.write().next = self.head;
+        let maybe_head_node = self.head.map(|head_node| head_node.write());
+
+        match maybe_head_node {
+            Some(head_node) => {
+                // Fix existing links
+                head_node.prev = Some(Arc::downgrade(&node))
+            }
+            None => self.head = Some(node),
+        }
+
+        self.head = Some(node);
         self.length += 1;
     }
 
     /// Remove the given node from the linked list.
-    pub fn remove_node(&mut self, node: &mut Node<T>) {
-        if node.is_orphan {
-            // Do nothing for orphaned nodes because their links are not guaranteed to be valid.
-            return;
+    pub fn remove_node(&mut self, mutable_node: SharedNode<T>) {
+        let mutable_node = mutable_node.write();
+        let maybe_next_node = mutable_node.next.map(|node| node.write());
+        let maybe_previous_node = match mutable_node.prev {
+            None => None,
+            Some(weak_prev) => Weak::upgrade(&weak_prev).map(|prev_node| prev_node.write()),
+        };
+
+        // Fix the links of the previous and next nodes so that they point at each other instead of
+        // the node we are removing
+        if maybe_previous_node.is_some() {
+            let previous_node = maybe_previous_node.unwrap();
+            previous_node.next = mutable_node.next;
+        } else {
+            // Only head nodes have no previous link
+            self.head = mutable_node.next;
         }
 
-        /*
-        SAFETY: Links of nodes still in the linked list are guaranteed to still be valid since
-        `remove_node` is the only place we set a node to orphaned besides for when the entire list
-        is being dropped.
-        */
-        unsafe {
-            // Fix the links of the previous and next nodes so that they point at each other instead of
-            // the node we are removing
-            if node.prev.is_some() {
-                let previous_node = node.prev.as_mut().unwrap().as_mut();
-                previous_node.next = node.next;
-            }
-
-            if node.next.is_some() {
-                let next_node = node.next.as_mut().unwrap().as_mut();
-                next_node.prev = node.prev;
-            }
+        if maybe_next_node.is_some() {
+            let next_node = maybe_next_node.unwrap();
+            next_node.prev = mutable_node.prev;
+        } else {
+            // Only tail nodes have no next link
+            self.tail = match mutable_node.prev {
+                Some(prev_node) => Weak::upgrade(&prev_node),
+                None => None,
+            };
         }
 
-        node.set_orphaned();
+        self.length -= 1;
+    }
+
+    /// Get the length of the list.
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Returns true if the list is empty, otherwise false.
+    pub fn is_empty(&self) -> bool {
+        self.length <= 0
     }
 }
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
-        let mut current_link = self.head.take();
-        while let Some(mut node_ptr) = current_link {
-            let current_node = unsafe {
-                // SAFTEY: Nodes in the list are guaranteed to be valid.
-                node_ptr.as_mut()
-            };
-            current_node.set_orphaned();
-            current_link = current_node.next.take();
-        }
+        while self.pop_front().is_some() {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn single_threaded_empty_list_returns_zero_length() {
+        let list = LinkedList::<u64>::new();
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn single_threaded_can_push_elements() {
+        let list = LinkedList::<u64>::new();
+        list.push(1);
+        assert_eq!(list.len(), 1);
+        list.push(2);
+        assert_eq!(list.len(), 2);
+        list.push(3);
+        assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn single_threaded_can_pop_elements() {
+        let list = LinkedList::<u64>::new();
+        list.push(1);
+        list.push(2);
+        list.push(3);
+        assert_eq!(list.len(), 3);
+
+        assert_eq!(list.pop(), Some(3));
+        assert_eq!(list.len(), 2);
+
+        assert_eq!(list.pop(), Some(2));
+        assert_eq!(list.len(), 1);
+
+        assert_eq!(list.pop(), Some(1));
+        assert_eq!(list.len(), 0);
+
+        assert_eq!(list.pop(), None);
     }
 }
