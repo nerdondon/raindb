@@ -219,11 +219,17 @@ mod tests {
     #[test]
     fn single_threaded_can_push_elements() {
         let list = LinkedList::<u64>::new();
-        list.push(1);
+
+        let mut pushed = list.push(1);
+        assert_eq!(pushed.read().element, 1);
         assert_eq!(list.len(), 1);
-        list.push(2);
+
+        pushed = list.push(2);
+        assert_eq!(pushed.read().element, 2);
         assert_eq!(list.len(), 2);
-        list.push(3);
+
+        pushed = list.push(3);
+        assert_eq!(pushed.read().element, 3);
         assert_eq!(list.len(), 3);
     }
 
@@ -245,5 +251,76 @@ mod tests {
         assert_eq!(list.len(), 0);
 
         assert_eq!(list.pop(), None);
+    }
+
+    #[test]
+    fn single_threaded_can_push_elements_to_the_front() {
+        let list = LinkedList::<u64>::new();
+
+        list.push_front(1);
+        assert_eq!(list.len(), 1);
+        list.push_front(2);
+        assert_eq!(list.len(), 2);
+        list.push_front(3);
+        assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn single_threaded_can_pop_elements_from_the_front() {
+        let list = LinkedList::<u64>::new();
+        list.push(1);
+        list.push(2);
+        list.push(3);
+        assert_eq!(list.len(), 3);
+
+        assert_eq!(list.pop_front(), Some(1));
+        assert_eq!(list.len(), 2);
+
+        assert_eq!(list.pop_front(), Some(2));
+        assert_eq!(list.len(), 1);
+
+        assert_eq!(list.pop_front(), Some(3));
+        assert_eq!(list.len(), 0);
+
+        assert_eq!(list.pop_front(), None);
+    }
+
+    #[test]
+    fn single_threaded_list_can_unlink_head() {
+        let list = LinkedList::<u64>::new();
+        let mut pushed = list.push(1);
+        list.push(2);
+        list.push(3);
+
+        list.remove_node(pushed);
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.pop_front(), Some(2));
+    }
+
+    #[test]
+    fn single_threaded_list_can_unlink_tail() {
+        let list = LinkedList::<u64>::new();
+        list.push(1);
+        list.push(2);
+        let mut pushed = list.push(3);
+
+        list.remove_node(pushed);
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.pop(), Some(2));
+    }
+
+    #[test]
+    fn single_threaded_list_can_unlink_node_from_middle() {
+        let list = LinkedList::<u64>::new();
+        list.push(1);
+        let mut pushed = list.push(2);
+        list.push(3);
+
+        list.remove_node(pushed);
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.pop_front(), None);
     }
 }
