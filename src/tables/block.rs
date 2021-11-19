@@ -2,16 +2,18 @@ use integer_encoding::{FixedInt, VarInt};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 
+use crate::config::SIZE_OF_U32_BYTES;
 use crate::iterator::RainDbIterator;
 use crate::key::LookupKey;
 
 use super::errors::{ReadError, TableResult};
 
-/// The size of a `u32` in bytes.
-const SIZE_OF_U32_BYTES: usize = 4;
+pub(crate) type DataBlock = BlockReader<LookupKey>;
+
+pub(crate) type MetaIndexBlock = BlockReader<String>;
 
 /// An entry in a block.
-struct BlockEntry {
+struct BlockEntry<K> {
     /// The offset that this block entry is at in the parent block.
     block_offset: usize,
 
@@ -36,14 +38,17 @@ struct BlockEntry {
     key_delta: Vec<u8>,
 
     /// The full, deserialized key.
-    key: LookupKey,
+    key: K,
 
     /// The value of the entry.
     value: Vec<u8>,
 }
 
 /// Reader for deserializing a block from the table file and iterating its entries.
-pub(crate) struct BlockReader {
+pub(crate) struct BlockReader<K>
+where
+    for<'k> K: Eq + TryFrom<&'k [u8]>,
+{
     /// The unserialized data contained within the block.
     raw_data: Vec<u8>,
 
@@ -54,14 +59,17 @@ pub(crate) struct BlockReader {
     restart_offset: usize,
 
     /// The deserialized entries within a block.
-    block_entries: Vec<BlockEntry>,
+    block_entries: Vec<BlockEntry<K>>,
 
     /// The indexes within `block_entries` that contain restart points.
     restart_point_indexes: Vec<usize>,
 }
 
 // Public methods
-impl BlockReader {
+impl<K> BlockReader<K>
+where
+    for<'k> K: Eq + TryFrom<&'k [u8]>,
+{
     /// Create a new instance of a [`BlockReader`].
     pub fn new(raw_data: Vec<u8>) -> TableResult<Self> {
         if raw_data.len() < SIZE_OF_U32_BYTES {
@@ -100,7 +108,7 @@ impl BlockReader {
     }
 
     /// Get a [`crate::iterator::RainDbIterator`] to the block entries.
-    pub fn iter(&self) -> BlockIter<'_> {
+    pub fn iter(&self) -> BlockIter<'_, K> {
         BlockIter {
             current_index: 0,
             block_entries: &self.block_entries,
@@ -109,7 +117,10 @@ impl BlockReader {
 }
 
 // Private methods
-impl BlockReader {
+impl<K> BlockReader<K>
+where
+    for<'k> K: Eq + TryFrom<&'k [u8]>,
+{
     /**
     Deserialize block entries.
 
@@ -129,7 +140,7 @@ impl BlockReader {
     fn deserialize_entries(
         buf: &[u8],
         restart_point_offsets: Vec<u32>,
-    ) -> TableResult<(Vec<BlockEntry>, Vec<usize>)> {
+    ) -> TableResult<(Vec<BlockEntry<K>>, Vec<usize>)> {
         let mut block_entries: Vec<BlockEntry> = vec![];
         let mut restart_point_indexes: Vec<usize> = vec![];
         let mut restart_offsets_index = 0;
@@ -179,7 +190,7 @@ impl BlockReader {
             // Combine the two parts of the keys and try to deserialize
             current_full_key_buffer.truncate(key_num_shared_bytes as usize);
             current_full_key_buffer.extend_from_slice(&key_delta);
-            let key = LookupKey::try_from(&current_full_key_buffer)?;
+            let key = K::try_from(&current_full_key_buffer)?;
             current_offset = key_end_offset;
 
             // Parse value
@@ -260,29 +271,30 @@ impl BlockReader {
 }
 
 /// Iterator adapter used to maintain iteration state.
-pub(crate) struct BlockIter<'a> {
+pub(crate) struct BlockIter<'a, K> {
     /// The index to the current entry in the `block_entries` vector.
     current_index: usize,
 
     /// The deserialized entries within a block.
-    block_entries: &'a [BlockEntry],
+    block_entries: &'a [BlockEntry<K>],
 }
 
-impl<'a> BlockIter<'a> {
+/// Private methods
+impl<'a, K> BlockIter<'a, K> {
     /// Update iterator adapter state to point at the entry at the specified restart point.
     fn seek_to_restart_point(&self, restart_point_index: usize) {
         self.current_index = restart_point_index;
     }
 }
 
-impl<'a> RainDbIterator for BlockIter<'a> {
+impl<'a, K> RainDbIterator<K> for BlockIter<'a, K> {
     type Error = ReadError;
 
     fn is_valid(&self) -> bool {
         self.current_index >= 0 && self.current_index < self.block_entries.len()
     }
 
-    fn seek(&mut self, target: &LookupKey) -> Result<(), Self::Error> {
+    fn seek(&mut self, target: &K) -> Result<(), Self::Error> {
         // Check if the cursor is already at the target
         if self.is_valid() {
             let (current_key, _) = self.current().unwrap();
@@ -329,7 +341,7 @@ impl<'a> RainDbIterator for BlockIter<'a> {
         Ok(())
     }
 
-    fn next(&mut self) -> Option<(&LookupKey, &Vec<u8>)> {
+    fn next(&mut self) -> Option<(&K, &Vec<u8>)> {
         // The iterator is not valid, don't do anything
         if !self.is_valid() {
             return None;
@@ -345,7 +357,7 @@ impl<'a> RainDbIterator for BlockIter<'a> {
         return None;
     }
 
-    fn prev(&mut self) -> Option<(&LookupKey, &Vec<u8>)> {
+    fn prev(&mut self) -> Option<(&K, &Vec<u8>)> {
         // The iterator is not valid, don't do anything
         if !self.is_valid() {
             return None;
@@ -361,7 +373,7 @@ impl<'a> RainDbIterator for BlockIter<'a> {
         return None;
     }
 
-    fn current(&self) -> Option<(&LookupKey, &Vec<u8>)> {
+    fn current(&self) -> Option<(&K, &Vec<u8>)> {
         if !self.is_valid() {
             return None;
         }
