@@ -19,7 +19,10 @@ the file.
 */
 #[derive(Debug)]
 pub(crate) struct BlockHandle {
+    /// The offset in the raw byte buffer that the block resides.
     offset: u64,
+
+    /// The size of the block.
     size: u64,
 }
 
