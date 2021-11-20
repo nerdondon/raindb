@@ -1,4 +1,12 @@
 /*!
+This module contains implementations of keys used to index values in the RainDB. There are two main
+keys that are used:
+
+    1. Lookup keys for looking up values in the database
+    1. Metaindex keys that are used for looking up metadata in table files
+
+# More on lookup keys
+
 Entries in the database are represented by an internal key that adds additional metadata e.g. a
 sequence number and the operation that was performed.
 
@@ -10,6 +18,14 @@ The sequence number is used to denote which of the stored records is the most re
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+
+/**
+Trait that decorates keys in RainDB that are sortable and deserializable.
+
+This applies to the internal lookup key as well as the key used for sorting meta blocks in table
+files.
+*/
+pub trait RainDbKeyType: Ord + TryFrom<Vec<u8>> {}
 
 /** This is the actual key used by RainDB. It is the user provided key with additional metadata. */
 #[derive(Debug, Deserialize, Eq, Hash, Serialize)]
@@ -80,13 +96,13 @@ impl PartialEq for LookupKey {
     }
 }
 
-impl TryFrom<&Vec<u8>> for LookupKey {
+impl TryFrom<Vec<u8>> for LookupKey {
     type Error = bincode::Error;
 
-    fn try_from(value: &Vec<u8>) -> bincode::Result<LookupKey> {
+    fn try_from(value: Vec<u8>) -> bincode::Result<LookupKey> {
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
-            .deserialize(value)
+            .deserialize(&value)
     }
 }
 
@@ -99,6 +115,8 @@ impl From<&LookupKey> for Vec<u8> {
     }
 }
 
+impl RainDbKeyType for LookupKey {}
+
 /// The operation that is being applied to an entry in the database.
 #[repr(u8)]
 #[derive(Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -108,3 +126,6 @@ pub(crate) enum Operation {
     /// Add a new key-value pair or updates an existing key-value pair.
     Put = 1,
 }
+
+/// A prefix for filter block keys.
+pub(crate) const FILTER_BLOCK_KEY_PREFIX: String = "filter".to_string();

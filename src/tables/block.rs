@@ -4,13 +4,17 @@ use std::convert::TryFrom;
 
 use crate::config::SIZE_OF_U32_BYTES;
 use crate::iterator::RainDbIterator;
+use crate::key;
 use crate::key::LookupKey;
+use crate::key::RainDbKeyType;
 
 use super::errors::{ReadError, TableResult};
 
-pub(crate) type DataBlock = BlockReader<LookupKey>;
+/// A block where the keys of entries are RainDB lookup keys.
+pub(crate) type DataBlockReader = BlockReader<LookupKey>;
 
-pub(crate) type MetaIndexBlock = BlockReader<String>;
+/// A block where the keys of entries are metaindex keys.
+pub(crate) type MetaIndexBlockReader = BlockReader<MetaIndexKey>;
 
 /// An entry in a block.
 struct BlockEntry<K> {
@@ -47,7 +51,7 @@ struct BlockEntry<K> {
 /// Reader for deserializing a block from the table file and iterating its entries.
 pub(crate) struct BlockReader<K>
 where
-    for<'k> K: Eq + TryFrom<&'k [u8]>,
+    K: RainDbKeyType,
 {
     /// The unserialized data contained within the block.
     raw_data: Vec<u8>,
@@ -68,7 +72,7 @@ where
 // Public methods
 impl<K> BlockReader<K>
 where
-    for<'k> K: Eq + TryFrom<&'k [u8]>,
+    K: RainDbKeyType,
 {
     /// Create a new instance of a [`BlockReader`].
     pub fn new(raw_data: Vec<u8>) -> TableResult<Self> {
@@ -85,7 +89,7 @@ where
         // The array of restart points is right before the number of restart points when serialized.
         let restart_offset =
             raw_data.len() - (1 + (num_restart_points as usize)) * SIZE_OF_U32_BYTES;
-        let restart_point_offsets = BlockReader::deserialize_restart_offsets(
+        let restart_point_offsets = BlockReader::<K>::deserialize_restart_offsets(
             &raw_data[restart_offset..(raw_data.len() - SIZE_OF_U32_BYTES)],
             num_restart_points,
         )?;
@@ -119,7 +123,7 @@ where
 // Private methods
 impl<K> BlockReader<K>
 where
-    for<'k> K: Eq + TryFrom<&'k [u8]>,
+    K: RainDbKeyType,
 {
     /**
     Deserialize block entries.
@@ -141,7 +145,7 @@ where
         buf: &[u8],
         restart_point_offsets: Vec<u32>,
     ) -> TableResult<(Vec<BlockEntry<K>>, Vec<usize>)> {
-        let mut block_entries: Vec<BlockEntry> = vec![];
+        let mut block_entries: Vec<BlockEntry<K>> = vec![];
         let mut restart_point_indexes: Vec<usize> = vec![];
         let mut restart_offsets_index = 0;
         let mut current_offset = 0;
@@ -190,7 +194,17 @@ where
             // Combine the two parts of the keys and try to deserialize
             current_full_key_buffer.truncate(key_num_shared_bytes as usize);
             current_full_key_buffer.extend_from_slice(&key_delta);
-            let key = K::try_from(&current_full_key_buffer)?;
+            let maybe_key = K::try_from(current_full_key_buffer.clone());
+            let key: K;
+            match maybe_key {
+                Err(_base_err) => {
+                    return Err(ReadError::FailedToParse(
+                        "Failed to fully deserialize an entry. The key may be corrupted."
+                            .to_string(),
+                    ));
+                }
+                Ok(k) => key = k,
+            }
             current_offset = key_end_offset;
 
             // Parse value
@@ -271,7 +285,10 @@ where
 }
 
 /// Iterator adapter used to maintain iteration state.
-pub(crate) struct BlockIter<'a, K> {
+pub(crate) struct BlockIter<'a, K>
+where
+    K: RainDbKeyType,
+{
     /// The index to the current entry in the `block_entries` vector.
     current_index: usize,
 
@@ -280,14 +297,20 @@ pub(crate) struct BlockIter<'a, K> {
 }
 
 /// Private methods
-impl<'a, K> BlockIter<'a, K> {
+impl<'a, K> BlockIter<'a, K>
+where
+    K: RainDbKeyType,
+{
     /// Update iterator adapter state to point at the entry at the specified restart point.
     fn seek_to_restart_point(&self, restart_point_index: usize) {
         self.current_index = restart_point_index;
     }
 }
 
-impl<'a, K> RainDbIterator<K> for BlockIter<'a, K> {
+impl<'a, K> RainDbIterator<K> for BlockIter<'a, K>
+where
+    K: RainDbKeyType,
+{
     type Error = ReadError;
 
     fn is_valid(&self) -> bool {
@@ -380,5 +403,32 @@ impl<'a, K> RainDbIterator<K> for BlockIter<'a, K> {
 
         let current_entry = self.block_entries[self.current_index];
         Some((&current_entry.key, &current_entry.value))
+    }
+}
+
+/**
+A newtype that represents a metaindex and meta block key.
+
+The newtype is necessary so that we can implement the `TryFrom` trait to deserialize a byte array
+to the string value.
+*/
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct MetaIndexKey(String);
+
+impl RainDbKeyType for MetaIndexKey {}
+
+impl TryFrom<Vec<u8>> for MetaIndexKey {
+    type Error = ReadError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        let maybe_key = std::str::from_utf8(&value);
+        match maybe_key {
+            Err(_base_err) => {
+                return Err(ReadError::FailedToParse(
+                    "Failed to parse the string for the metaindex key.".to_string(),
+                ));
+            }
+            Ok(key) => return Ok(MetaIndexKey(key.to_string())),
+        }
     }
 }
