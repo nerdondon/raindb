@@ -36,12 +36,24 @@ pub(crate) struct Footer {
     index_handle: BlockHandle,
 }
 
+/// Public methods
 impl Footer {
+    /// Create a new instance of [`Footer`].
     pub fn new(metaindex_handle: BlockHandle, index_handle: BlockHandle) -> Self {
         Self {
             metaindex_handle,
             index_handle,
         }
+    }
+
+    /// Get a reference to the metaindex block handle.
+    pub fn get_metaindex_handle(&self) -> &BlockHandle {
+        &self.metaindex_handle
+    }
+
+    /// Get a reference to the index block handle.
+    pub fn get_index_handle(&self) -> &BlockHandle {
+        &self.index_handle
     }
 }
 

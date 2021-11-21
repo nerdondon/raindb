@@ -4,9 +4,7 @@ use std::convert::TryFrom;
 
 use crate::config::SIZE_OF_U32_BYTES;
 use crate::iterator::RainDbIterator;
-use crate::key;
-use crate::key::LookupKey;
-use crate::key::RainDbKeyType;
+use crate::key::{LookupKey, RainDbKeyType};
 
 use super::errors::{ReadError, TableResult};
 
