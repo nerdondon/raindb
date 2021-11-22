@@ -6,6 +6,11 @@ get to an MVP and iterate, we keep static values here. These may be made configu
 versions.
 */
 
+use serde::{Deserialize, Serialize};
+
+/// The size of a `u32` in bytes.
+pub(crate) const SIZE_OF_U32_BYTES: usize = 4;
+
 /**
 The approximate maximum size of user data that is allowed to be packed into a block of a table
 file.
@@ -65,3 +70,33 @@ approximately one seek for every 16KB of data before triggering a compaction.
 TODO: Make allowed_seeks tunable (https://github.com/google/leveldb/issues/229)
 */
 pub(crate) const SEEK_DATA_SIZE_THRESHOLD_KIB: u64 = 16 * 1024;
+
+/**
+The compression types available for blocks within a table file.
+
+# LevelDB's analysis
+
+Typical speeds of Snappy compression on an Intel(R) Core(TM)2 2.4GHz:
+   ~200-500MB/s compression
+   ~400-800MB/s decompression
+Note that these speeds are significantly faster than most persistent storage speeds, and
+therefore it is typically never worth switching to kNoCompression. Even if the input data is
+incompressible, the Snappy compression implementation will efficiently detect that and will switch
+to uncompressed mode.
+*/
+#[repr(u8)]
+#[derive(Debug, Deserialize, Serialize)]
+pub enum TableFileCompressionType {
+    /// No compression.
+    None = 0,
+    /// Snappy compression.
+    Snappy,
+}
+
+/**
+The compression type to use for blocks within a table file.
+
+The default is [`TableFileCompressionType::Snappy`].
+*/
+pub(crate) const TABLE_FILE_COMPRESSION_TYPE: TableFileCompressionType =
+    TableFileCompressionType::Snappy;
