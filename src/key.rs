@@ -126,6 +126,3 @@ pub(crate) enum Operation {
     /// Add a new key-value pair or updates an existing key-value pair.
     Put = 1,
 }
-
-/// A prefix for filter block keys.
-pub(crate) const FILTER_BLOCK_KEY_PREFIX: String = "filter".to_string();
