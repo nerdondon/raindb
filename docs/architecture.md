@@ -181,18 +181,35 @@ can refer to the
 #### Table File Sections
 
 The key-value pairs in the file are stored in sorted order and partitioned into a sequence of data
-blocks. These data blocks are prefix-compressed and the entire block is further compressed by a
-compression algorithm (e.g. Snappy).
+blocks. These data blocks have their keys prefix-compressed in order save space.
 
 The meta blocks contain auxiliary information (e.g. a Bloom filter) to provide stats and improve
 access to the data.
 
-The metaindex block contains an entry for every meta block where the key is the name of the meta
-block and the value is a block handle.
+The metaindex block contains an entry for every meta block where the key is the name (a string) of
+the meta block and the value is a block handle.
 
-The index block contains an entry for each data block where the key is a string >= the last key in
-that data block and before the first key of the next data block. The value is a block handle to the
-data block.
+The index block contains an entry for each data block where the key is a internal lookup key and the
+value is a block handle to the data block. Keys are sorted such that a key in the index is >= the
+last key in that data block and greater than the first key of the next data block.
+
+Each of these blocks are optionally compressed. This information as well as a checksum are stored
+after each block in what we will call the block descriptor. In LevelDB, this is confusingly called
+the block trailer. This is confusing because LevelDB already has a concept of a block trailer
+[within the block itself](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/block_builder.cc#L24-L27)--we
+describe block format more below--and LevelDB also
+[calls this descriptor the block trailer](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/format.h#L78-L79).
+The block descriptor is serialized as follows:
+
+```rust
+struct BlockDescriptor {
+    /// 1-byte enum representing the compression type of the block.
+    CompressionType compression_type,
+
+    /// 32-bit CRC
+    crc: u32,
+}
+```
 
 At the end of the file there is a fixed size footer. Currently, the footer is 48 bytes long. A table
 file's footer consists of the following parts:
@@ -245,10 +262,11 @@ and a scan over that range is done to fetch data for a specific key. This is don
 improve lookup times. LevelDB has a tendency to keep allocations to a minimum and only have
 references to byte buffers. As relates to the restart points, this means that block entries are
 lazily deserialized (e.g.
-[when an iterator is seeking](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/block.cc#L187-L226)).
-I do not know if saving allocations a goal of LevelDB, but the information for deserialized block
-entries is not stored. If a block is not fully iterated, I guess this is some work saved. If the
-block gets fully iterated or is iterated multiple times, then the deserialization is repetitive.
+[when an iterator is seeking](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/block.cc#L187-L226))
+and that prefix-compressed keys are lazily reconstructed. I do not know if saving allocations a goal
+of LevelDB, but the information for deserialized block entries is not stored. If a block is not
+fully iterated, I guess this is some work saved. If the block gets fully iterated or is iterated
+multiple times, then the deserialization is repetitive.
 
 An alternative is to just eat the cost of fully deserializing the entries of a block on
 initialization. LevelDB already does a linear scan to parse entries within a section after the
