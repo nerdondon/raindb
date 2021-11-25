@@ -11,6 +11,7 @@ use crate::filter_policy::{BloomFilterPolicy, FilterPolicy};
 use crate::fs::{FileSystem, OsFileSystem};
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::tables::block::DataBlockReader;
+use crate::tables::BlockCacheKey;
 use crate::utils::cache::LRUCache;
 use crate::write_ahead_log::WALWriter;
 use crate::Cache;
@@ -75,7 +76,7 @@ pub struct DbOptions {
 
     **This defaults to an 8 MiB internal cache if not set.**
     */
-    block_cache: Arc<Box<dyn Cache<Vec<u8>, DataBlockReader>>>,
+    block_cache: Arc<Box<dyn Cache<BlockCacheKey, DataBlockReader>>>,
 }
 
 /// Public methods
@@ -106,7 +107,7 @@ impl DbOptions {
     }
 
     /// Get a strong reference to the block cache.
-    pub fn block_cache(&self) -> Arc<Box<dyn Cache<Vec<u8>, DataBlockReader>>> {
+    pub fn block_cache(&self) -> Arc<Box<dyn Cache<BlockCacheKey, DataBlockReader>>> {
         Arc::clone(&self.block_cache)
     }
 }
@@ -123,7 +124,7 @@ impl Default for DbOptions {
             max_file_size: 2 * 1024 * 1024,
             filesystem_provider: Arc::new(Box::new(OsFileSystem::new())),
             filter_policy: Arc::new(Box::new(BloomFilterPolicy::new(10))),
-            block_cache: Arc::new(Box::new(LRUCache::<Vec<u8>, DataBlockReader>::new(
+            block_cache: Arc::new(Box::new(LRUCache::<BlockCacheKey, DataBlockReader>::new(
                 8 * 1024 * 1024,
             ))),
         }

@@ -230,4 +230,43 @@ impl Table {
         }
     }
 }
+
+/**
+The key used to index into the block cache.
+
+# Serialization
+
+The key is serialized as a 16 byte value with the cache partition ID in the first byte and the
+block offset in the second byte.
+*/
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct BlockCacheKey {
+    /// The cache partition ID that the parent table is using for storage.
+    cache_partition_id: u64,
+
+    /// The offset to the block in the table file.
+    block_offset: u64,
+}
+
+/// Public methods
+impl BlockCacheKey {
+    /// Create a new instance of [`BlockCacheKey`].
+    pub fn new(cache_partition_id: u64, block_offset: u64) -> Self {
+        Self {
+            cache_partition_id,
+            block_offset,
+        }
+    }
+}
+
+impl From<&BlockCacheKey> for Vec<u8> {
+    fn from(value: &BlockCacheKey) -> Self {
+        // We should only need 8 bytes for the partition id + 8 bytes for the offset = 16 bytes.
+        let serialized_value = Vec::with_capacity(8 + 8);
+        serialized_value.append(&mut u64::encode_fixed_vec(value.cache_partition_id));
+        serialized_value.append(&mut u64::encode_fixed_vec(value.block_offset));
+
+        serialized_value
+    }
 }
