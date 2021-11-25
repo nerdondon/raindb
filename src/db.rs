@@ -2,21 +2,24 @@
 The database module contains the primary API for interacting with the key-value store.
 */
 
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::errors::RainDBResult;
 use crate::file_names::{DATA_DIR, WAL_DIR};
+use crate::filter_policy::{BloomFilterPolicy, FilterPolicy};
 use crate::fs::{FileSystem, OsFileSystem};
 use crate::memtable::{MemTable, SkipListMemTable};
+use crate::tables::block::DataBlockReader;
+use crate::utils::cache::LRUCache;
 use crate::write_ahead_log::WALWriter;
+use crate::Cache;
 
 /**
 Holds options to control database behavior.
 
 There is a mix of options to configure here that are remniscent of those configurable in
-LevelDb and RocksDb.
+LevelDB and RocksDB.
 */
 #[derive(Debug)]
 pub struct DbOptions {
@@ -26,7 +29,7 @@ pub struct DbOptions {
 
     **This defaults to the current working directory.**
     */
-    pub db_path: String,
+    db_path: String,
 
     /**
     The maximum size that the memtable can reach before it is flushed to disk.
@@ -36,7 +39,7 @@ pub struct DbOptions {
 
     **This defaults to 4 MiB.**
     */
-    pub write_buffer_size: usize,
+    write_buffer_size: usize,
 
     /**
     This amount of bytes will be written to a file before switching to a new one.
@@ -48,14 +51,64 @@ pub struct DbOptions {
 
     **This defaults to 2 MiB.**
     */
-    pub max_file_size: usize,
+    max_file_size: usize,
 
     /**
     A wrapper around a particular file system to use.
 
-    **This defaults to [`OsFileSystem`](crate::fs::OsFileSystem)**
+    **This defaults to [`OsFileSystem`](crate::fs::OsFileSystem).**
     */
-    filesystem_provider: Rc<RefCell<Box<dyn FileSystem>>>,
+    filesystem_provider: Arc<Box<dyn FileSystem>>,
+
+    /**
+    The filter policy to use for filtering requests to table files to reduce disk seeks.
+
+    **This defaults to [`BloomFilterPolicy`](crate::filter_policy::BloomFilterPolicy).**
+    */
+    filter_policy: Arc<Box<dyn FilterPolicy>>,
+
+    /**
+    Cache used to store blocks read from disk in-memory to save on disk reads.
+
+    This cache store uncompressed data so--if changed--the cache size should be appropriate to the
+    application using the database.
+
+    **This defaults to an 8 MiB internal cache if not set.**
+    */
+    block_cache: Arc<Box<dyn Cache<Vec<u8>, DataBlockReader>>>,
+}
+
+/// Public methods
+impl DbOptions {
+    /// Get the database path.
+    pub fn db_path(&self) -> &str {
+        self.db_path.as_str()
+    }
+
+    /// Get the write buffer size.
+    pub fn write_buffer_size(&self) -> usize {
+        self.write_buffer_size
+    }
+
+    /// Get the databases maximum table file size.
+    pub fn max_file_size(&self) -> &usize {
+        &self.max_file_size
+    }
+
+    /// Get a strong reference to the file system provider.
+    pub fn filesystem_provider(&self) -> Arc<Box<dyn FileSystem>> {
+        Arc::clone(&self.filesystem_provider)
+    }
+
+    /// Get a strong reference to the filter policy.
+    pub fn filter_policy(&self) -> Arc<Box<dyn FilterPolicy>> {
+        Arc::clone(&self.filter_policy)
+    }
+
+    /// Get a strong reference to the block cache.
+    pub fn block_cache(&self) -> Arc<Box<dyn Cache<Vec<u8>, DataBlockReader>>> {
+        Arc::clone(&self.block_cache)
+    }
 }
 
 impl Default for DbOptions {
@@ -68,7 +121,11 @@ impl Default for DbOptions {
                 .to_owned(),
             write_buffer_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
-            filesystem_provider: Rc::new(RefCell::new(Box::new(OsFileSystem::new()))),
+            filesystem_provider: Arc::new(Box::new(OsFileSystem::new())),
+            filter_policy: Arc::new(Box::new(BloomFilterPolicy::new(10))),
+            block_cache: Arc::new(Box::new(LRUCache::<Vec<u8>, DataBlockReader>::new(
+                8 * 1024 * 1024,
+            ))),
         }
     }
 }
@@ -86,8 +143,8 @@ impl DB {
             options
         );
 
-        let fs = Rc::clone(&options.filesystem_provider);
-        let db_path = &options.db_path;
+        let fs = options.filesystem_provider();
+        let db_path = options.db_path();
 
         // Create DB root directory
         log::info!("Creating DB root directory at {}.", &db_path);
@@ -97,12 +154,12 @@ impl DB {
         let mut data_path = PathBuf::from(&db_path);
         data_path.push(DATA_DIR);
 
-        fs.borrow_mut().create_dir_all(&root_path)?;
-        fs.borrow_mut().create_dir(&wal_path)?;
-        fs.borrow_mut().create_dir(&data_path)?;
+        fs.create_dir_all(&root_path)?;
+        fs.create_dir(&wal_path)?;
+        fs.create_dir(&data_path)?;
 
         // Create WAL
-        let wal = WALWriter::new(Rc::clone(&fs), wal_path.to_str().unwrap())?;
+        let wal = WALWriter::new(Arc::clone(&fs), wal_path.to_str().unwrap())?;
 
         // Create memtable
         let memtable = Box::new(SkipListMemTable::new());
