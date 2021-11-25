@@ -285,6 +285,60 @@ case we try to go for full compatibility with LevelDB later on.
 
 #### Meta block types
 
+##### Filter meta block
+
+The filter block represents the `FilterPolicy` used by the database. A filter block is stored in
+each table to represent the applied filter policy. The metaindex block contains an entry that maps
+from a string `filter.<Name>` to the block handle for the filter block where `<Name>` is the string
+returned by the filter policy's `get_name` method.
+
+With regards to filters, data blocks are divided into ranges of a set size and a filter is created
+for all of the keys of the blocks that fall in each range:
+
+```text
+[i * range_size...(i+1) * range_size - 1]
+```
+
+Currently, filters are created for 2 KiB ranges. As an example, suppose that blocks X and Y start in
+the range `[0KiB...2KiB - 1 byte]`. Then all of the keys of blocks X and Y will be converted to a
+filter by calling the `create_filter` method with those keys. This filter is stored as the first
+filter in the filter block.
+
+The filter block has the following format:
+
+```text
+[filter 0]
+[filter 1]
+[filter 2]
+...
+[filter N-1]
+
+[offset of filter 0]                  : 4 bytes
+[offset of filter 1]                  : 4 bytes
+[offset of filter 2]                  : 4 bytes
+...
+[offset of filter N-1]                : 4 bytes
+
+[offset to beginning of offset array] : 4 bytes
+log(range_size)                       : 1 byte
+```
+
+The offset array at the end of the filter block allows efficient mapping from a data block offset to
+the corresponding filter.
+
+The size of the range has a base 2 logarithm applied to it to save on storage. The LevelDB documents
+calls what is called range size here: "base". This can be confusing at first glance because the base
+of the logarithm is 2 and I'm not sure the word "base" is particularly accurate in describing the
+range of blocks covered by a filter.
+
+##### Stats meta block
+
+_RainDB does not have this block type but for completeness we list a description here from LevelDB.
+Actually even this is listed as a `TODO` for LevelDB._
+
+This meta block contains a sequence of key-values pairs for various statistics. The key is the name
+of the statistic and the value contains the statistic.
+
 ## Operations
 
 ### Writes
