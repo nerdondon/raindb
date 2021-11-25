@@ -65,11 +65,11 @@ impl FileSystem for InMemoryFileSystem {
         "InMemoryFileSystem".to_string()
     }
 
-    fn create_dir(&mut self, _path: &Path) -> io::Result<()> {
+    fn create_dir(&self, _path: &Path) -> io::Result<()> {
         Ok(())
     }
 
-    fn create_dir_all(&mut self, _path: &Path) -> io::Result<()> {
+    fn create_dir_all(&self, _path: &Path) -> io::Result<()> {
         Ok(())
     }
 

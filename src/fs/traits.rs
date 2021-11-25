@@ -35,10 +35,10 @@ pub trait FileSystem {
     fn get_name(&self) -> String;
 
     /// Creates a new, empty directory at the provided path.
-    fn create_dir(&mut self, path: &Path) -> Result<()>;
+    fn create_dir(&self, path: &Path) -> Result<()>;
 
     /// Recursively create a directory and all of its parent components if they are missing.
-    fn create_dir_all(&mut self, path: &Path) -> Result<()>;
+    fn create_dir_all(&self, path: &Path) -> Result<()>;
 
     // List the contents of the given `path`.
     fn list_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;

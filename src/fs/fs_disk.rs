@@ -67,11 +67,11 @@ impl FileSystem for OsFileSystem {
         "OsFileSystem".to_string()
     }
 
-    fn create_dir(&mut self, path: &Path) -> io::Result<()> {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
         fs::create_dir(path)
     }
 
-    fn create_dir_all(&mut self, path: &Path) -> io::Result<()> {
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
     }
 
@@ -145,13 +145,13 @@ impl FileSystem for TmpFileSystem {
         "TmpFileSystem".to_string()
     }
 
-    fn create_dir(&mut self, path: &Path) -> io::Result<()> {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
         self.temp_dirs.push(TempDir::new_in(path)?);
 
         Ok(())
     }
 
-    fn create_dir_all(&mut self, _path: &Path) -> io::Result<()> {
+    fn create_dir_all(&self, _path: &Path) -> io::Result<()> {
         unimplemented!("Not supported by tempfile crate.")
     }
 

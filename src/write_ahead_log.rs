@@ -18,11 +18,10 @@ data in subsequent blocks.
 
 use bincode::Options;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::io::{self, ErrorKind, SeekFrom, Write};
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::errors::WALIOError;
 use crate::file_names::FileNameHandler;
@@ -92,7 +91,7 @@ impl TryFrom<&Vec<u8>> for BlockRecord {
 /** Handles all write activity to the write-ahead log. */
 pub(crate) struct WALWriter {
     /** A wrapper around a particular file system to use. */
-    fs: Rc<RefCell<Box<dyn FileSystem>>>,
+    fs: Arc<Box<dyn FileSystem>>,
 
     /** The underlying file representing the WAL.  */
     wal_file: Box<dyn RandomAccessFile>,
@@ -117,19 +116,16 @@ impl WALWriter {
     * `fs`- The wrapped file system to use for I/O.
     * `db_path` - The absolute path where the database files reside.
     */
-    pub fn new<P: AsRef<Path>>(
-        fs: Rc<RefCell<Box<dyn FileSystem>>>,
-        db_path: P,
-    ) -> WALIOResult<Self> {
+    pub fn new<P: AsRef<Path>>(fs: Arc<Box<dyn FileSystem>>, db_path: P) -> WALIOResult<Self> {
         let file_name_handler =
             FileNameHandler::new(db_path.as_ref().to_str().unwrap().to_string());
         let wal_path = file_name_handler.get_wal_path();
 
         log::info!("Creating WAL file at {}", wal_path.as_path().display());
-        let wal_file = fs.borrow_mut().create_file(wal_path.as_path())?;
+        let wal_file = fs.create_file(wal_path.as_path())?;
 
         let mut block_offset = 0;
-        let wal_file_size = fs.borrow_mut().get_file_size(&wal_path)? as usize;
+        let wal_file_size = fs.get_file_size(&wal_path)? as usize;
         if wal_file_size > 0 {
             block_offset = wal_file_size % BLOCK_SIZE_BYTES;
         }
@@ -220,7 +216,7 @@ impl WALWriter {
 /** Handles all read activity to the write-ahead log. */
 pub(crate) struct WALReader {
     /** A wrapper around a particular file system to use. */
-    fs: Rc<RefCell<Box<dyn FileSystem>>>,
+    fs: Arc<Box<dyn FileSystem>>,
 
     /** The underlying file representing the WAL.  */
     wal_file: Box<dyn ReadonlyRandomAccessFile>,
@@ -253,7 +249,7 @@ impl WALReader {
     * `initial_block_offset` - An initial offset to start reading the WAL from.
     */
     pub fn new<P: AsRef<Path>>(
-        fs: Rc<RefCell<Box<dyn FileSystem>>>,
+        fs: Arc<Box<dyn FileSystem>>,
         db_path: P,
         initial_block_offset: usize,
     ) -> WALIOResult<Self> {
@@ -262,7 +258,7 @@ impl WALReader {
         let wal_path = file_name_handler.get_wal_path();
 
         log::info!("Reading the WAL file at {}", wal_path.as_path().display());
-        let wal_file = fs.borrow().open_file(wal_path.as_path())?;
+        let wal_file = fs.open_file(wal_path.as_path())?;
 
         let reader = Self {
             fs,
