@@ -6,10 +6,12 @@ use std::io::{self, Read};
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
 use crate::db::DbOptions;
+use crate::filter_policy::get_filter_block_name;
 use crate::fs::ReadonlyRandomAccessFile;
+use crate::iterator::RainDbIterator;
 use crate::key::RainDbKeyType;
 
-use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader};
+use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
 use super::block_handle::BlockHandle;
 use super::errors::{ReadError, TableResult};
 use super::filter_block::FilterBlockReader;
@@ -49,7 +51,7 @@ pub(crate) struct Table {
     A block cache may be used by multiple clients and this ID is used to partition the cache to
     differentiate values cached by different clients.
     */
-    cache_partition_id: usize,
+    cache_partition_id: u64,
 
     /**
     The footer of the table file.
@@ -61,8 +63,8 @@ pub(crate) struct Table {
     /// Block containing the index.
     index_block: DataBlockReader,
 
-    /// Block containing the filter defined by the database filter policy.
-    filter_block: FilterBlockReader,
+    /// Optional block containing filters defined by the database filter policy.
+    maybe_filter_block: Option<FilterBlockReader>,
 }
 
 /// Public methods
@@ -79,39 +81,53 @@ impl Table {
             )));
         }
 
+        let cache_partition_id = (*options.block_cache()).new_id();
+
         log::debug!("Reading and parsing the table file footer");
         let mut footer_buf: Vec<u8> = vec![0; SIZE_OF_FOOTER_BYTES];
         file.read_exact(&mut footer_buf)?;
         let footer = Footer::try_from(&footer_buf)?;
 
         log::debug!("Reading and parsing the index block");
-        let index_block: DataBlockReader = Table::read_block(&file, footer.get_index_handle())?;
+        let index_block: DataBlockReader =
+            Table::get_data_block_reader(&file, footer.get_index_handle())?;
 
         log::debug!("Reading and parsing the metaindex block");
         let metaindex_block: MetaIndexBlockReader =
-            Table::read_block(&file, footer.get_metaindex_handle())?;
+            Table::get_data_block_reader(&file, footer.get_metaindex_handle())?;
 
         log::debug!("Reading and parsing the filter block");
-        let mut filter_block: Option<FilterBlockReader> =
-            Table::read_filter_meta_block(&file, &metaindex_block);
+        let maybe_filter_block: Option<FilterBlockReader> =
+            Table::read_filter_meta_block(&options, &file, &metaindex_block);
 
         Ok(Table {
             options,
+            cache_partition_id,
             file,
             footer,
             index_block,
-            filter_block,
+            maybe_filter_block,
         })
     }
 }
 
 // Private methods
 impl Table {
-    /// Return a reader for the block at the specified block handle.
-    fn read_block<K: RainDbKeyType>(
+    /// Return a reader for the data block at the specified handle.
+    fn get_data_block_reader<K: RainDbKeyType>(
         file: &Box<dyn ReadonlyRandomAccessFile>,
         block_handle: &BlockHandle,
     ) -> TableResult<BlockReader<K>> {
+        let block_data = Table::read_block_from_disk(file, block_handle)?;
+
+        BlockReader::new(block_data)
+    }
+
+    /// Return decompressed byte buffer representing the block at the specified block handle.
+    fn read_block_from_disk(
+        file: &Box<dyn ReadonlyRandomAccessFile>,
+        block_handle: &BlockHandle,
+    ) -> TableResult<Vec<u8>> {
         // Handy alias to the block size as a `usize`
         let block_data_size: usize = block_handle.get_size() as usize;
         // The total block size is the size on disk plus the descriptor size
@@ -139,12 +155,20 @@ impl Table {
 
         // Check the block compression type and decompress the block if necessary
         let compression_type_offset = total_block_size - BLOCK_DESCRIPTOR_SIZE_BYTES;
-        let compression_type: TableFileCompressionType =
-            bincode::deserialize(&raw_block_data[compression_type_offset..])?;
+        let compression_type: TableFileCompressionType;
+        match bincode::deserialize(&raw_block_data[compression_type_offset..]) {
+            Err(error) => {
+                return Err(ReadError::BlockDecompression(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Failed to get the compression type for the block.".to_string(),
+                )));
+            }
+            Ok(encoded_compression_type) => compression_type = encoded_compression_type,
+        };
 
         match compression_type {
             TableFileCompressionType::None => {
-                return BlockReader::new(raw_block_data[0..compression_type_offset].to_vec());
+                return Ok(raw_block_data[0..compression_type_offset].to_vec());
             }
             Snappy => {
                 /*
@@ -163,7 +187,7 @@ impl Table {
                         return Err(ReadError::BlockDecompression(error));
                     }
                     Ok(_) => {
-                        return BlockReader::new(decompressed_data);
+                        return Ok(decompressed_data);
                     }
                 };
             }
@@ -172,8 +196,38 @@ impl Table {
 
     /// Return a reader for the filter meta block at the specified block handle.
     fn read_filter_meta_block(
+        options: &DbOptions,
         file: &Box<dyn ReadonlyRandomAccessFile>,
         metaindex_block: &MetaIndexBlockReader,
-    ) -> TableResult<Option<FilterBlockReader>> {
+    ) -> Option<FilterBlockReader> {
+        let filter_block_name = get_filter_block_name(options.filter_policy());
+        let metaindex_block_iter = metaindex_block.iter();
+        // Seek to the filter meta block
+        match metaindex_block_iter.seek(&MetaIndexKey::new(filter_block_name)) {
+            Err(error) => {
+                /*
+                RainDB can continue to operate without filter blocks, albeit with possible
+                degraded performance. Just log a warning and continue as if there was no filter
+                block.
+                */
+                log::warn!("Encountered an error attempting to read the filter block. Continuing without filters. Original error: {}", error);
+                return None;
+            }
+            _ => {}
+        }
+
+        match metaindex_block_iter.current() {
+            Some((_key, filter)) => {
+                match FilterBlockReader::new(options.filter_policy(), filter.to_vec()) {
+                    Err(error) => {
+                        log::warn!("Encountered an error getting the filter block reader. Continuing without filters. Original error: {}", error);
+                        return None;
+                    }
+                    Ok(reader) => return Some(reader),
+                }
+            }
+            None => return None,
+        }
     }
+}
 }

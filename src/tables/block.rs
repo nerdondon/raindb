@@ -9,13 +9,14 @@ use crate::key::{LookupKey, RainDbKeyType};
 use super::errors::{ReadError, TableResult};
 
 /// A block where the keys of entries are RainDB lookup keys.
-pub(crate) type DataBlockReader = BlockReader<LookupKey>;
+pub type DataBlockReader = BlockReader<LookupKey>;
 
 /// A block where the keys of entries are metaindex keys.
 pub(crate) type MetaIndexBlockReader = BlockReader<MetaIndexKey>;
 
 /// An entry in a block.
-struct BlockEntry<K> {
+#[derive(Debug)]
+pub struct BlockEntry<K> {
     /// The offset that this block entry is at in the parent block.
     block_offset: usize,
 
@@ -47,7 +48,8 @@ struct BlockEntry<K> {
 }
 
 /// Reader for deserializing a block from the table file and iterating its entries.
-pub(crate) struct BlockReader<K>
+#[derive(Debug)]
+pub struct BlockReader<K>
 where
     K: RainDbKeyType,
 {
@@ -412,6 +414,14 @@ to the string value.
 */
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct MetaIndexKey(String);
+
+/// Public methods
+impl MetaIndexKey {
+    /// Create a new instance of [`MetaIndexKey`].
+    pub fn new(key: String) -> Self {
+        Self(key)
+    }
+}
 
 impl RainDbKeyType for MetaIndexKey {}
 
