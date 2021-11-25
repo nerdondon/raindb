@@ -43,6 +43,10 @@ to provide snapshotting capabilities. This state is kept in memory so snapshots 
 consideration of that and clients will need to ensure that they release a snapshot so that the
 versioned state can be removed.
 
+Due to the heavy basis of RainDB on LevelDB, this document contains some duplicated portions or
+rephrased portions of
+[LevelDB's own design documents](https://github.com/google/leveldb/tree/master/doc).
+
 ## Data Formats
 
 ### Internal key format (a.k.a.) the lookup key
@@ -63,10 +67,10 @@ struct LookupKey {
 }
 ```
 
-Currently, RainDB uses the `bincode` crate to serialize this struct into binary. We opt to use a
-fixed length encoding for the sequence number just for legacy reasons. In LevelDB, the sequence
-number is a 56-bit uint and the operation is represented by 8-bits. LevelDB encodes these fields
-together to add up to a single 64-bit block.
+Currently, RainDB uses the `bincode` crate to serialize this struct into binary. The sequence number
+will be serialized in a fixed length format and will be 64 bits unlike in LevelDB. In LevelDB, the
+sequence number is a 56-bit uint and the operation is represented by 8-bits. LevelDB encodes these
+fields together to add up to a single 64-bit block.
 
 ### Write-ahead log (WAL) format
 
