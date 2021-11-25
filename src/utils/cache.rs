@@ -23,13 +23,15 @@ A cache that stores mappings from keys to values.
 
 Implementations of this trait must be thread-safe.
 */
-pub trait Cache<K, V> {
+pub trait Cache<K, V>: Debug {
     /**
     Insert the key-value pair into the cache.
 
     If the key already existed in the cache, no update is performed.
+
+    Returns a [`CacheEntry`] for the inserted value.
     */
-    fn insert(&mut self, key: K, value: V);
+    fn insert(&mut self, key: K, value: V) -> Box<dyn CacheEntry<V>>;
 
     /// Get the cached value for the given key
     fn get(&self, key: &K) -> Option<Box<dyn CacheEntry<V>>>;
@@ -137,10 +139,10 @@ where
 
 impl<K, V> Cache<K, V> for LRUCache<K, V>
 where
-    K: Hash + Eq + 'static,
-    V: 'static,
+    K: Hash + Eq + Debug + 'static,
+    V: Debug + 'static,
 {
-    fn insert(&mut self, key: K, value: V) {
+    fn insert(&mut self, key: K, value: V) -> Box<dyn CacheEntry<V>> {
         let writable_inner = self.inner.write();
         let maybe_existing_entry = writable_inner.cache_entries.get(&key);
         if maybe_existing_entry.is_none() {
@@ -148,7 +150,8 @@ where
             let shared_node = writable_inner.lru_list.push_front((key, value));
             writable_inner.cache_entries.insert(key, shared_node);
         } else {
-            // This key is already in the cache
+            // This key is already in the cache. Do not update the value but update the LRU list to
+            // indicate an access.
             let existing_node = maybe_existing_entry.unwrap();
             writable_inner
                 .lru_list
@@ -163,6 +166,8 @@ where
             let (evicted_key, _) = writable_inner.lru_list.pop().unwrap();
             writable_inner.cache_entries.remove(&evicted_key);
         }
+
+        Box::new(Arc::clone(writable_inner.cache_entries.get(&key).unwrap()))
     }
 
     fn get(&self, key: &K) -> Option<Box<dyn CacheEntry<V>>> {
