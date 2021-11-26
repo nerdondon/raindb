@@ -1,5 +1,10 @@
-mod block;
+pub mod block;
+pub mod errors;
+
 mod block_handle;
-mod errors;
+mod filter_block;
 mod footer;
+
 mod table;
+pub use table::BlockCacheKey;
+pub(crate) use table::Table;
