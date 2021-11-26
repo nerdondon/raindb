@@ -349,6 +349,8 @@ where
             }
         }
 
+        self.current_index = left;
+
         Ok(())
     }
 
