@@ -2,14 +2,15 @@ use crc::{Crc, CRC_32_ISCSI};
 use integer_encoding::FixedInt;
 use snap::read::FrameDecoder;
 use std::convert::TryFrom;
+use std::fmt;
 use std::io::{self, Read};
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
-use crate::db::DbOptions;
 use crate::filter_policy::get_filter_block_name;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
-use crate::key::RainDbKeyType;
+use crate::key::{LookupKey, RainDbKeyType};
+use crate::{DbOptions, ReadOptions};
 
 use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
 use super::block_handle::BlockHandle;
