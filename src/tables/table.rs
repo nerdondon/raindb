@@ -9,7 +9,8 @@ use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
 use crate::filter_policy::get_filter_block_name;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
-use crate::key::{LookupKey, RainDbKeyType};
+use crate::key::{LookupKey, Operation, RainDbKeyType};
+use crate::utils::cache::CacheEntry;
 use crate::{DbOptions, ReadOptions};
 
 use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
@@ -32,6 +33,9 @@ LevelDB uses the [google/crc32c](https://github.com/google/crc32c) CRC implement
 implementation specifies using the iSCSI polynomial so that is what we use here as well.
 */
 const CRC_CALCULATOR: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+
+/// Type alias for block cache entries.
+type DataBlockCacheEntry = Box<dyn CacheEntry<DataBlockReader>>;
 
 /**
 An immutable, sorted map of strings to strings.
@@ -70,15 +74,12 @@ pub(crate) struct Table {
 
 /// Public methods
 impl Table {
-    pub fn open(
-        &self,
-        options: DbOptions,
-        file: Box<dyn ReadonlyRandomAccessFile>,
-    ) -> TableResult<Table> {
-        if file.len()? < (SIZE_OF_FOOTER_BYTES as u64) {
+    pub fn open(options: DbOptions, file: Box<dyn ReadonlyRandomAccessFile>) -> TableResult<Table> {
+        let file_length = file.len()?;
+        if file_length < (SIZE_OF_FOOTER_BYTES as u64) {
             return Err(ReadError::FailedToParse(format!(
                 "Failed to open the table file. The file length ({:?}) is invalid.",
-                file.len()
+                file_length
             )));
         }
 
@@ -86,7 +87,10 @@ impl Table {
 
         log::debug!("Reading and parsing the table file footer");
         let mut footer_buf: Vec<u8> = vec![0; SIZE_OF_FOOTER_BYTES];
-        file.read_exact(&mut footer_buf)?;
+        file.read_from(
+            &mut footer_buf,
+            (file_length as usize) - SIZE_OF_FOOTER_BYTES,
+        )?;
         let footer = Footer::try_from(&footer_buf)?;
 
         log::debug!("Reading and parsing the index block");
@@ -109,6 +113,81 @@ impl Table {
             index_block,
             maybe_filter_block,
         })
+    }
+
+    /**
+    Get the value for the given seek key stored in the table file.
+
+    This method corresponds to the publicly exposed `Db::get` operation so will ignore deleted
+    values.
+
+    Returns an non-deleted value if the key is in the table. Otherwise, return `None`.
+    */
+    pub fn get(&self, read_options: ReadOptions, key: &LookupKey) -> TableResult<Option<Vec<u8>>> {
+        // Search the index block for the offset of a block that may or may not contain the key we
+        // are looking for
+        let index_block_iter = self.index_block.iter();
+        index_block_iter.seek(key)?;
+        let maybe_raw_handle = index_block_iter.current();
+        if maybe_raw_handle.is_none() {
+            // Offset to the key does not exist in the index so the key is not stored in this file
+            return Ok(None);
+        }
+
+        let (_key, raw_handle) = maybe_raw_handle.unwrap();
+        let block_handle = BlockHandle::try_from(raw_handle)?;
+        let serialized_key = Vec::<u8>::from(key);
+
+        // First check the filter to see if the key is actually in the block that was returned
+        if self.maybe_filter_block.is_some()
+            && !self
+                .maybe_filter_block
+                .as_ref()
+                .unwrap()
+                .key_may_match(block_handle.get_offset(), &serialized_key)
+        {
+            // The key was not found in the filter so it is not in the block and hence not in the
+            // table
+            return Ok(None);
+        }
+
+        // Search the block itself for the key by first checking the cache for the block
+        let maybe_cached_block_entry = self.get_block_reader_from_cache(&block_handle)?;
+
+        /*
+        This is a kind of roundabout but the cache only returns `CacheEntry` objects which returns
+        references to block readers (i.e. `&DataBlockReader`) while getting a fresh block reader
+        returns the whole instance (i.e. `DataBlockReader`).
+        */
+        let maybe_new_block_reader: Option<DataBlockReader> = if maybe_cached_block_entry.is_none()
+        {
+            let reader: DataBlockReader = Table::get_data_block_reader(&self.file, &block_handle)?;
+            if read_options.fill_cache {
+                self.cache_block_reader(reader, &block_handle);
+            }
+
+            Some(reader)
+        } else {
+            None
+        };
+
+        let block_reader: &DataBlockReader = match maybe_cached_block_entry.as_ref() {
+            Some(cache_entry) => cache_entry.get_value(),
+            None => maybe_new_block_reader.as_ref().unwrap(),
+        };
+
+        let block_reader_iter = block_reader.iter();
+        block_reader_iter.seek(key);
+        match block_reader_iter.current() {
+            Some((key, value)) => {
+                if *key.get_operation() == Operation::Delete {
+                    return Ok(None);
+                }
+
+                Ok(Some(value.clone()))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -229,6 +308,45 @@ impl Table {
             }
             None => return None,
         }
+    }
+
+    /**
+    Check the block cache for the block at the specified block handle.
+
+    Return the block reader if found. Otherwise, return [`None`].
+    */
+    fn get_block_reader_from_cache(
+        &self,
+        block_handle: &BlockHandle,
+    ) -> TableResult<Option<DataBlockCacheEntry>> {
+        let block_cache = self.options.block_cache();
+        let block_cache_key =
+            BlockCacheKey::new(self.cache_partition_id, block_handle.get_offset());
+        let maybe_cache_entry = block_cache.get(&block_cache_key);
+
+        Ok(maybe_cache_entry)
+    }
+
+    /// Cache the specified block reader in the block cache.
+    fn cache_block_reader(
+        &self,
+        block_reader: DataBlockReader,
+        block_handle: &BlockHandle,
+    ) -> DataBlockCacheEntry {
+        let block_cache = self.options.block_cache();
+        let block_cache_key =
+            BlockCacheKey::new(self.cache_partition_id, block_handle.get_offset());
+
+        block_cache.insert(block_cache_key, block_reader)
+    }
+}
+
+impl fmt::Debug for Table {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Table")
+            .field("cache_partition_id", &self.cache_partition_id)
+            .field("footer", &self.footer)
+            .finish()
     }
 }
 

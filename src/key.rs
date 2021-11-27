@@ -38,13 +38,34 @@ pub struct LookupKey {
     operation: Operation,
 }
 
+/// Public methods
 impl LookupKey {
-    /// Construct a new `LookupKey`.
+    /// Construct a new [`LookupKey`].
     pub(crate) fn new(user_key: Vec<u8>, sequence_number: u64, operation: Operation) -> Self {
         LookupKey {
             user_key,
             sequence_number,
             operation,
+        }
+    }
+
+    /**
+    Construct a new [`LookupKey`] for seek operations.
+
+    # Legacy
+
+    Seek operations will utilize the [`Operation::Put`] operation tag because it is the largest
+    discriminant in the [`Operation`] enum. LevelDB does this because it embeds the operation tag in
+    the last 8 bits of the sequence number. Sequence numbers are sorted in decreasing order and seek
+    operations need the most recent value, so the largest operation needs to be used when doing
+    seeks. This is not relevant for RainDB because we mostly deal in fully parsed key structures,
+    whereas LevelDB usually only works byte buffers with serialized keys.
+    */
+    pub(crate) fn new_for_seeking(user_key: Vec<u8>, sequence_number: u64) -> Self {
+        LookupKey {
+            user_key,
+            sequence_number,
+            operation: Operation::Put,
         }
     }
 
@@ -60,6 +81,11 @@ impl LookupKey {
     */
     pub(crate) fn get_internal_key(&self) -> Vec<u8> {
         Vec::<u8>::from(self)
+    }
+
+    /// Get a reference to the lookup key's operation.
+    pub(crate) fn get_operation(&self) -> &Operation {
+        &self.operation
     }
 }
 
@@ -88,7 +114,7 @@ impl PartialEq for LookupKey {
         // Operation is checked here but the equality relation should be implied by the check on
         // `sequence_number`. More clearly, a sequence number is assigned per operation so if the
         // sequence numbers of the elements being compared are equal it should mean that the
-        // operation tags is equal as well. It would be a sad day if this invariant was not true
+        // operation tags are equal as well. It would be a sad day if this invariant was not true
         // at runtime :/.
         self.user_key.cmp(&other.user_key).is_eq()
             && self.sequence_number == other.sequence_number
@@ -117,7 +143,12 @@ impl From<&LookupKey> for Vec<u8> {
 
 impl RainDbKeyType for LookupKey {}
 
-/// The operation that is being applied to an entry in the database.
+/**
+The operation that is being applied to an entry in the database.
+
+Existing enum values should not be changed since they are serialized as part of the table file
+format.
+*/
 #[repr(u8)]
 #[derive(Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub(crate) enum Operation {
