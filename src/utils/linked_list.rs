@@ -9,14 +9,23 @@ type WeakLink<T> = Option<Weak<RwLock<Node<T>>>>;
 pub type SharedNode<T> = Arc<RwLock<Node<T>>>;
 
 /// A node in the linked list.
+#[derive(Debug)]
 pub struct Node<T> {
     /// The element that the node represents.
     pub element: T,
 
-    /// A link to the next node.
+    /**
+    A link to the next node.
+
+    This should not be changed except through the linked list itself.
+    */
     pub next: Link<T>,
 
-    /// A link to the previous node.
+    /**
+    A link to the previous node.
+
+    This should not be changed except through the linked list itself.
+    */
     pub prev: WeakLink<T>,
 }
 
@@ -36,6 +45,7 @@ A doubly-linked linked list that exposes it's structural nodes.
 
 The structural nodes are exposed to enable things like O(1) insertion and removal.
 */
+#[derive(Debug)]
 pub struct LinkedList<T> {
     head: Link<T>,
     tail: Link<T>,
@@ -197,11 +207,48 @@ impl<T> LinkedList<T> {
     pub fn is_empty(&self) -> bool {
         self.length <= 0
     }
+
+    /**
+    Return an iterator over the nodes of the linked list.
+
+    Due to the complete exposure of the node and the node's internal fields with interior
+    mutability, care should be taken to not change the links.
+
+    TODO: Lock this down somehow
+    */
+    pub fn iter(&self) -> NodeIter<T> {
+        NodeIter {
+            next: self.head.as_ref().map(|node| Arc::clone(node)),
+        }
+    }
 }
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
         while self.pop_front().is_some() {}
+    }
+}
+
+/// An iterator adapter to keep state for iterating the linked list.
+///
+/// Created by calling [`LinkedList::iter`].
+struct NodeIter<T> {
+    /// The next value of the iterator.
+    next: Option<SharedNode<T>>,
+}
+
+impl<T> Iterator for NodeIter<T> {
+    type Item = SharedNode<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next.map(|current_node| {
+            self.next = current_node
+                .read()
+                .next
+                .as_ref()
+                .map(|node| Arc::clone(node));
+            current_node
+        })
     }
 }
 
