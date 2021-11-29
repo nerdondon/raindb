@@ -2,6 +2,7 @@
 This module provides a thread-safe table cache.
 */
 
+use std::fmt;
 use std::sync::Arc;
 
 use crate::errors::RainDBResult;
@@ -82,5 +83,13 @@ impl TableCache {
         let cache_entry = self.cache.insert(file_number, table_reader);
 
         Ok(cache_entry)
+    }
+}
+
+impl fmt::Debug for TableCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TableCache")
+            .field("options", &self.options)
+            .finish()
     }
 }
