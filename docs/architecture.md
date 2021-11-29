@@ -47,6 +47,35 @@ Due to the heavy basis of RainDB on LevelDB, this document contains some duplica
 rephrased portions of
 [LevelDB's own design documents](https://github.com/google/leveldb/tree/master/doc).
 
+## Operations
+
+### Writes
+
+The write path is as follows:
+
+1. Write to the write-ahead log for durability
+1. Write to the memtable
+1. If the memtable memory usage hits a defined threshold (defaults to 4 MiB), then a compaction
+   operation is triggered
+
+### Read
+
+The read path is as follows:
+
+1. Consult the memtable to see if it contains the value for the provided key.
+1. If it exists, consult the immutable memtable (this is an old memtable currently undergoing the
+   compaction process)
+1. Check the manifest file for the key ranges covered by each level of SSTables
+1. Check each level to see if it has a value for the key. If it does return.
+
+#### Manifest files
+
+Manifest files list the set of table files that make up each level, the corresponding key ranges,
+and other important metadata. A new manifest file is created whenever the database is reopened. The
+manifest file is append only. File removals are indicated by tombstones.
+
+### Compactions
+
 ## Data Formats
 
 ### Internal key format (a.k.a.) the lookup key
@@ -76,7 +105,9 @@ fields together to add up to a single 64-bit block.
 
 Write's are always done to the memtable. Because the memtable resides in memory, we need a more
 durable structure to persist operations in the event of a crash. As is traditional in database
-systems, we utilize a write-ahead log to ensure the durability of operations.
+systems, we utilize a write-ahead log to ensure the durability of operations. When the write-ahead
+log reaches a configured size, it is converted to a table file and a new WAL is created. This is
+done as part of the compaction process.
 
 The WAL consists of a series of 32KiB blocks. For each block, RainDB has a 3 byte header that
 consists of a 2 byte uint for the length of the data in the block and 1 byte to represent the block
@@ -338,26 +369,3 @@ Actually even this is listed as a `TODO` for LevelDB._
 
 This meta block contains a sequence of key-values pairs for various statistics. The key is the name
 of the statistic and the value contains the statistic.
-
-## Operations
-
-### Writes
-
-The write path is as follows:
-
-1. Write to the write-ahead log for durability
-1. Write to the memtable
-1. If the memtable memory usage hits a defined threshold (defaults to 4 MiB), then a compaction
-   operation is triggered
-
-### Read
-
-The read path is as follows:
-
-1. Consult the memtable to see if it contains the value for the provided key.
-1. Consult the immutable memtable (this is an old memtable currently undergoing the compaction
-   process)
-1. Check the MANIFEST file for the key ranges covered by each level of SSTables
-1. Check each level to see if it has a value for the key. If it does return.
-
-## Compactions
