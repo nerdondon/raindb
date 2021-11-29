@@ -6,8 +6,11 @@ This document is geared more towards the specifics of RainDB than a discussion o
 general--though there is a large amount of overlap. For more reading and references on LSM trees you
 check out [my notes on my blog](https://https://www.nerdondon.com/posts/2021-08-13-lsm-trees/).
 
-The goal of this project is to create a well-annoated codebase for a key-value store backed by an
-LSM tree. In that vein, if anything is unclear and could use a comment please create an issue.
+The goal of this project is to create a well-annotated codebase for a key-value store backed by an
+LSM tree. In that vein, if anything is unclear and could use a comment please create an issue. A lot
+of information from this document is also inlined in code comments to make reading the code easier.
+Conversely, some topics in this document have extra treatment in code comments with finer grain
+details on intentions.
 
 We do not aim to create a highly performant and production ready database off the bat...at least
 starting out. Currently, this is more of a learning tool for those trying to get more familiar with
