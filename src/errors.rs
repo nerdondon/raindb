@@ -7,6 +7,9 @@ use std::fmt;
 use std::io;
 use std::num::TryFromIntError;
 
+use crate::tables::errors::ReadError;
+use crate::versioning;
+
 // TODO: consider using snafu (https://docs.rs/snafu/0.6.10/snafu/guide/index.html) to have less boilerplate
 
 pub type RainDBResult<T> = Result<T, RainDBError>;
@@ -16,8 +19,21 @@ pub type RainDBResult<T> = Result<T, RainDBError>;
 pub enum RainDBError {
     /// Variant for errors stemming from top-level I/O operations.
     IO(io::Error),
+
     /// Variant for errors stemming from WAL operations.
     WAL(WALIOError),
+
+    /// Variant for errors stemming from operating on the table cache.
+    TableCache(String),
+
+    /// Variant for errors stemming from reading table files.
+    TableRead(ReadError),
+
+    /// Variant for errors encountered while running background tasks.
+    BackgroundTask(String),
+
+    /// Variant for errors encountered while reading from a version.
+    VersionRead(versioning::errors::ReadError),
 }
 
 impl std::error::Error for RainDBError {}
@@ -27,6 +43,10 @@ impl fmt::Display for RainDBError {
         match self {
             RainDBError::IO(base_err) => write!(f, "{}", base_err),
             RainDBError::WAL(base_err) => write!(f, "{}", base_err),
+            RainDBError::TableCache(base_err) => write!(f, "{}", base_err),
+            RainDBError::TableRead(base_err) => write!(f, "{}", base_err),
+            RainDBError::BackgroundTask(base_err) => write!(f, "{}", base_err),
+            RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
         }
     }
 }
@@ -40,6 +60,12 @@ impl From<io::Error> for RainDBError {
 impl From<WALIOError> for RainDBError {
     fn from(err: WALIOError) -> Self {
         RainDBError::WAL(err)
+    }
+}
+
+impl From<ReadError> for RainDBError {
+    fn from(err: ReadError) -> Self {
+        RainDBError::TableRead(err)
     }
 }
 

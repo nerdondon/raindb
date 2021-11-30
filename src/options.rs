@@ -33,9 +33,12 @@ pub struct DbOptions {
     Up to two memtables can reside in memory at a time, one actively serving reads and writes
     and a second one in the process of being flushed to disk.
 
+    This option corresponds to `write_buffer_size` in LevelDB. We feel the RainDB name is more clear
+    as to what function this option performs.
+
     **This defaults to 4 MiB.**
     */
-    write_buffer_size: usize,
+    max_memtable_size: usize,
 
     /**
     This amount of bytes will be written to a file before switching to a new one.
@@ -82,8 +85,8 @@ impl DbOptions {
     }
 
     /// Get the write buffer size.
-    pub fn write_buffer_size(&self) -> usize {
-        self.write_buffer_size
+    pub fn max_memtable_size(&self) -> usize {
+        self.max_memtable_size
     }
 
     /// Get the databases maximum table file size.
@@ -127,17 +130,47 @@ impl Default for DbOptions {
 }
 
 /// Options for read operations.
+#[derive(Debug)]
 pub struct ReadOptions {
     /**
     Cache data read as a result of a read operation.
 
     Callers may want to set this to false for bulk scans.
+
+    **Defaults to true.**
     */
-    fill_cache: bool,
+    pub fill_cache: bool,
 }
 
 impl Default for ReadOptions {
     fn default() -> Self {
         Self { fill_cache: true }
+    }
+}
+
+/// Options for write operations.
+#[derive(Debug)]
+pub struct WriteOptions {
+    /**
+    Whether or not to perform the write operation synchronously.
+
+    If true, the program will try to ensure that the write is flusehd completely to disk before it
+    considers the write complete. This extra check means that writes with this flag on will be
+    slower.
+
+    If false and the machine crashes, some recent writes might be lost. Note that, if it is just the
+    program that crashes (i.e. the machine does not reboot), then no writes will be lost.
+
+    In other words, writes with this flag `false` has the same semantics as just a `write()` system
+    call. A write with the flag as `true` has the semantics of a `write()` followed by an `fsync()`.
+
+    **Defaults to false.**
+    */
+    pub synchronous: bool,
+}
+
+impl Default for WriteOptions {
+    fn default() -> Self {
+        Self { synchronous: false }
     }
 }

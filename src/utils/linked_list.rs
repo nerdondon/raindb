@@ -221,6 +221,11 @@ impl<T> LinkedList<T> {
             next: self.head.as_ref().map(|node| Arc::clone(node)),
         }
     }
+
+    /// Get a reference to the last node of the linked list.
+    pub fn tail(&self) -> Link<T> {
+        self.tail.as_ref().map(|node| Arc::clone(node))
+    }
 }
 
 impl<T> Drop for LinkedList<T> {

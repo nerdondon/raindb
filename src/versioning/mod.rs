@@ -15,7 +15,9 @@ Each [`Version`] keeps track of a set of table files per level.
 [`Version`]: version::Version
 */
 
-mod errors;
+pub mod errors;
+
+pub(crate) mod version_set;
+
 mod file_metadata;
 mod version;
-mod version_set;

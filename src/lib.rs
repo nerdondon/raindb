@@ -18,4 +18,4 @@ mod write_ahead_log;
 pub use utils::cache::Cache;
 
 pub mod options;
-pub use options::{DbOptions, ReadOptions};
+pub use options::{DbOptions, ReadOptions, WriteOptions};

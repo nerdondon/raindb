@@ -1,3 +1,3 @@
 pub mod cache;
 
-mod linked_list;
+pub(crate) mod linked_list;

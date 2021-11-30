@@ -141,6 +141,11 @@ impl Version {
     pub fn update_stats(&self, charging_metadata: SeekChargeMetadata) -> ReadResult<bool> {
         todo!("working on it!");
     }
+
+    /// Return the number of table files at the specified level.
+    pub fn num_files_at_level(&self, level: u64) -> usize {
+        self.files[level as usize].len()
+    }
 }
 
 /// Private methods
