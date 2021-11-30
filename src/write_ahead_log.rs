@@ -96,7 +96,7 @@ pub(crate) struct WALWriter {
     /** The underlying file representing the WAL.  */
     wal_file: Box<dyn RandomAccessFile>,
 
-    /** Handler for databases filenames. */
+    /** Handler for file names used by the database. */
     file_name_handler: FileNameHandler,
 
     /**
@@ -115,11 +115,16 @@ impl WALWriter {
 
     * `fs`- The wrapped file system to use for I/O.
     * `db_path` - The absolute path where the database files reside.
+    * `file_number` - The file number of the write-ahead log.
     */
-    pub fn new<P: AsRef<Path>>(fs: Arc<Box<dyn FileSystem>>, db_path: P) -> WALIOResult<Self> {
+    pub fn new<P: AsRef<Path>>(
+        fs: Arc<Box<dyn FileSystem>>,
+        db_path: P,
+        file_number: u64,
+    ) -> WALIOResult<Self> {
         let file_name_handler =
             FileNameHandler::new(db_path.as_ref().to_str().unwrap().to_string());
-        let wal_path = file_name_handler.get_wal_path();
+        let wal_path = file_name_handler.get_wal_path(file_number);
 
         log::info!("Creating WAL file at {}", wal_path.as_path().display());
         let wal_file = fs.create_file(wal_path.as_path())?;
@@ -246,16 +251,18 @@ impl WALReader {
 
     * `fs`- The wrapped file system to use for I/O.
     * `db_path` - The absolute path where the database files reside.
+    * `file_number` - The file number of the write-ahead log.
     * `initial_block_offset` - An initial offset to start reading the WAL from.
     */
     pub fn new<P: AsRef<Path>>(
         fs: Arc<Box<dyn FileSystem>>,
         db_path: P,
+        file_number: u64,
         initial_block_offset: usize,
     ) -> WALIOResult<Self> {
         let file_name_handler =
             FileNameHandler::new(db_path.as_ref().to_str().unwrap().to_string());
-        let wal_path = file_name_handler.get_wal_path();
+        let wal_path = file_name_handler.get_wal_path(file_number);
 
         log::info!("Reading the WAL file at {}", wal_path.as_path().display());
         let wal_file = fs.open_file(wal_path.as_path())?;

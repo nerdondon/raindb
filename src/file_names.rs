@@ -1,14 +1,14 @@
 /*!
 This module contains utilities for managing file names used by the database.
 
-Files are rooted at the `db_path` as provided in the [database instantiation options](crate::db::DbOptions).
+Files are rooted at the `db_path` as provided in the [database instantiation options](crate::DbOptions).
 
 Files (and their name formats) used by the database are as follows:
 
 - Database lock file: `./LOCK`
-- Write-ahead logs: `./wal/wal.log`
-- SSTable files: `./data/.sst`
-- MANIFEST files: `./MANIFEST`
+- Write-ahead logs: `./wal/wal-[0-9]+.log`
+- Table files: `./data/[0-9]+.rdb`
+- Manifest files: `./MANIFEST-[0-9]+.manifest`
 */
 
 use std::path::PathBuf;
@@ -28,8 +28,8 @@ pub(crate) const DATA_DIR: &str = "data";
 /// Suffix for table files.
 pub(crate) const TABLE_EXT: &str = "rdb";
 
-/// The name of the manifest file.
-pub(crate) const MANIFEST_FILE: &str = "MANIFEST";
+/// The manifest file extension.
+pub(crate) const MANIFEST_FILE_EXT: &str = "manifest";
 
 /// Various utilities for managing file and folder names that RainDB uses.
 pub(crate) struct FileNameHandler {
@@ -43,10 +43,10 @@ impl FileNameHandler {
     }
 
     /// Resolve the path to the write-ahead log.
-    pub fn get_wal_path(&self) -> PathBuf {
+    pub fn get_wal_path(&self, wal_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
         buf.push(WAL_DIR);
-        buf.set_file_name("wal");
+        buf.set_file_name(format!("wal-{number}", number = wal_number));
         buf.set_extension(WAL_EXT);
 
         buf
@@ -58,6 +58,15 @@ impl FileNameHandler {
         buf.push(DATA_DIR);
         buf.set_file_name(file_number.to_string());
         buf.set_extension(TABLE_EXT);
+
+        buf
+    }
+
+    /// Resolve the path to the manifest file.
+    pub fn get_manifest_file_name(&self, manifest_number: u64) -> PathBuf {
+        let mut buf = PathBuf::from(&self.db_path);
+        buf.set_file_name(format!("MANIFEST-{number}", number = manifest_number));
+        buf.set_extension(MANIFEST_FILE_EXT);
 
         buf
     }
