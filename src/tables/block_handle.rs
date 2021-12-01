@@ -75,24 +75,17 @@ impl TryFrom<&[u8]> for BlockHandle {
     type Error = ReadError;
 
     fn try_from(value: &[u8]) -> TableResult<BlockHandle> {
-        let maybe_decoded_offset = u64::decode_var(value);
-        if maybe_decoded_offset.is_none() {
-            return Err(ReadError::FailedToParse(
-                "Failed to deserialize the block handle offset.".to_string(),
-            ));
-        }
+        let (handle, _bytes_read) = BlockHandle::deserialize(value)?;
+        Ok(handle)
+    }
+}
 
-        let (offset, offset_occupied_length) = maybe_decoded_offset.unwrap();
-        let maybe_decoded_size = u64::decode_var(&value[offset_occupied_length..]);
-        if maybe_decoded_size.is_none() {
-            return Err(ReadError::FailedToParse(
-                "Failed to deserialize the block handle offset.".to_string(),
-            ));
-        }
+impl TryFrom<&Vec<u8>> for BlockHandle {
+    type Error = ReadError;
 
-        let (size, _) = maybe_decoded_size.unwrap();
-
-        Ok(BlockHandle::new(offset, size))
+    fn try_from(value: &Vec<u8>) -> TableResult<BlockHandle> {
+        let (handle, _bytes_read) = BlockHandle::deserialize(value)?;
+        Ok(handle)
     }
 }
 
