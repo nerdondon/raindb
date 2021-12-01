@@ -3,6 +3,7 @@ pub mod filter_policy;
 pub mod fs;
 
 mod batch;
+mod compaction;
 mod config;
 mod errors;
 mod file_names;
