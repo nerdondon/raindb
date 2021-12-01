@@ -3,6 +3,7 @@ The database module contains the primary API for interacting with the key-value 
 */
 
 use parking_lot::{Condvar, Mutex, MutexGuard};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,8 +31,12 @@ writes occur serially. Threads waiting in the queue are parked and then signalle
 is their turn to perform the requested operation.
 */
 struct Writer {
-    /// The batch of operations this writer is requesting to be performed.
-    batch: Batch,
+    /**
+    The batch of operations this writer is requesting to be performed.
+
+    This is `None` if a client is forcing a compaction check.
+    */
+    maybe_batch: Option<Batch>,
 
     /// Whether the write operations should be synchronously flushed to disk.
     synchronous_write: bool,
@@ -56,7 +61,7 @@ struct Writer {
 
 impl PartialEq for Writer {
     fn eq(&self, other: &Self) -> bool {
-        self.batch == other.batch
+        self.maybe_batch == other.maybe_batch
             && self.synchronous_write == other.synchronous_write
             && self.operation_completed == other.operation_completed
     }
@@ -64,9 +69,9 @@ impl PartialEq for Writer {
 
 impl Writer {
     /// Create a new instance of [`Writer`].
-    fn new(batch: Batch, synchronous_write: bool) -> Self {
+    fn new(maybe_batch: Option<Batch>, synchronous_write: bool) -> Self {
         Self {
-            batch,
+            maybe_batch,
             synchronous_write,
             operation_completed: false,
             operation_result: None,
@@ -80,8 +85,8 @@ impl Writer {
     }
 
     /// Get a reference to the operations this writer needs to perform.
-    fn batch(&self) -> &Batch {
-        &self.batch
+    fn maybe_batch(&self) -> Option<&Batch> {
+        self.maybe_batch.as_ref()
     }
 
     /// Parks the thread while it waits for its turn to perform its operation.
@@ -126,7 +131,7 @@ pub(crate) struct GuardedDbFields {
     maybe_manual_compaction: Option<ManualCompaction>,
 
     /// Queued threads waiting to perform write operations.
-    writer_queue: Vec<Arc<Writer>>,
+    writer_queue: VecDeque<Arc<Writer>>,
 
     /// Holds the immutable table i.e. the memtable currently undergoing compaction.
     maybe_immutable_memtable: Option<Box<dyn MemTable>>,
@@ -266,25 +271,19 @@ impl DB {
     [commit that added it]: https://github.com/google/leveldb/commit/d79762e27369365a7ffe1f2e3a5c64b0632079e1
     [`DBImpl::Write`]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/db/db_impl.cc#L1200
     */
-    fn apply_changes(&self, write_options: WriteOptions, batch: Batch) -> RainDBResult<()> {
-        let writer = Arc::new(Writer::new(batch, write_options.synchronous));
-        let locked_fields = self.guarded_fields.lock();
-        locked_fields.writer_queue.push(Arc::clone(&writer));
+    fn apply_changes(
+        &self,
+        write_options: WriteOptions,
+        maybe_batch: Option<Batch>,
+    ) -> RainDBResult<()> {
+        let writer = Arc::new(Writer::new(maybe_batch, write_options.synchronous));
+        let mutex_guard = self.guarded_fields.lock();
+        mutex_guard.writer_queue.push_back(Arc::clone(&writer));
 
-        let maybe_first_writer = locked_fields.writer_queue.first().map(|wrapped_writer| {
-            /*
-            We want to compare the shallow identity of writer objects so we need to dereference
-            to the writer object. The first dereference is for the `&Arc<Writer>` and gives us
-            `Arc<Writer>`. The second dereference is for going through the `Arc` smart pointer to
-            give us just `Writer`.
-            */
-            **wrapped_writer
-        });
-        let is_first_writer =
-            maybe_first_writer.is_some() && ptr::eq(&*writer, &maybe_first_writer.unwrap());
-
+        let is_first_writer = self.is_first_writer(&mut mutex_guard, &writer);
+        // Wait until it is the current writer's turn to write
         while !writer.operation_completed && !is_first_writer {
-            writer.wait_for_turn(locked_fields);
+            writer.wait_for_turn(mutex_guard);
         }
 
         // Check if the work for this thread was already completed as part of a group commit and
@@ -293,15 +292,65 @@ impl DB {
             return writer.operation_result.unwrap();
         }
 
+        let force_compaction = maybe_batch.is_none();
+        let compaction_check_result = self.make_room_for_write(&mut mutex_guard, force_compaction);
+        let prev_sequence_number = mutex_guard.version_set.get_prev_sequence_number();
+        let last_writer = &writer;
+
+        if compaction_check_result.is_ok() && !force_compaction {}
+
+        loop {
+            // We can unwrap immediately after popping because we know that at least the current
+            // writer is in the queue and the loop takes care to never iterate on an empty queue.
+            let first_writer = mutex_guard.writer_queue.pop_front().unwrap();
+
+            /*
+            We dererence twice on `last_writer` because we want to get to the memory location of
+            the writer struct. This allows to establish object identity. See the implementation of
+            [`DB::is_first_writer`] for additional details.
+            */
+            if !ptr::eq(&*first_writer, &**last_writer) {
+                /*
+                The writer that was first is not the last writer used. This means that the first
+                writer had its write operation performed as part of a group commit. Mark it as
+                done.
+                */
+                first_writer
+            }
+
+            if {}
+        }
+
         Ok(())
+    }
+
+    /// Check if the provided writer is the first writer in the writer queue.
+    fn is_first_writer(
+        &self,
+        mutex_guard: &mut MutexGuard<GuardedDbFields>,
+        writer: &Arc<Writer>,
+    ) -> bool {
+        let maybe_first_writer = mutex_guard.writer_queue.front().map(|wrapped_writer| {
+            /*
+            We want to compare the shallow identity of writer objects so we need to dereference
+            to the writer object. The first dereference is for the `&Arc<Writer>` and gives us
+            `Arc<Writer>`. The second dereference is for going through the `Arc` smart pointer to
+            give us just `Writer`.
+            */
+            **wrapped_writer
+        });
+
+        let underlying_writer_address = &**writer;
+        maybe_first_writer.is_some()
+            && ptr::eq(underlying_writer_address, &maybe_first_writer.unwrap())
     }
 
     /**
     Ensures that there is room in the memtable for more writes and triggers a compaction if
     necessary.
 
-    * `force_compaction` - This should usually be false. When true, this will force a compaction
-      of the memtable.
+    * `force_compaction` - This should usually be false. When true, this will force a
+      compaction check of the memtable.
 
     # Concurrency
 
