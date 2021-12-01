@@ -81,6 +81,7 @@ impl VersionSet {
     /// Return the number of table files at the specified level in the current version.
     pub fn num_files_at_level(&self, level: u64) -> ReadResult<usize> {
         if self.get_current_version().is_none() {
+            // This should never happen because a version is core to the operation of RainDB.
             return Err(ReadError::NoVersionsFound);
         }
 
@@ -131,6 +132,39 @@ impl VersionSet {
     */
     pub fn set_prev_wal_number(&mut self, prev_wal_number: Option<u64>) {
         self.prev_wal_number = prev_wal_number;
+    }
+
+    /// Returns true if a level on the current version needs compaction.
+    pub fn needs_compaction(&self) -> ReadResult<bool> {
+        if self.get_current_version().is_none() {
+            // This should never happen because a version is core to the operation of RainDB.
+            return Err(ReadError::NoVersionsFound);
+        }
+
+        let curr_version = &self.get_current_version().unwrap().read().element;
+        if curr_version.get_size_compaction_metadata().is_some()
+            && curr_version
+                .get_size_compaction_metadata()
+                .unwrap()
+                .compaction_score
+                >= 1.0
+        {
+            // The compaction score is too high. We need to do a compaction.
+            return Ok(true);
+        }
+
+        if curr_version.get_seek_compaction_metadata().is_some()
+            && curr_version
+                .get_seek_compaction_metadata()
+                .unwrap()
+                .file_to_compact
+                .is_some()
+        {
+            // There is a file to compact due to too many seeks.
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 }
 

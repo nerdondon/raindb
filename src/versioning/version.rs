@@ -50,14 +50,14 @@ the version.
 #[derive(Debug)]
 pub(crate) struct SizeCompactionMetadata {
     /// The level that should be compacted next.
-    compaction_level: usize,
+    pub(crate) compaction_level: usize,
 
     /**
     A score for determining the necessity of compaction for the level that will be compacted next.
 
     A score < 1 means that compaction is not strictly necessary.
     */
-    compaction_score: f64,
+    pub(crate) compaction_score: f64,
 }
 
 /**
@@ -67,10 +67,10 @@ being performed during read operations within the version.
 #[derive(Debug)]
 pub(crate) struct SeekCompactionMetadata {
     /// The next file to compact based on seek stats.
-    file_to_compact: Arc<FileMetadata>,
+    pub(crate) file_to_compact: Option<Arc<FileMetadata>>,
 
     /// The level of the next file to compact.
-    level_of_file_to_compact: usize,
+    pub(crate) level_of_file_to_compact: usize,
 }
 
 /// Version contains information that represents a point in time state of the database.
@@ -145,6 +145,16 @@ impl Version {
     /// Return the number of table files at the specified level.
     pub fn num_files_at_level(&self, level: u64) -> usize {
         self.files[level as usize].len()
+    }
+
+    /// Get a reference to the version's seek compaction metadata.
+    pub fn get_seek_compaction_metadata(&self) -> Option<&SeekCompactionMetadata> {
+        self.seek_compaction_metadata.as_ref()
+    }
+
+    /// Get a reference to the version's size compaction metadata.
+    pub fn get_size_compaction_metadata(&self) -> Option<&SizeCompactionMetadata> {
+        self.size_compaction_metadata.as_ref()
     }
 }
 

@@ -118,7 +118,7 @@ impl Default for DbOptions {
                 .to_str()
                 .unwrap()
                 .to_owned(),
-            write_buffer_size: 4 * 1024 * 1024,
+            max_memtable_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
             filesystem_provider: Arc::new(Box::new(OsFileSystem::new())),
             filter_policy: Arc::new(Box::new(BloomFilterPolicy::new(10))),

@@ -11,6 +11,7 @@ use std::thread;
 use std::time;
 
 use crate::batch::Batch;
+use crate::compaction::{CompactionWorker, ManualCompaction, TaskKind};
 use crate::config::{L0_SLOWDOWN_WRITES_TRIGGER, L0_STOP_WRITES_TRIGGER};
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
@@ -99,15 +100,30 @@ impl Writer {
 }
 
 /// Struct holding database fields that need a lock before accessing.
-struct GuardedDbFields {
+pub(crate) struct GuardedDbFields {
     /// The current write-ahead log (WAL) number.
     curr_wal_file_number: u64,
+
+    /// A background compaction was scheduled.
+    background_compaction_scheduled: bool,
 
     /**
     A condidtion variable used to notify parked threads that background work (e.g. compaction) has
     finished.
     */
     background_work_finished_signal: Condvar,
+
+    /**
+    An error that was encountered when performing background operations (e.g. when compacting a
+    memtable).
+    */
+    maybe_background_error: Option<RainDBError>,
+
+    /**
+    Stores state information for a manual compaction. `None` if there is no manual compaction in
+    progress or if no manual compaction was requested.
+    */
+    maybe_manual_compaction: Option<ManualCompaction>,
 
     /// Queued threads waiting to perform write operations.
     writer_queue: Vec<Arc<Writer>>,
@@ -122,17 +138,11 @@ struct GuardedDbFields {
     kept to support a consistent view for live iterators.
     */
     version_set: VersionSet,
-
-    /**
-    An error that was encountered when performing background operations (e.g. when compacting a
-    memtable).
-    */
-    maybe_background_error: Option<RainDBError>,
 }
 
 /// The primary database object that exposes the public API.
 pub struct DB {
-    /// Options for the operation of the database.
+    /// Options for configuring the operation of the database.
     options: DbOptions,
 
     /**
@@ -158,14 +168,21 @@ pub struct DB {
     file_name_handler: FileNameHandler,
 
     /// Field indicating if the database is shutting down.
-    is_shutting_down: AtomicBool,
+    is_shutting_down: Arc<AtomicBool>,
 
     /**
     Field indicating if there is an immutable memtable.
 
     An memtable is made immutable when it is undergoing the compaction process.
     */
-    has_immutable_memtable: AtomicBool,
+    has_immutable_memtable: Arc<AtomicBool>,
+
+    /**
+    The worker managing the compaction thread.
+
+    This is used to schedule compaction related tasks on a background thread.
+    */
+    compaction_worker: CompactionWorker,
 }
 
 /// Public methods
@@ -242,7 +259,12 @@ impl DB {
     together as if they were in the same [`Batch`]. We call this extra level of batching a group
     commit per the [commit that added it] in LevelDB.
 
+    # Legacy
+
+    This method is synonymous with [`DBImpl::Write`] in LevelDB.
+
     [commit that added it]: https://github.com/google/leveldb/commit/d79762e27369365a7ffe1f2e3a5c64b0632079e1
+    [`DBImpl::Write`]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/db/db_impl.cc#L1200
     */
     fn apply_changes(&self, write_options: WriteOptions, batch: Batch) -> RainDBResult<()> {
         let writer = Arc::new(Writer::new(batch, write_options.synchronous));
@@ -278,7 +300,7 @@ impl DB {
     Ensures that there is room in the memtable for more writes and triggers a compaction if
     necessary.
 
-    - `force_compaction` - This should usually be false. When true, this will force a compaction
+    * `force_compaction` - This should usually be false. When true, this will force a compaction
       of the memtable.
 
     # Concurrency
@@ -289,7 +311,7 @@ impl DB {
     */
     fn make_room_for_write(
         &self,
-        mutex_guard: MutexGuard<GuardedDbFields>,
+        mutex_guard: &mut MutexGuard<GuardedDbFields>,
         force_compaction: bool,
     ) -> RainDBResult<()> {
         let allow_write_delay = !force_compaction;
@@ -304,6 +326,7 @@ impl DB {
                 // We encountered an issue with a background task. Return with the error.
                 let error = mutex_guard.maybe_background_error.unwrap();
                 log::error!("Stopping compaction check because there may be a relevant background error. Error: {}", error);
+
                 return Err(error);
             } else if allow_write_delay && num_level_zero_files >= L0_SLOWDOWN_WRITES_TRIGGER {
                 /*
@@ -315,7 +338,7 @@ impl DB {
                 */
                 log::info!("Slowing down write's to allow some some time for compaction");
                 let one_millis = time::Duration::from_millis(1);
-                parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked(&mut mutex_guard, || {
+                parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked(mutex_guard, || {
                     thread::sleep(one_millis);
                     // Do not delay a single write more than once
                     allow_write_delay = false;
@@ -323,10 +346,7 @@ impl DB {
             } else if !force_compaction
                 && (self.memtable.approximate_memory_usage() <= self.options.max_memtable_size())
             {
-                // There is still room in the memtable
-                log::info!(
-                    "There is still room in the memtable for writes. Proceeding with write."
-                );
+                log::info!("There is room in the memtable for writes. Proceeding with write.");
                 return Ok(());
             } else if mutex_guard.maybe_immutable_memtable.is_some() {
                 /*
@@ -355,7 +375,7 @@ impl DB {
                         another thread) while the current thread is attempting to start a \
                         compaction.";
                     log::error!("{}", error_msg);
-                    return Err(RainDBError::BackgroundTask(error_msg.to_string()));
+                    return Err(RainDBError::Write(error_msg.to_string()));
                 }
 
                 log::info!("Memtable is full. Attempting compaction.");
@@ -401,11 +421,54 @@ impl DB {
                 // Do not force another compaction since we have room
                 force_compaction = false;
 
-                // Schedule compaction of the immutable memtable.
-                self.maybe_schedule_compaction();
+                log::info!("Attempt to schedule a compaction of the immutable memtable");
+                self.maybe_schedule_compaction(&mut mutex_guard);
             }
         }
+    }
 
-        Ok(())
+    /**
+    Schedule a compaction if possible.
+
+    Various conditions are checked to see if a compaction is scheduled. For example, if the
+    database is shutting down, a compaction will not be scheduled.
+
+    # Concurrency
+
+    This method requires the caller to have a lock on the guarded fields.
+    */
+    fn maybe_schedule_compaction(&self, mutex_guard: &mut MutexGuard<GuardedDbFields>) {
+        if mutex_guard.background_compaction_scheduled {
+            log::info!("A background compaction was already initiated.");
+            return;
+        }
+
+        if self.is_shutting_down.load(Ordering::Acquire) {
+            log::info!("The database is shutting down. Will not schedule a background compaction.");
+            return;
+        }
+
+        if mutex_guard.maybe_background_error.is_some() {
+            let background_error = mutex_guard.maybe_background_error.as_ref().unwrap();
+            log::error!(
+                "Detected a sticky background error (potentially from previous compaction \
+                attempts). Error: {}",
+                background_error
+            );
+
+            return;
+        }
+
+        if mutex_guard.maybe_immutable_memtable.is_none()
+            && mutex_guard.maybe_manual_compaction.is_none()
+            && !mutex_guard.version_set.needs_compaction().unwrap()
+        {
+            log::info!("No compaction work detected.");
+            return;
+        }
+
+        log::info!("Determined that compaction is necessary. Scheduling compaction task.");
+        mutex_guard.background_compaction_scheduled = true;
+        self.compaction_worker.schedule_task(TaskKind::Compaction);
     }
 }

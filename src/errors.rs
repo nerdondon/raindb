@@ -7,6 +7,7 @@ use std::fmt;
 use std::io;
 use std::num::TryFromIntError;
 
+use crate::compaction::CompactionWorkerError;
 use crate::tables::errors::ReadError;
 use crate::versioning;
 
@@ -29,11 +30,14 @@ pub enum RainDBError {
     /// Variant for errors stemming from reading table files.
     TableRead(ReadError),
 
-    /// Variant for errors encountered while running background tasks.
-    BackgroundTask(String),
+    /// Variant for errors encountered while servicing a write request.
+    Write(String),
 
     /// Variant for errors encountered while reading from a version.
     VersionRead(versioning::errors::ReadError),
+
+    /// Variant for errors encountered during compaction.
+    Compaction(CompactionWorkerError),
 }
 
 impl std::error::Error for RainDBError {}
@@ -45,8 +49,9 @@ impl fmt::Display for RainDBError {
             RainDBError::WAL(base_err) => write!(f, "{}", base_err),
             RainDBError::TableCache(base_err) => write!(f, "{}", base_err),
             RainDBError::TableRead(base_err) => write!(f, "{}", base_err),
-            RainDBError::BackgroundTask(base_err) => write!(f, "{}", base_err),
+            RainDBError::Write(base_err) => write!(f, "{}", base_err),
             RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
+            RainDBError::Compaction(base_err) => write!(f, "{}", base_err),
         }
     }
 }
