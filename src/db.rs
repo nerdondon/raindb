@@ -60,6 +60,12 @@ struct Writer {
     /// Whether the write operations should be synchronously flushed to disk.
     synchronous_write: bool,
 
+    /**
+    Fields in a writer that need to be mutable.
+
+    The mutex is for interior mutability where only an immutable reference is needed to make
+    changes and a lock doesn't have to be placed around the entire writer.
+    */
     inner: Mutex<WriterInner>,
 
     /**
@@ -118,12 +124,20 @@ impl Writer {
         self.thread_signaller.notify_one()
     }
 
-    /// Return true if the operation is complete. Otherwise, false.
+    /**
+    Return true if the operation is complete. Otherwise, false.
+
+    This will attempt to get a lock on the inner fields.
+    */
     pub fn is_operation_complete(&self) -> bool {
         self.inner.lock().operation_completed
     }
 
-    /// Set whether or not the operation is complete.
+    /**
+    Set whether or not the operation is complete.
+
+    This will attempt to get a lock on the inner fields.
+    */
     pub fn set_operation_completed(&self, is_complete: bool) -> bool {
         let mutex_guard = self.inner.lock();
         mutex_guard.operation_completed = is_complete;
@@ -131,12 +145,20 @@ impl Writer {
         mutex_guard.operation_completed
     }
 
-    /// Get the result of the write operation.
+    /**
+    Get the result of the write operation.
+
+    This will attempt to get a lock on the inner fields.
+    */
     pub fn get_operation_result(&self) -> Option<RainDBResult<()>> {
         self.inner.lock().operation_result
     }
 
-    /// Set the result of the write operation.
+    /**
+    Set the result of the write operation.
+
+    This will attempt to get a lock on the inner fields.
+    */
     pub fn set_operation_result(
         &self,
         operation_result: Option<RainDBResult<()>>,
@@ -150,7 +172,11 @@ impl Writer {
 
 /// Struct holding database fields that need a lock before accessing.
 pub(crate) struct GuardedDbFields {
-    /// The current write-ahead log (WAL) number.
+    /**
+    The current write-ahead log (WAL) number.
+
+    This field is synonomous with the `leveldb::DBImpl::logfile_number_` field.
+    */
     curr_wal_file_number: u64,
 
     /// A background compaction was scheduled.
@@ -197,9 +223,6 @@ pub struct DB {
 
     /// The writer for the current write-ahead log file.
     wal: WALWriter,
-
-    /// Current write-ahead log file number.
-    curr_wal_file_number: u64,
 
     /// A cache of table files.
     table_cache: Arc<TableCache>,
@@ -272,7 +295,6 @@ impl DB {
             wal,
             memtable,
             file_name_handler,
-            curr_wal_file_number: wal_file_number,
         })
     }
 
@@ -310,7 +332,7 @@ impl DB {
 
     # Legacy
 
-    This method is synonymous with [`DBImpl::Write`] in LevelDB.
+    This method is synonymous with [`leveldb::DBImpl::Write`] in LevelDB.
 
     [commit that added it]: https://github.com/google/leveldb/commit/d79762e27369365a7ffe1f2e3a5c64b0632079e1
     [`DBImpl::Write`]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/db/db_impl.cc#L1200
