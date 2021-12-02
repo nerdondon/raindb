@@ -24,6 +24,25 @@ use crate::write_ahead_log::WALWriter;
 use crate::{DbOptions, WriteOptions};
 
 /**
+Mutable fields within a [`Writer`].
+
+These will be wrapped by a mutex to provide interior mutability without need to keep a lock
+around the entire parent [`Writer`] object.
+*/
+struct WriterInner {
+    /// Whether the requested operation was completed regardless of whether if failed or succeeded.
+    pub operation_completed: bool,
+
+    /**
+    The result of the operation.
+
+    This field must be populated if `operation_completed` was set to `true`. This field is mostly
+    used to indicate status to a writer if its operation was part of a group commit.
+    */
+    pub operation_result: Option<RainDBResult<()>>,
+}
+
+/**
 A thread requesting a write operation.
 
 When multiple threads request a write operation, RainDB will queue up the threads so that the
@@ -41,16 +60,7 @@ struct Writer {
     /// Whether the write operations should be synchronously flushed to disk.
     synchronous_write: bool,
 
-    /// Whether the requested operation was completed regardless of whether if failed or succeeded.
-    pub operation_completed: bool,
-
-    /**
-    The result of the operation.
-
-    This field must be populated if `operation_completed` was set to `true`. This field is mostly
-    used to indicate status to a writer if its operation was part of a group commit.
-    */
-    pub operation_result: Option<RainDBResult<()>>,
+    inner: Mutex<WriterInner>,
 
     /**
     A condition variable to signal the thread to park or wake-up to perform it's requested
@@ -63,34 +73,39 @@ impl PartialEq for Writer {
     fn eq(&self, other: &Self) -> bool {
         self.maybe_batch == other.maybe_batch
             && self.synchronous_write == other.synchronous_write
-            && self.operation_completed == other.operation_completed
+            && ptr::eq(&self.inner, &other.inner)
     }
 }
 
+/// Public methods
 impl Writer {
     /// Create a new instance of [`Writer`].
-    fn new(maybe_batch: Option<Batch>, synchronous_write: bool) -> Self {
+    pub fn new(maybe_batch: Option<Batch>, synchronous_write: bool) -> Self {
+        let inner = WriterInner {
+            operation_completed: false,
+            operation_result: None,
+        };
+
         Self {
             maybe_batch,
             synchronous_write,
-            operation_completed: false,
-            operation_result: None,
+            inner: Mutex::new(inner),
             thread_signaller: Condvar::new(),
         }
     }
 
     /// Whether the writer should perform synchronous writes.
-    fn is_synchronous_write(&self) -> bool {
+    pub fn is_synchronous_write(&self) -> bool {
         self.synchronous_write
     }
 
     /// Get a reference to the operations this writer needs to perform.
-    fn maybe_batch(&self) -> Option<&Batch> {
+    pub fn maybe_batch(&self) -> Option<&Batch> {
         self.maybe_batch.as_ref()
     }
 
     /// Parks the thread while it waits for its turn to perform its operation.
-    fn wait_for_turn(&self, database_mutex_guard: MutexGuard<GuardedDbFields>) {
+    pub fn wait_for_turn(&self, database_mutex_guard: MutexGuard<GuardedDbFields>) {
         self.thread_signaller.wait(&mut database_mutex_guard)
     }
 
@@ -99,8 +114,37 @@ impl Writer {
 
     If the operation was already completed as part of a group commit, the thread will return.
     */
-    fn notify_writer(&self) -> bool {
+    pub fn notify_writer(&self) -> bool {
         self.thread_signaller.notify_one()
+    }
+
+    /// Return true if the operation is complete. Otherwise, false.
+    pub fn is_operation_complete(&self) -> bool {
+        self.inner.lock().operation_completed
+    }
+
+    /// Set whether or not the operation is complete.
+    pub fn set_operation_completed(&self, is_complete: bool) -> bool {
+        let mutex_guard = self.inner.lock();
+        mutex_guard.operation_completed = is_complete;
+
+        mutex_guard.operation_completed
+    }
+
+    /// Get the result of the write operation.
+    pub fn get_operation_result(&self) -> Option<RainDBResult<()>> {
+        self.inner.lock().operation_result
+    }
+
+    /// Set the result of the write operation.
+    pub fn set_operation_result(
+        &self,
+        operation_result: Option<RainDBResult<()>>,
+    ) -> Option<RainDBResult<()>> {
+        let mutex_guard = self.inner.lock();
+        mutex_guard.operation_result = operation_result;
+
+        mutex_guard.operation_result
     }
 }
 
@@ -276,49 +320,64 @@ impl DB {
         write_options: WriteOptions,
         maybe_batch: Option<Batch>,
     ) -> RainDBResult<()> {
+        // Create a new writer to represent this thread and push it into the back of the writer
+        // queue
         let writer = Arc::new(Writer::new(maybe_batch, write_options.synchronous));
-        let mutex_guard = self.guarded_fields.lock();
-        mutex_guard.writer_queue.push_back(Arc::clone(&writer));
+        let fields_mutex_guard = self.guarded_fields.lock();
+        fields_mutex_guard
+            .writer_queue
+            .push_back(Arc::clone(&writer));
 
-        let is_first_writer = self.is_first_writer(&mut mutex_guard, &writer);
+        let is_first_writer = self.is_first_writer(&mut fields_mutex_guard, &writer);
         // Wait until it is the current writer's turn to write
-        while !writer.operation_completed && !is_first_writer {
-            writer.wait_for_turn(mutex_guard);
+        while !writer.is_operation_complete() && !is_first_writer {
+            writer.wait_for_turn(fields_mutex_guard);
         }
 
         // Check if the work for this thread was already completed as part of a group commit and
         // return the result if it was
-        if writer.operation_completed {
-            return writer.operation_result.unwrap();
+        if writer.is_operation_complete() {
+            return writer.get_operation_result().unwrap();
         }
 
         let force_compaction = maybe_batch.is_none();
-        let compaction_check_result = self.make_room_for_write(&mut mutex_guard, force_compaction);
-        let prev_sequence_number = mutex_guard.version_set.get_prev_sequence_number();
-        let last_writer = &writer;
+        let compaction_check_result =
+            self.make_room_for_write(&mut fields_mutex_guard, force_compaction);
+        let prev_sequence_number = fields_mutex_guard.version_set.get_prev_sequence_number();
+        let mut last_writer = Arc::clone(&writer);
 
-        if compaction_check_result.is_ok() && !force_compaction {}
+        if compaction_check_result.is_ok() && !force_compaction {
+            // Attempt to create a group commit batch
+        }
 
         loop {
             // We can unwrap immediately after popping because we know that at least the current
             // writer is in the queue and the loop takes care to never iterate on an empty queue.
-            let first_writer = mutex_guard.writer_queue.pop_front().unwrap();
+            let first_writer = fields_mutex_guard.writer_queue.pop_front().unwrap();
 
-            /*
-            We dererence twice on `last_writer` because we want to get to the memory location of
-            the writer struct. This allows to establish object identity. See the implementation of
-            [`DB::is_first_writer`] for additional details.
-            */
-            if !ptr::eq(&*first_writer, &**last_writer) {
+            // We want to check shallow/reference equality of the writers so we use `Arc::ptr_eq`.
+            if !Arc::ptr_eq(&first_writer, &writer) {
                 /*
-                The writer that was first is not the last writer used. This means that the first
+                The writer that was first is not the current writer. This means that the first
                 writer had its write operation performed as part of a group commit. Mark it as
                 done.
                 */
-                first_writer
+                first_writer.set_operation_completed(true);
+                first_writer.notify_writer();
             }
 
-            if {}
+            if Arc::ptr_eq(&first_writer, &last_writer) {
+                break;
+            }
+        }
+
+        // Notify the new head of the write queue
+        if !fields_mutex_guard.writer_queue.is_empty() {
+            fields_mutex_guard
+                .writer_queue
+                .front()
+                .unwrap()
+                .notify_writer();
         }
 
         Ok(())
@@ -330,19 +389,9 @@ impl DB {
         mutex_guard: &mut MutexGuard<GuardedDbFields>,
         writer: &Arc<Writer>,
     ) -> bool {
-        let maybe_first_writer = mutex_guard.writer_queue.front().map(|wrapped_writer| {
-            /*
-            We want to compare the shallow identity of writer objects so we need to dereference
-            to the writer object. The first dereference is for the `&Arc<Writer>` and gives us
-            `Arc<Writer>`. The second dereference is for going through the `Arc` smart pointer to
-            give us just `Writer`.
-            */
-            **wrapped_writer
-        });
-
-        let underlying_writer_address = &**writer;
-        maybe_first_writer.is_some()
-            && ptr::eq(underlying_writer_address, &maybe_first_writer.unwrap())
+        // We want to check shallow/reference equality of the writers so we use `Arc::ptr_eq`.
+        let maybe_first_writer = mutex_guard.writer_queue.front();
+        maybe_first_writer.is_some() && Arc::ptr_eq(writer, maybe_first_writer.unwrap())
     }
 
     /**
