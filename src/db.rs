@@ -157,12 +157,6 @@ pub(crate) struct GuardedDbFields {
     background_compaction_scheduled: bool,
 
     /**
-    A condidtion variable used to notify parked threads that background work (e.g. compaction) has
-    finished.
-    */
-    background_work_finished_signal: Condvar,
-
-    /**
     An error that was encountered when performing background operations (e.g. when compacting a
     memtable).
     */
@@ -232,6 +226,12 @@ pub struct DB {
     This is used to schedule compaction related tasks on a background thread.
     */
     compaction_worker: CompactionWorker,
+
+    /**
+    A condidtion variable used to notify parked threads that background work (e.g. compaction) has
+    finished.
+    */
+    background_work_finished_signal: Condvar,
 }
 
 /// Public methods
@@ -455,17 +455,13 @@ impl DB {
                     "Current memtable is full but the previous memtable is still compacting. \
                     Waiting before attempting to compact current memtable."
                 );
-                mutex_guard
-                    .background_work_finished_signal
-                    .wait(&mut mutex_guard);
+                self.background_work_finished_signal.wait(&mut mutex_guard);
             } else if num_level_zero_files >= L0_STOP_WRITES_TRIGGER {
                 log::info!(
                     "Too many level 0 files. Waiting for compaction before proceeding with write \
                     operations."
                 );
-                mutex_guard
-                    .background_work_finished_signal
-                    .wait(&mut mutex_guard);
+                self.background_work_finished_signal.wait(&mut mutex_guard);
             } else {
                 if mutex_guard.version_set.maybe_prev_wal_number().is_some() {
                     let error_msg =
