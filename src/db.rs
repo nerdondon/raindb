@@ -20,11 +20,12 @@ use crate::config::{
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
 use crate::file_names::{DATA_DIR, WAL_DIR};
+use crate::key::LookupKey;
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::table_cache::TableCache;
 use crate::versioning::version_set::VersionSet;
 use crate::write_ahead_log::WALWriter;
-use crate::{DbOptions, WriteOptions};
+use crate::{DbOptions, ReadOptions, WriteOptions};
 
 /**
 Mutable fields within a [`Writer`].
@@ -186,10 +187,13 @@ pub(crate) struct GuardedDbFields {
     background_compaction_scheduled: bool,
 
     /**
-    An error that was encountered when performing background operations (e.g. when compacting a
-    memtable).
+    An error that was encountered when performing write operations or background operations that may
+    have put the database in a bad state.
+
+    This error is sticky and essentially stops all future writes to the database when it is set. An
+    example of when this may occur, is when a write to the write-ahead log fails.
     */
-    maybe_background_error: Option<RainDBError>,
+    maybe_bad_database_state: Option<RainDBError>,
 
     /**
     Stores state information for a manual compaction. `None` if there is no manual compaction in
@@ -254,7 +258,7 @@ pub struct DB {
     compaction_worker: CompactionWorker,
 
     /**
-    A condidtion variable used to notify parked threads that background work (e.g. compaction) has
+    A condition variable used to notify parked threads that background work (e.g. compaction) has
     finished.
     */
     background_work_finished_signal: Condvar,
@@ -301,16 +305,31 @@ impl DB {
         })
     }
 
-    pub fn get(&self) {
+    pub fn get(&self, read_options: ReadOptions, key: &Vec<u8>) {
         todo!("working on it!")
     }
 
-    pub fn put(&self, write_options: WriteOptions, key: Vec<u8>, value: Vec<u8>) {
+    pub fn put(
+        &self,
+        write_options: WriteOptions,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> RainDBResult<()> {
         todo!("working on it!")
     }
 
-    pub fn delete(&self, write_options: WriteOptions, key: Vec<u8>) {
+    pub fn delete(&self, write_options: WriteOptions, key: Vec<u8>) -> RainDBResult<()> {
         todo!("working on it!")
+    }
+
+    /**
+    Atomically apply a batch of changes to the database. The requesting thread is queued if there
+    are multiple write requests.
+
+    This is the public API to the underlying [`DB::apply_changes`] method.
+    */
+    pub fn apply(&self, write_options: WriteOptions, write_batch: Batch) -> RainDBResult<()> {
+        self.apply_changes(write_options, Some(write_batch))
     }
 
     pub fn close(&self) {
@@ -323,6 +342,13 @@ impl DB {
     /**
     Apply changes contained in the write batch. The requesting thread is queued if there are
     multiple write requests.
+
+    # Concurrency
+
+    All write activity should be coordinated through this thread. Any existing thread workers
+    (e.g. [`CompactionWorker`]) or future thread worker types should not apply writes to the WAL or
+    to the memtable. We should try to lock this down somehow but this is a design choice inherited
+    from LevelDB.
 
     # Group commits
 
@@ -373,6 +399,42 @@ impl DB {
 
         if compaction_check_result.is_ok() && !force_compaction {
             // Attempt to create a group commit batch
+            let (write_batch, last_writer_in_batch) =
+                self.build_group_commit_batch(&mut fields_mutex_guard)?;
+            last_writer = last_writer_in_batch;
+            write_batch.set_starting_seq_number(prev_sequence_number + 1);
+            let sequence_number_after_write = prev_sequence_number + (write_batch.len() as u64);
+
+            // Add to the write-ahead log and apply changes to the memtable
+            let write_result = parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+                &mut fields_mutex_guard,
+                || -> RainDBResult<()> {
+                    /*
+                    We can release the lock during this phase since `writer` is currently the
+                    only awake writer thread. This means it was soley responsible writing to the
+                    WAL and to the memtable.
+                    */
+
+                    // Write the changes to the write-ahead log first
+                    self.wal.append(&Vec::<u8>::from(&write_batch))?;
+
+                    // Write the changes to the memtable
+                    self.apply_batch_to_memtable(&write_batch)?;
+
+                    Ok(())
+                },
+            );
+
+            if write_result.is_err() {
+                // There was an error writing the write-ahead log and the log itself may
+                // even be in a bad state that could show up if the database is re-opened.
+                // So we force the database into a mode where all future write fail.
+                self.set_bad_database_state(&mut fields_mutex_guard, write_result.unwrap_err());
+            }
+
+            fields_mutex_guard
+                .version_set
+                .set_prev_sequence_number(sequence_number_after_write);
         }
 
         loop {
@@ -445,9 +507,9 @@ impl DB {
                 Err(error) => return Err(RainDBError::VersionRead(error)),
             };
 
-            if mutex_guard.maybe_background_error.is_some() {
+            if mutex_guard.maybe_bad_database_state.is_some() {
                 // We encountered an issue with a background task. Return with the error.
-                let error = mutex_guard.maybe_background_error.unwrap();
+                let error = mutex_guard.maybe_bad_database_state.unwrap();
                 log::error!("Stopping compaction check because there may be a relevant background error. Error: {}", error);
 
                 return Err(error);
@@ -461,7 +523,7 @@ impl DB {
                 */
                 log::info!("Slowing down write's to allow some some time for compaction");
                 let one_millis = time::Duration::from_millis(1);
-                parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked(mutex_guard, || {
+                parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(mutex_guard, || {
                     thread::sleep(one_millis);
                     // Do not delay a single write more than once
                     allow_write_delay = false;
@@ -567,8 +629,8 @@ impl DB {
             return;
         }
 
-        if mutex_guard.maybe_background_error.is_some() {
-            let background_error = mutex_guard.maybe_background_error.as_ref().unwrap();
+        if mutex_guard.maybe_bad_database_state.is_some() {
+            let background_error = mutex_guard.maybe_bad_database_state.as_ref().unwrap();
             log::error!(
                 "Detected a sticky background error (potentially from previous compaction \
                 attempts). Error: {}",
@@ -666,5 +728,37 @@ impl DB {
         }
 
         Ok((group_commit_batch, Arc::clone(last_writer)))
+    }
+
+    /// Apply the changes in the provided batch to the memtable.
+    fn apply_batch_to_memtable(&self, batch: &Batch) -> RainDBResult<()> {
+        let mut curr_sequence_num = batch.get_starting_seq_number().unwrap();
+        for batch_element in batch.iter() {
+            let lookup_key = LookupKey::new(
+                batch_element.get_key().to_vec(),
+                curr_sequence_num,
+                batch_element.get_operation(),
+            );
+            let value = batch_element.get_value().map_or(vec![], |val| val.to_vec());
+            self.memtable.insert(lookup_key, value);
+
+            curr_sequence_num += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Set field indicating that the database is in bad state and should not be written to.
+    fn set_bad_database_state(
+        &self,
+        mutex_guard: &mut MutexGuard<GuardedDbFields>,
+        catastrophic_error: RainDBError,
+    ) {
+        if mutex_guard.maybe_bad_database_state.is_some() {
+            return;
+        }
+
+        mutex_guard.maybe_bad_database_state = Some(catastrophic_error);
+        self.background_work_finished_signal.notify_all();
     }
 }

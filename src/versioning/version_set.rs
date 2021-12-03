@@ -171,6 +171,11 @@ impl VersionSet {
     pub fn get_prev_sequence_number(&self) -> u64 {
         self.prev_sequence_number
     }
+
+    /// Set the most recently used sequence number.
+    pub fn set_prev_sequence_number(&mut self, sequence_number: u64) {
+        self.prev_sequence_number = sequence_number;
+    }
 }
 
 /// Private methods

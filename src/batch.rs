@@ -54,7 +54,7 @@ impl BatchElement {
     }
 
     /// Get a reference to the batch element's value.
-    pub fn value(&self) -> Option<&Vec<u8>> {
+    pub fn get_value(&self) -> Option<&Vec<u8>> {
         self.value.as_ref()
     }
 }

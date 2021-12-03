@@ -38,6 +38,12 @@ pub enum RainDBError {
 
     /// Variant for errors encountered during compaction.
     Compaction(CompactionWorkerError),
+
+    /// Variant for lookup key parsing errors.
+    KeyParsing(String),
+
+    /// Variant used for one off situations. This should be used sparingly.
+    Other(String),
 }
 
 impl std::error::Error for RainDBError {}
@@ -52,6 +58,8 @@ impl fmt::Display for RainDBError {
             RainDBError::Write(base_err) => write!(f, "{}", base_err),
             RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
             RainDBError::Compaction(base_err) => write!(f, "{}", base_err),
+            RainDBError::KeyParsing(base_err) => write!(f, "{}", base_err),
+            RainDBError::Other(base_err) => write!(f, "{}", base_err),
         }
     }
 }
