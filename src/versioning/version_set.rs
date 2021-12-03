@@ -166,11 +166,16 @@ impl VersionSet {
 
         Ok(false)
     }
+
+    /// Get the most recently used sequence number.
+    pub fn get_prev_sequence_number(&self) -> u64 {
+        self.prev_sequence_number
+    }
 }
 
 /// Private methods
 impl VersionSet {
-    // A reference to the current version.
+    // Get a reference to the current version.
     fn get_current_version(&self) -> Option<SharedNode<Version>> {
         self.versions.tail()
     }
