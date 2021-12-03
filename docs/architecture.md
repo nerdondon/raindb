@@ -58,8 +58,32 @@ The write path is as follows:
 
 1. Write to the write-ahead log for durability
 1. Write to the memtable
-1. If the memtable memory usage hits a defined threshold (defaults to 4 MiB), then a compaction
+1. If the memtable memory usage is at a defined threshold (defaults to 4 MiB), then a compaction
    operation is triggered
+
+Write requests can be submitted by clients as single `Put`'s and `Delete`'s or in batches of a mix
+of the two that will be committed atomically.
+
+While RainDB supports multiple threads for writes and reads, write requests will be performed
+serially. That is, if there are multiple threads that make a `Put` or a `Delete` request, the
+threads will be placed in a queue to be processed in order. In order to improve write throughput,
+RainDB will doing an additional level of grouping on top of the write batches mentioned above. As in
+LevelDB, we call this extra level of grouping a group commit. The size of a group commit is limited
+so as to not introduce too much additional latency.
+
+If a write operation will cause a memtable to become full, the compaction process is kicked off. The
+writing thread will check if there are already any ongoing compactions. If there are, the thread
+will pause until the ongoing compaction finishes. If there is not an ongoing compaction, the current
+writer thread will do the following:
+
+1. Create a new write-ahead log to replace the current one backing the memtable to be compacted
+1. Create a new memtable and make the current memtable immutable (i.e. move to another field)
+1. Schedule a compaction
+1. Pause the writing thread until the the compaction is finished
+1. On waking back up, the writer will attempt to create a group commit batch up to a certain size
+   limit in terms of bytes that will be written.
+1. After creating the batch of operations that will be performed, the write is committed to the WAL
+   and then applied to the memtable.
 
 ### Read
 
