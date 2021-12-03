@@ -2,7 +2,6 @@ pub mod db;
 pub mod filter_policy;
 pub mod fs;
 
-mod batch;
 mod compaction;
 mod config;
 mod errors;
@@ -15,6 +14,9 @@ mod tables;
 mod utils;
 mod versioning;
 mod write_ahead_log;
+
+mod batch;
+pub use batch::{Batch, BatchElement};
 
 pub use utils::cache::Cache;
 
