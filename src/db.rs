@@ -13,7 +13,10 @@ use std::time;
 
 use crate::batch::Batch;
 use crate::compaction::{CompactionWorker, ManualCompaction, TaskKind};
-use crate::config::{L0_SLOWDOWN_WRITES_TRIGGER, L0_STOP_WRITES_TRIGGER};
+use crate::config::{
+    GROUP_COMMIT_SMALL_WRITE_THRESHOLD_BYTES, L0_SLOWDOWN_WRITES_TRIGGER, L0_STOP_WRITES_TRIGGER,
+    MAX_GROUP_COMMIT_SIZE_BYTES, SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES,
+};
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
 use crate::file_names::{DATA_DIR, WAL_DIR};
@@ -586,5 +589,82 @@ impl DB {
         log::info!("Determined that compaction is necessary. Scheduling compaction task.");
         mutex_guard.background_compaction_scheduled = true;
         self.compaction_worker.schedule_task(TaskKind::Compaction);
+    }
+
+    /**
+    Build a [`Batch`] to execute as part of a group commit.
+
+    This method will return an error if the writer queue is empty or if the first writer does
+    not have a batch. The first writer must have a batch because this method is for performing
+    actual writes and we do not want to force a compaction and impact the latency of other writers
+    in the batch.
+    */
+    fn build_group_commit_batch(
+        &self,
+        mutex_guard: &mut MutexGuard<GuardedDbFields>,
+    ) -> RainDBResult<(Batch, Arc<Writer>)> {
+        // The writer queue must be non-empty. It should at least contain the writer representing
+        // the current thread.
+        if mutex_guard.writer_queue.is_empty() {
+            let error_msg =
+                "Found an empty writer queue while attempting to create a group commit batch.";
+            log::error!("{}", error_msg);
+            return Err(RainDBError::Write(error_msg.to_string()));
+        }
+
+        let first_writer = mutex_guard.writer_queue.front().unwrap();
+        if first_writer.maybe_batch().is_none() {
+            let error_msg =
+                "The first writer to be processed for a group commit had an empty batch.";
+            log::error!("{}", error_msg);
+            return Err(RainDBError::Write(error_msg.to_string()));
+        }
+
+        let mut batch_size = first_writer.maybe_batch().unwrap().get_approximate_size();
+
+        /*
+        Allow the group to grow to a maximum size so we don't impact the write latency of an
+        individual write too much. If the original write is small, limit the growth also so that
+        we do not slow down the small write too much.
+        */
+        let max_size: usize = if batch_size <= GROUP_COMMIT_SMALL_WRITE_THRESHOLD_BYTES {
+            batch_size + SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES
+        } else {
+            MAX_GROUP_COMMIT_SIZE_BYTES
+        };
+
+        let group_commit_batch = Batch::new();
+        group_commit_batch.append_batch(first_writer.maybe_batch().unwrap());
+
+        let last_writer = first_writer;
+        let writer_iter = mutex_guard.writer_queue.iter();
+        // Skip the first writer since we used it to bootstrap the group commit.
+        writer_iter.next();
+        for writer in writer_iter {
+            if writer.is_synchronous_write() && !first_writer.is_synchronous_write() {
+                // Do not include a synchronous write into a batch handled by a non-synchronous
+                // writer.
+                break;
+            }
+
+            if writer.maybe_batch().is_none() {
+                // Do not include writers servicing force compaction requests in the group commit.
+                last_writer = writer;
+                break;
+            }
+
+            let curr_writer_batch = writer.maybe_batch().unwrap();
+            batch_size += curr_writer_batch.get_approximate_size();
+            if batch_size > max_size {
+                // Adding this writer to the group commit would make it too large. Stop adding
+                // writers;
+                break;
+            }
+
+            group_commit_batch.append_batch(curr_writer_batch);
+            last_writer = writer;
+        }
+
+        Ok((group_commit_batch, Arc::clone(last_writer)))
     }
 }

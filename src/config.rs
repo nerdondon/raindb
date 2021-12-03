@@ -43,6 +43,35 @@ We stop writes at this point.
 pub(crate) const L0_STOP_WRITES_TRIGGER: usize = 12;
 
 /**
+The overall maximum group commit batch size.
+
+This is set at 1 MiB.
+
+This limit is so that doing a group commit gives better latency on average but does not affect the
+latency of any single write too much.
+*/
+pub(crate) const MAX_GROUP_COMMIT_SIZE_BYTES: usize = 1 * 1024 * 1024;
+
+/**
+The upper threshold for a write to be considered a small write.
+
+This is set at 128 KiB.
+*/
+pub(crate) const GROUP_COMMIT_SMALL_WRITE_THRESHOLD_BYTES: usize = 128 * 1024;
+
+/**
+The allowable additional bytes to add to a group commit where the first writer is doing a small
+write.
+
+This is set at 128 KiB.
+
+If the initial writer of a group commit has a small write
+(<= [`GROUP_COMMIT_SMALL_WRITE_THRESHOLD_BYTES`]), then limit the growth of the group commit so that
+the small write is not impacted too much.
+*/
+pub(crate) const SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES: usize = 128 * 1024;
+
+/**
 Maximum level to which a new compacted memtable is pushed if it does not create overlap in keys.
 
 We try to push to level 2 to avoid the relatively expensive level 0 to level 1 compactions and to
