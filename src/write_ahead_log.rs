@@ -16,19 +16,28 @@ bytes of user data) to fill up the trailing three bytes of the block and then em
 data in subsequent blocks.
 */
 
-use bincode::Options;
-use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
+use integer_encoding::FixedInt;
+use std::convert::{TryFrom, TryInto};
 use std::io::{self, ErrorKind, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::errors::WALIOError;
+use crate::errors::{WALIOError, WALSerializationErrorKind};
 use crate::file_names::FileNameHandler;
 use crate::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
+/**
+The length of block headers.
+
+This is 3 bytes.
+*/
 const HEADER_LENGTH_BYTES: usize = 2 + 1;
 
+/**
+The size of blocks in the write-ahead log.
+
+This is set at 32 KiB.
+*/
 const BLOCK_SIZE_BYTES: usize = 32 * 1024;
 
 type WALIOResult<T> = Result<T, WALIOError>;
@@ -41,7 +50,7 @@ Note, the use of record is overloaded here. Be aware of the distinction between 
 and the actual user record.
 */
 #[repr(u8)]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum BlockType {
     /// Denotes that the block contains the entirety of a user record.
     Full = 0,
@@ -53,11 +62,43 @@ pub(crate) enum BlockType {
     Last,
 }
 
+impl TryFrom<u8> for BlockType {
+    type Error = WALIOError;
+
+    fn try_from(value: u8) -> WALIOResult<BlockType> {
+        let operation = match value {
+            0 => BlockType::Full,
+            1 => BlockType::First,
+            2 => BlockType::Middle,
+            3 => BlockType::Last,
+            _ => {
+                return Err(WALIOError::Seralization(WALSerializationErrorKind::Other(
+                    format!(
+                        "There was an problem parsing the block type. The value received was {}",
+                        value
+                    ),
+                )))
+            }
+        };
+
+        Ok(operation)
+    }
+}
+
 /**
 A record that is stored in a particular block. It is potentially only a fragment of a full user
 record.
+
+# Serialization
+
+When serialized to disk the block record will have the following format:
+
+1. The length as a 2-byte integer with a fixed-size encoding
+1. The block type converted to a 1 byte integer with a fixed-size encoding
+1. The data
+
 */
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub(crate) struct BlockRecord {
     /// The size of the data within the block.
     length: u16,
@@ -70,21 +111,42 @@ pub(crate) struct BlockRecord {
 }
 
 impl From<&BlockRecord> for Vec<u8> {
-    fn from(value: &BlockRecord) -> Self {
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .serialize(value)
-            .unwrap()
+    fn from(record: &BlockRecord) -> Self {
+        let initial_capacity = HEADER_LENGTH_BYTES + record.data.len();
+        let mut buf: Vec<u8> = Vec::with_capacity(initial_capacity);
+        buf.extend_from_slice(&u16::encode_fixed_vec(record.length));
+        buf.extend_from_slice(&[record.block_type as u8]);
+        buf.extend_from_slice(&record.data);
+
+        buf
     }
 }
 
 impl TryFrom<&Vec<u8>> for BlockRecord {
-    type Error = bincode::Error;
+    type Error = WALIOError;
 
-    fn try_from(value: &Vec<u8>) -> bincode::Result<BlockRecord> {
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .deserialize(value)
+    fn try_from(buf: &Vec<u8>) -> WALIOResult<BlockRecord> {
+        if buf.len() < HEADER_LENGTH_BYTES {
+            let error_msg = format!(
+                "Failed to deserialize the provided buffer to a WAL record. The buffer was expected to be at least the size of the header ({} bytes) but was {}.",
+                HEADER_LENGTH_BYTES, buf.len()
+            );
+            return Err(WALIOError::Seralization(WALSerializationErrorKind::Other(
+                error_msg,
+            )));
+        }
+
+        // The first two bytes are the length of the data
+        let data_length = u16::decode_fixed(&buf[0..2]);
+
+        // The third byte should be the block type
+        let block_type: BlockType = buf[2].try_into()?;
+
+        Ok(BlockRecord {
+            length: data_length,
+            block_type,
+            data: buf[3..].to_vec(),
+        })
     }
 }
 
@@ -337,8 +399,6 @@ impl WALReader {
     Returns the parsed [`BlockRecord`](BlockRecord).
     */
     fn read_physical_record(&mut self) -> WALIOResult<BlockRecord> {
-        let serializer = bincode::DefaultOptions::new().with_fixint_encoding();
-
         // Read the header
         let mut header_buffer = [0; 3];
         let header_bytes_read = self.wal_file.read(&mut header_buffer)?;
@@ -352,7 +412,7 @@ impl WALReader {
             )));
         }
 
-        let data_length: u16 = serializer.deserialize(&header_buffer[0..2])?;
+        let data_length = u16::decode_fixed(&header_buffer[0..2]);
 
         // Read the payload
         let mut data_buffer = Vec::with_capacity(data_length as usize);

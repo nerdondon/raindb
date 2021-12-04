@@ -15,9 +15,10 @@ Because writes are append-only, there may be multiple records with the same user
 The sequence number is used to denote which of the stored records is the most recent version.
 */
 
-use bincode::Options;
-use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
+use integer_encoding::FixedInt;
+use std::convert::{TryFrom, TryInto};
+
+use crate::errors::{RainDBError, RainDBResult};
 
 /**
 Trait that decorates keys in RainDB that are sortable and deserializable.
@@ -27,8 +28,21 @@ files.
 */
 pub trait RainDbKeyType: Ord + TryFrom<Vec<u8>> {}
 
-/** This is the actual key used by RainDB. It is the user provided key with additional metadata. */
-#[derive(Debug, Deserialize, Eq, Hash, Serialize)]
+/**
+This is the actual key used by RainDB. It is the user provided key with additional metadata.
+
+# Serialization
+
+When the key is serialized to write to disk, it has the following layout:
+1. The user key
+1. The sequence number with a fixed-length encoding
+1. The operation as an 8-bit integer with fixed-length encoding
+
+Unlike in LevelDB, we do not pack the sequence number and operation together into a single 64-bit
+integer (forming an 8 byte trailer) where the sequence number takes up the first 56 bits and the
+operation takes up the last 8 bits.
+*/
+#[derive(Debug, Eq, Hash)]
 pub struct LookupKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -38,7 +52,7 @@ pub struct LookupKey {
     operation: Operation,
 }
 
-/// Public methods
+/// Crate-only methods
 impl LookupKey {
     /// Construct a new [`LookupKey`].
     pub(crate) fn new(user_key: Vec<u8>, sequence_number: u64, operation: Operation) -> Self {
@@ -123,21 +137,43 @@ impl PartialEq for LookupKey {
 }
 
 impl TryFrom<Vec<u8>> for LookupKey {
-    type Error = bincode::Error;
+    type Error = RainDBError;
 
-    fn try_from(value: Vec<u8>) -> bincode::Result<LookupKey> {
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .deserialize(&value)
+    fn try_from(buf: Vec<u8>) -> RainDBResult<LookupKey> {
+        let trailer_size: usize = 8 + 1;
+        if buf.len() < trailer_size {
+            return Err(RainDBError::KeyParsing(format!(
+                "The provided buffer was too small. It needs to be at least {} bytes but was {}.",
+                trailer_size,
+                buf.len(),
+            )));
+        }
+
+        let trailer_start_index = buf.len() - trailer_size;
+        let sequence_number_end_index = buf.len() - 2;
+        let user_key = &buf[..trailer_start_index];
+        let sequence_number =
+            u64::decode_fixed(&buf[trailer_start_index..sequence_number_end_index]);
+        let operation: Operation = buf[buf.len() - 1].try_into()?;
+
+        Ok(LookupKey::new(
+            user_key.to_vec(),
+            sequence_number,
+            operation,
+        ))
     }
 }
 
 impl From<&LookupKey> for Vec<u8> {
-    fn from(value: &LookupKey) -> Vec<u8> {
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .serialize(value)
-            .unwrap()
+    fn from(key: &LookupKey) -> Vec<u8> {
+        // We know the size of the buffer we need before hand.
+        // size = size of user key + 8 bytes for the sequence number + 1 byte for the operation
+        let buf: Vec<u8> = Vec::with_capacity(key.get_user_key().len() + 8 + 1);
+        buf.extend_from_slice(key.get_user_key());
+        buf.extend_from_slice(&key.sequence_number.encode_fixed_vec());
+        buf.extend_from_slice(&[*key.get_operation() as u8]);
+
+        buf
     }
 }
 
@@ -150,10 +186,29 @@ Existing enum values should not be changed since they are serialized as part of 
 format.
 */
 #[repr(u8)]
-#[derive(Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Operation {
     /// This represents a tombstone. There should not be a value set for the operation.
     Delete = 0,
     /// Add a new key-value pair or updates an existing key-value pair.
     Put = 1,
+}
+
+impl TryFrom<u8> for Operation {
+    type Error = RainDBError;
+
+    fn try_from(value: u8) -> RainDBResult<Operation> {
+        let operation = match value {
+            0 => Operation::Delete,
+            1 => Operation::Put,
+            _ => {
+                return Err(RainDBError::KeyParsing(format!(
+                    "There was an problem parsing the operation. The value received was {}",
+                    value
+                )))
+            }
+        };
+
+        Ok(operation)
+    }
 }

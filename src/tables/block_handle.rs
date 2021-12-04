@@ -91,8 +91,6 @@ impl TryFrom<&Vec<u8>> for BlockHandle {
 
 impl From<&BlockHandle> for Vec<u8> {
     fn from(value: &BlockHandle) -> Vec<u8> {
-        // bincode is not used for this because it seems that bincode uses a different format for
-        // varint encoding than we want. They only shorten the int if the value is less than 255.
         let encoded_offset = value.offset.encode_var_vec();
         let encoded_size = value.size.encode_var_vec();
         [encoded_offset, encoded_size].concat()

@@ -123,10 +123,9 @@ struct LookupKey {
 }
 ```
 
-Currently, RainDB uses the `bincode` crate to serialize this struct into binary. The sequence number
-will be serialized in a fixed length format and will be 64 bits unlike in LevelDB. In LevelDB, the
-sequence number is a 56-bit uint and the operation is represented by 8-bits. LevelDB encodes these
-fields together to add up to a single 64-bit block.
+The sequence number will be serialized in a fixed length format and will be 64 bits unlike in
+LevelDB. In LevelDB, the sequence number is a 56-bit uint and the operation is represented by
+8-bits. LevelDB encodes these fields together to add up to a single 64-bit block.
 
 ### Write-ahead log (WAL) format
 

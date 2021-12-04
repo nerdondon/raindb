@@ -98,11 +98,6 @@ pub enum WALIOError {
     IO(io::Error),
 
     /**
-    Variant for errors that are related to `try_from` conversions.
-    */
-    Parse(TryFromIntError),
-
-    /**
     Variant for IO issues where the cause is malformed data on the file system.
     */
     Corruption(WALCorruptionErrorMetadata),
@@ -111,7 +106,17 @@ pub enum WALIOError {
     Variant for parsing issues that arise specifically from deserializing data from the
     file system.
     */
-    Serializer(bincode::Error),
+    Seralization(WALSerializationErrorKind),
+}
+
+/**
+Different kinds of errors that can arise from serialization and deserialization activities in the
+WAL.
+*/
+#[derive(Debug)]
+pub enum WALSerializationErrorKind {
+    FromInt(TryFromIntError),
+    Other(String),
 }
 
 impl std::error::Error for WALIOError {}
@@ -119,10 +124,9 @@ impl std::error::Error for WALIOError {}
 impl fmt::Display for WALIOError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WALIOError::Parse(base_err) => write!(f, "{}", base_err),
             WALIOError::IO(base_err) => write!(f, "{}", base_err),
             WALIOError::Corruption(err_metadata) => write!(f, "{:?}", err_metadata),
-            WALIOError::Serializer(base_err) => write!(f, "{:?}", base_err),
+            WALIOError::Seralization(err_metadata) => write!(f, "{:?}", err_metadata),
         }
     }
 }
@@ -135,12 +139,6 @@ impl From<io::Error> for WALIOError {
 
 impl From<TryFromIntError> for WALIOError {
     fn from(err: TryFromIntError) -> Self {
-        WALIOError::Parse(err)
-    }
-}
-
-impl From<bincode::Error> for WALIOError {
-    fn from(err: bincode::Error) -> Self {
-        WALIOError::Serializer(err)
+        WALIOError::Seralization(WALSerializationErrorKind::FromInt(err))
     }
 }

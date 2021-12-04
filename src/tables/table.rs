@@ -1,11 +1,12 @@
 use crc::{Crc, CRC_32_ISCSI};
 use integer_encoding::FixedInt;
 use snap::read::FrameDecoder;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::io::{self, Read};
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
+use crate::errors::RainDBResult;
 use crate::filter_policy::get_filter_block_name;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
@@ -176,6 +177,7 @@ impl Table {
             None => maybe_new_block_reader.as_ref().unwrap(),
         };
 
+        // We have the block reader, now use the iterator to try to find the value for the key.
         let block_reader_iter = block_reader.iter();
         block_reader_iter.seek(key);
         match block_reader_iter.current() {
@@ -235,12 +237,14 @@ impl Table {
 
         // Check the block compression type and decompress the block if necessary
         let compression_type_offset = total_block_size - BLOCK_DESCRIPTOR_SIZE_BYTES;
+        let maybe_compression_type: RainDBResult<TableFileCompressionType> =
+            raw_block_data[compression_type_offset].try_into();
         let compression_type: TableFileCompressionType;
-        match bincode::deserialize(&raw_block_data[compression_type_offset..]) {
+        match maybe_compression_type {
             Err(error) => {
                 return Err(ReadError::BlockDecompression(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Failed to get the compression type for the block.".to_string(),
+                    error,
                 )));
             }
             Ok(encoded_compression_type) => compression_type = encoded_compression_type,

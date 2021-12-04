@@ -6,7 +6,9 @@ get to an MVP and iterate, we keep static values here. These may be made configu
 versions.
 */
 
-use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
+
+use crate::errors::{RainDBError, RainDBResult};
 
 /// The size of a `u32` in bytes.
 pub(crate) const SIZE_OF_U32_BYTES: usize = 4;
@@ -114,12 +116,33 @@ incompressible, the Snappy compression implementation will efficiently detect th
 to uncompressed mode.
 */
 #[repr(u8)]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug)]
 pub enum TableFileCompressionType {
     /// No compression.
     None = 0,
     /// Snappy compression.
     Snappy,
+}
+
+impl TryFrom<u8> for TableFileCompressionType {
+    type Error = RainDBError;
+
+    fn try_from(value: u8) -> RainDBResult<TableFileCompressionType> {
+        let compression_type = match value {
+            0 => TableFileCompressionType::None,
+            1 => TableFileCompressionType::Snappy,
+            _ => {
+                return Err(RainDBError::Other(
+                    format!(
+                        "There was an problem parsing the table file compression type. The value received was {}.",
+                        value
+                    ),
+                ))
+            }
+        };
+
+        Ok(compression_type)
+    }
 }
 
 /**
