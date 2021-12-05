@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 Supertrait that wraps a source of binary content that is readonly and can read from arbitrary offets
 into the content.
 */
-pub trait ReadonlyRandomAccessFile: Read + Seek {
+pub trait ReadonlyRandomAccessFile: Read + Seek + Send + Sync {
     /// Read a number of bytes starting from a given offset.
     fn read_from(&self, buf: &mut [u8], offset: usize) -> Result<usize>;
 
@@ -30,7 +30,7 @@ pub trait RandomAccessFile: ReadonlyRandomAccessFile + Write {
     fn append(&mut self, buf: &[u8]) -> Result<usize>;
 }
 
-pub trait FileSystem {
+pub trait FileSystem: Send + Sync {
     /// Return the name of file system wrapper being used.
     fn get_name(&self) -> String;
 

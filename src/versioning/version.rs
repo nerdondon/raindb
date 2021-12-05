@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::config::MAX_NUM_LEVELS;
@@ -7,7 +5,6 @@ use crate::table_cache::TableCache;
 
 use super::errors::ReadResult;
 use super::file_metadata::FileMetadata;
-use super::version_set::VersionSet;
 
 /**
 Metadata required to charge a file for a multi-level disk seek.
@@ -18,7 +15,7 @@ descriptive with respect to what this struct is used for.
 #[derive(Debug)]
 pub(crate) struct SeekChargeMetadata {
     /// The file that will be charged for multi-level seeks.
-    seek_file: Option<Rc<RefCell<FileMetadata>>>,
+    seek_file: Option<Arc<FileMetadata>>,
 
     /// The level of the file being charged.
     seek_file_level: Option<usize>,
@@ -27,7 +24,7 @@ pub(crate) struct SeekChargeMetadata {
 /// Public methods
 impl SeekChargeMetadata {
     /// Create a new instance of [`SeekChargeMetadata`].
-    pub fn new(seek_file: Option<Rc<RefCell<FileMetadata>>>, seek_file_level: usize) -> Self {
+    pub fn new(seek_file: Option<Arc<FileMetadata>>, seek_file_level: usize) -> Self {
         Self {
             seek_file: None,
             seek_file_level: None,

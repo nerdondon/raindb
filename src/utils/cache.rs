@@ -23,7 +23,7 @@ A cache that stores mappings from keys to values.
 
 Implementations of this trait must be thread-safe.
 */
-pub trait Cache<K, V>: Debug {
+pub trait Cache<K, V>: Debug + Send + Sync {
     /**
     Insert the key-value pair into the cache.
 
@@ -139,8 +139,8 @@ where
 
 impl<K, V> Cache<K, V> for LRUCache<K, V>
 where
-    K: Hash + Eq + Debug + 'static,
-    V: Debug + 'static,
+    K: Hash + Eq + Debug + Send + Sync + 'static,
+    V: Debug + Send + Sync + 'static,
 {
     fn insert(&mut self, key: K, value: V) -> Box<dyn CacheEntry<V>> {
         let writable_inner = self.inner.write();

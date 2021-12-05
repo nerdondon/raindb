@@ -13,7 +13,7 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 
 /// Trait to be implemented by filter generating structures for use with RainDB.
-pub trait FilterPolicy: Debug {
+pub trait FilterPolicy: Debug + Send + Sync {
     /**
     The name of the filter policy.
 

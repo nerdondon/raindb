@@ -1,8 +1,11 @@
 use nerdondon_hopscotch::skiplist::SkipList;
 
+use crate::errors::RainDBError;
 use crate::key::LookupKey;
+use crate::RainDbIterator;
 
-pub trait MemTable {
+/// The interface that a data structure must implement to be used as a memtable in RainDB.
+pub trait MemTable: RainDbIterator<LookupKey> + Send + Sync {
     /// Returns the approximate memory usage of the memtable in bytes.
     fn approximate_memory_usage(&self) -> usize;
 
@@ -17,10 +20,12 @@ pub trait MemTable {
     fn get(&self, key: &LookupKey) -> Option<&Vec<u8>>;
 }
 
+/// A memtable that is backed by a skiplist.
 pub(crate) struct SkipListMemTable {
     store: SkipList<LookupKey, Vec<u8>>,
 }
 
+/// Public methods
 impl SkipListMemTable {
     pub fn new() -> Self {
         Self {
@@ -42,3 +47,9 @@ impl MemTable for SkipListMemTable {
         self.store.get(&key)
     }
 }
+
+/// SAFETY: This is safe because the only way to access a memtable is behind a mutex.
+unsafe impl Send for SkipListMemTable {}
+
+/// SAFETY: This is safe because the only way to access a memtable is behind a mutex.
+unsafe impl Sync for SkipListMemTable {}
