@@ -178,14 +178,14 @@ impl VersionSet {
     }
 }
 
-/// Private methods
+/// Crate-only methods
 impl VersionSet {
     // Get a reference to the current version.
-    fn get_current_version(&self) -> Option<SharedNode<Version>> {
+    pub(crate) fn get_current_version(&self) -> Option<SharedNode<Version>> {
         self.versions.tail()
     }
 
-    fn finalize(&self, version: Version) {
+    pub(crate) fn finalize(&self, version: Version) {
         todo!("working on it!");
     }
 }
