@@ -85,7 +85,45 @@ writer thread will do the following:
 1. After creating the batch of operations that will be performed, the write is committed to the WAL
    and then applied to the memtable.
 
-### Read
+### Reads and sorted tables
+
+Before getting into reads it is important to have some understanding of the tiered organization of
+data within RainDB. To this effect we proceed first with an introduction sorted tables and then go
+in to exposition on the read path.
+
+#### Sorted tables
+
+This is straight from
+[LevelDB](https://github.com/google/leveldb/blob/master/doc/impl.md#sorted-tables) since it's so
+well written already.
+
+A [table file] stores a sequence of entries sorted by key. Each entry is either a value for the key,
+or a deletion marker for the key. (Deletion markers are kept around to hide obsolete values present
+in older sorted tables).
+
+The set of sorted tables are organized into a sequence of levels. The sorted table generated from a
+log file is placed in a special young level (also called level-0). When the number of young files
+exceeds a certain threshold (currently four), all of the young files are merged together with all of
+the overlapping level-1 files to produce a sequence of new level-1 files (we create a new level-1
+file for every 2MB of data.)
+
+Files in the young level may contain overlapping keys. However files in other levels have distinct
+non-overlapping key ranges. Consider level number L where L >= 1. When the combined size of files in
+level-L exceeds (10^L) MB (i.e., 10MB for level-1, 100MB for level-2, ...), one file in level-L, and
+all of the overlapping files in level-(L+1) are merged to form a set of new files for level-(L+1).
+These merges have the effect of gradually migrating new updates from the young level to the largest
+level using only bulk reads and writes (i.e., minimizing expensive seeks).
+
+#### Manifest files
+
+Manifest files list the set of table files that make up each level, the corresponding key ranges,
+and other important metadata. A new manifest file is created whenever the database is reopened. The
+manifest file is append only. File removals are indicated by tombstones.
+
+More information on the format of sorted table files can be found in the
+[data formats section](#table-file-format).
+
+#### Read path
 
 The read path is as follows:
 
@@ -94,12 +132,6 @@ The read path is as follows:
    compaction process)
 1. Check the manifest file for the key ranges covered by each level of SSTables
 1. Check each level to see if it has a value for the key. If it does return.
-
-#### Manifest files
-
-Manifest files list the set of table files that make up each level, the corresponding key ranges,
-and other important metadata. A new manifest file is created whenever the database is reopened. The
-manifest file is append only. File removals are indicated by tombstones.
 
 ### Compactions
 
@@ -203,7 +235,10 @@ that will raise an error when corruption is detected, but RainDB does not curren
 setting. The erroroneous WAL will be preserved for investigation but the database process will
 start.
 
-### Table file format (a.k.a. sorted string table a.k.a. SSTable)
+### Table file format
+
+Within LevelDB and less so in RainDB, table files can also be referred to as sorted string tables or
+SSTables. For RainDB, we try to standardize on always referring to these as table files.
 
 Table files are maps from binary strings to binary strings that durably persist data to disk. The
 table format follows exactly from LevelDB.
