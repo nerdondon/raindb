@@ -3,7 +3,7 @@ The database module contains the primary API for interacting with the key-value 
 */
 
 use parking_lot::{Condvar, Mutex, MutexGuard};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,10 +12,10 @@ use std::thread;
 use std::time;
 
 use crate::batch::Batch;
-use crate::compaction::{CompactionWorker, ManualCompaction, TaskKind};
+use crate::compaction::{CompactionWorker, LevelCompactionStats, ManualCompaction, TaskKind};
 use crate::config::{
     GROUP_COMMIT_SMALL_WRITE_THRESHOLD_BYTES, L0_SLOWDOWN_WRITES_TRIGGER, L0_STOP_WRITES_TRIGGER,
-    MAX_GROUP_COMMIT_SIZE_BYTES, SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES,
+    MAX_GROUP_COMMIT_SIZE_BYTES, MAX_NUM_LEVELS, SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES,
 };
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
@@ -23,7 +23,7 @@ use crate::file_names::{DATA_DIR, WAL_DIR};
 use crate::key::LookupKey;
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::table_cache::TableCache;
-use crate::versioning::version_set::VersionSet;
+use crate::versioning::VersionSet;
 use crate::write_ahead_log::WALWriter;
 use crate::{DbOptions, ReadOptions, WriteOptions};
 
@@ -184,7 +184,7 @@ pub(crate) struct GuardedDbFields {
     curr_wal_file_number: u64,
 
     /// A background compaction was scheduled.
-    background_compaction_scheduled: bool,
+    pub(crate) background_compaction_scheduled: bool,
 
     /**
     An error that was encountered when performing write operations or background operations that may
@@ -193,7 +193,7 @@ pub(crate) struct GuardedDbFields {
     This error is sticky and essentially stops all future writes to the database when it is set. An
     example of when this may occur, is when a write to the write-ahead log fails.
     */
-    maybe_bad_database_state: Option<RainDBError>,
+    pub(crate) maybe_bad_database_state: Option<RainDBError>,
 
     /**
     Stores state information for a manual compaction. `None` if there is no manual compaction in
@@ -205,7 +205,7 @@ pub(crate) struct GuardedDbFields {
     writer_queue: VecDeque<Arc<Writer>>,
 
     /// Holds the immutable table i.e. the memtable currently undergoing compaction.
-    maybe_immutable_memtable: Option<Box<dyn MemTable>>,
+    pub(crate) maybe_immutable_memtable: Option<Box<dyn MemTable<Error = RainDBError>>>,
 
     /**
     The set of versions currently representing the database.
@@ -213,7 +213,17 @@ pub(crate) struct GuardedDbFields {
     The current version represents the most up to date values in the database. Other versions are
     kept to support a consistent view for live iterators.
     */
-    version_set: VersionSet,
+    pub(crate) version_set: VersionSet,
+
+    /// The ongoing compaction statistics per level.
+    pub(crate) compaction_stats: [LevelCompactionStats; MAX_NUM_LEVELS],
+
+    /**
+    Set of tables to protect from deletion because they are part of ongoing compactions.
+
+    The tables are identified by their file numbers.
+    */
+    pub(crate) tables_in_use: HashSet<u64>,
 }
 
 /// The primary database object that exposes the public API.
@@ -226,7 +236,7 @@ pub struct DB {
 
     All operations (reads and writes) go through this in-memory representation first.
     */
-    memtable: Box<dyn MemTable>,
+    memtable: Box<dyn MemTable<Error = RainDBError>>,
 
     /// The writer for the current write-ahead log file.
     wal: WALWriter,
@@ -261,7 +271,7 @@ pub struct DB {
     A condition variable used to notify parked threads that background work (e.g. compaction) has
     finished.
     */
-    background_work_finished_signal: Condvar,
+    background_work_finished_signal: Arc<Condvar>,
 }
 
 /// Public methods
