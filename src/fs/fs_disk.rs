@@ -111,6 +111,20 @@ impl FileSystem for OsFileSystem {
 }
 
 /**
+SAFETY:
+This is safe because the filesystem is more akin to a bag of utilities. It does not contain any
+structures itself.
+*/
+unsafe impl Send for OsFileSystem {}
+
+/**
+SAFETY:
+This is safe because the filesystem is more akin to a bag of utilities. It does not contain any
+structures itself.
+*/
+unsafe impl Sync for OsFileSystem {}
+
+/**
 A file system implmentation built on `tempfiles` crate structures.
 
 Really only directory creation is backed by `tempfiles` to take advantage of the auto-cleanup
