@@ -4,7 +4,7 @@ authors = ["nerdondon"]
 description = "A persistent key-value store based on an LSM tree implemented in Rust"
 repository = "https://github.com/nerdondon/raindb"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 license = "MIT"
 
 [package.metadata.docs.rs]
