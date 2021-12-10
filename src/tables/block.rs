@@ -307,10 +307,11 @@ where
     }
 }
 
-impl<'a, K> RainDbIterator<K> for BlockIter<'a, K>
+impl<'a, K> RainDbIterator for BlockIter<'a, K>
 where
     K: RainDbKeyType,
 {
+    type Key = K;
     type Error = ReadError;
 
     fn is_valid(&self) -> bool {

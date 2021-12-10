@@ -205,7 +205,7 @@ pub(crate) struct GuardedDbFields {
     writer_queue: VecDeque<Arc<Writer>>,
 
     /// Holds the immutable table i.e. the memtable currently undergoing compaction.
-    pub(crate) maybe_immutable_memtable: Option<Box<dyn MemTable<Error = RainDBError>>>,
+    pub(crate) maybe_immutable_memtable: Option<Box<dyn MemTable>>,
 
     /**
     The set of versions currently representing the database.
@@ -236,7 +236,7 @@ pub struct DB {
 
     All operations (reads and writes) go through this in-memory representation first.
     */
-    memtable: Box<dyn MemTable<Error = RainDBError>>,
+    memtable: Box<dyn MemTable>,
 
     /// The writer for the current write-ahead log file.
     wal: WALWriter,

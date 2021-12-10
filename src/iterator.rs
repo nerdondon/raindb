@@ -7,10 +7,11 @@ The RainDB iterator differs from the [`std::iter::DoubleEndedIterator`] in that 
 moves one cursor back and forth on the range of values. The `DoubleEndedIterator` essentially moves
 two pointers toward each other and ends iteration onces the two pointers cross.
 */
-pub trait RainDbIterator<K>
+pub trait RainDbIterator
 where
-    K: RainDbKeyType,
+    Self::Key: RainDbKeyType,
 {
+    type Key;
     type Error;
 
     /// The iterator is only valid if the cursor is currently positioned at a key-value pair.
@@ -21,7 +22,7 @@ where
 
     Returns an error if there was an issue seeking the target and sets the iterator to invalid.
     */
-    fn seek(&mut self, target: &K) -> Result<(), Self::Error>;
+    fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error>;
 
     /**
     Position cursor to the first element.
@@ -43,21 +44,21 @@ where
     Returns a tuple (&K, &V) at the position moved to. If the cursor was on the last element, `None`
     is returned.
     */
-    fn next(&mut self) -> Option<(&K, &Vec<u8>)>;
+    fn next(&mut self) -> Option<(&Self::Key, &Vec<u8>)>;
 
     /**
     Move to the previous element.
 
-    Returns a tuple (&K, &V) at the position moved to. If the cursor was on the last element, `None`
+    Returns a tuple (&Self::Key, &V) at the position moved to. If the cursor was on the last element, `None`
     is returned.
     */
-    fn prev(&mut self) -> Option<(&K, &Vec<u8>)>;
+    fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)>;
 
     /**
     Return the key and value at the current cursor position.
 
-    Returns a tuple (&K, &V) at current position if the iterator is valid. Otherwise, returns
+    Returns a tuple (&Self::Key, &V) at current position if the iterator is valid. Otherwise, returns
     `None`.
     */
-    fn current(&self) -> Option<(&K, &Vec<u8>)>;
+    fn current(&self) -> Option<(&Self::Key, &Vec<u8>)>;
 }
