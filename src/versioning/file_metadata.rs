@@ -38,7 +38,7 @@ impl FileMetadata {
 
     pub fn set_file_size(&mut self, file_size: u64) {
         // Allowed seeks is one seek per a configured number of bytes read in a seek
-        let mut allowed_seeks = (file_size / SEEK_DATA_SIZE_THRESHOLD_KIB) as usize;
+        let mut allowed_seeks = file_size / SEEK_DATA_SIZE_THRESHOLD_KIB;
         if allowed_seeks < 100 {
             allowed_seeks = 100;
         }
