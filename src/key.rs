@@ -19,6 +19,7 @@ use integer_encoding::FixedInt;
 use std::convert::{TryFrom, TryInto};
 
 use crate::errors::{RainDBError, RainDBResult};
+use crate::utils::bytes::BinarySeparable;
 
 /**
 Trait that decorates keys in RainDB that are sortable and deserializable.
@@ -42,7 +43,7 @@ Unlike in LevelDB, we do not pack the sequence number and operation together int
 integer (forming an 8 byte trailer) where the sequence number takes up the first 56 bits and the
 operation takes up the last 8 bits.
 */
-#[derive(Debug, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct LookupKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -89,11 +90,11 @@ impl LookupKey {
     }
 
     /**
-    Return a key suitable for use in internal iterators.
+    Get the serialized form of the key.
 
-    This must be equivalent to the `Vec::<u8>::from`
+    This must be equivalent to the `Vec::<u8>::from`.
     */
-    pub(crate) fn get_internal_key(&self) -> Vec<u8> {
+    pub(crate) fn as_bytes(&self) -> Vec<u8> {
         Vec::<u8>::from(self)
     }
 
@@ -178,6 +179,53 @@ impl From<&LookupKey> for Vec<u8> {
 }
 
 impl RainDbKeyType for LookupKey {}
+
+impl BinarySeparable for &LookupKey {
+    fn find_shortest_separator(smaller: &LookupKey, greater: &LookupKey) -> Vec<u8> {
+        // Try to shorten the user part of the key first
+        let user_separator = BinarySeparable::find_shortest_separator(
+            smaller.get_user_key().as_slice(),
+            greater.get_user_key().as_slice(),
+        );
+        if user_separator.len() < smaller.get_user_key().len()
+            && smaller.get_user_key() < &user_separator
+        {
+            /*
+            We found a user key separator is shorter than the full user key and is larger
+            logically. Turn it into a valid key by choosing the closest possible sequence
+            number. This is the maximum value of a `u64` because sequence numbers are sorted
+            in reverse order.
+            */
+            let full_separator = LookupKey::new_for_seeking(user_separator, u64::MAX);
+            assert!(smaller < &full_separator);
+            assert!(&full_separator < greater);
+
+            return full_separator.as_bytes();
+        }
+
+        smaller.as_bytes()
+    }
+
+    fn find_shortest_successor(value: Self) -> Vec<u8> {
+        // Try to get a successor for the user key first
+        let user_key = value.get_user_key();
+        let user_successor = BinarySeparable::find_shortest_successor(user_key.as_slice());
+
+        if user_successor.len() < user_key.len() && user_key < &user_successor {
+            /*
+            We found a successor shorter than the user key and logically larger than the user
+            key. Turn it into a valid key by choosing the closest possible sequence number. This is
+            the maximum value of a `u64` because sequence numbers are sorted in reverse order.
+            */
+            let full_successor = LookupKey::new_for_seeking(user_successor, u64::MAX);
+            assert!(value < &full_successor);
+
+            return full_successor.as_bytes();
+        }
+
+        value.as_bytes()
+    }
+}
 
 /**
 The operation that is being applied to an entry in the database.
