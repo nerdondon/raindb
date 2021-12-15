@@ -20,12 +20,16 @@ LevelDB tends to only keep around byte buffers instead of deserializing those bu
 LevelDB primarily works with this data using pointers to ranges within those buffers and doing
 pointer arithmetic to read or manipulate the data. I am uncertain if this is a memory saving measure
 (by reducing allocations), but it makes the LevelDB codebase pretty hard to follow. In our effort to
-make things mor readable, RainDB will take the opposite approach and eagerly deserialize into
-intermediate structs. Cases where this is evident are the following:
+make things more readable, RainDB will take the opposite approach and eagerly deserialize into
+intermediate structs. Explicitly, we will take a performance hit if it means the idea behind the
+code can be made more obvious. Cases where this is evident are the following:
 
 1. The memtable will store keys as a struct (`LookupKey`) instead of constantly serializing and
    deserializing byte buffers.
 1. Reading blocks from tables ([details](#data-block-format))
+
+As relates to LevelDB code structure, see this
+[interesting aside](#appendix-a---leveldb-and-memory-management).
 
 ## Overview
 
@@ -430,3 +434,25 @@ Actually even this is listed as a `TODO` for LevelDB._
 
 This meta block contains a sequence of key-values pairs for various statistics. The key is the name
 of the statistic and the value contains the statistic.
+
+## Appendix A - LevelDB and Memory Management
+
+The section below is inspired by insight from
+[Oren Eini's - Reviewing LevelDB Part IV](https://ayende.com/blog/161413/reviewing-leveldb-part-iv-on-std-string-buffers-and-memory-management-in-c)
+but is paraphrased to clean up phrasing and includes some additions from myself (@nerdondon).
+
+The fundamental data structure used throughout LevelDB is a C++ string. A string is used as a byte
+buffer so that allocation and de-allocation of the underlying is automatically handled by virtue of
+the C++ implementation. This logic does not have to be re-written and helps LevelDB adhere to
+[RAII](https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization) (resource acquisition
+is initialization) principles. Additionally, the methods that come out of the box with strings (e.g.
+append) are helpful throughout LevelDB's routines.
+
+In order to squeeze out more performance, LevelDB attempts to keep operations zero-copy as much as
+possible. One way that LevelDB refrains from copying memory between locations, is by implementing an
+abstraction called a
+[`Slice`](https://github.com/google/leveldb/blob/f57513a1d6c99636fc5b710150d0b93713af4e43/include/leveldb/slice.h)
+on top of C++'s `std::string`. This abstraction returns offsets and lengths that point at an
+underlying string, allowing the creation of different views without allocating additional memory.
+LevelDB also removes the copy constructor at various points to make copying explicit and
+intentional.
