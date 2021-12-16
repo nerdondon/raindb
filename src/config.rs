@@ -27,9 +27,13 @@ pub(crate) const MAX_BLOCK_DATA_SIZE: usize = 4 * 1024;
 /**
 The number of keys between restart points when prefix compressing keys.
 
-This is configurable in LevelDB.
+# Legacy
+
+This is configurable in LevelDB as part of the options object because LevelDB tends to pass all
+options around even if only a couple of the fields are required. RainDB is taking a more tactical
+approach and so this value is not configurable.
 */
-pub(crate) const BLOCK_RESTART_INTERVAL: usize = 16;
+pub(crate) const PREFIX_COMPRESSION_RESTART_INTERVAL: usize = 16;
 
 /// The maximum number of SSTable levels that is allowed.
 pub(crate) const MAX_NUM_LEVELS: usize = 7;

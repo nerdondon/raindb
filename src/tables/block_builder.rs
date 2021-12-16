@@ -2,10 +2,9 @@ use std::cmp;
 
 use integer_encoding::{FixedInt, VarInt};
 
-use crate::config::{BLOCK_RESTART_INTERVAL, SIZE_OF_U32_BYTES};
+use crate::config::SIZE_OF_U32_BYTES;
 use crate::key::LookupKey;
 use crate::tables::errors::BuilderError;
-use crate::DbOptions;
 
 /**
 Build table file blocks where the keys are prefix-compressed.
@@ -27,9 +26,9 @@ See the RainDB docs for a more in-depth discussion of the block format.
 
 [LevelDB's `BlockBuilder` docs]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/table/block_builder.cc#L5-L27
 */
-pub(crate) struct BlockBuilder<'b> {
-    /// Options for configuring the operation of the database.
-    options: &'b DbOptions,
+pub(crate) struct BlockBuilder {
+    /// The number of keys to perform prefix compression on before restarting with a full key.
+    prefix_compression_restart_interval: usize,
 
     /// A buffer holding the data for the block.
     buffer: Vec<u8>,
@@ -38,7 +37,7 @@ pub(crate) struct BlockBuilder<'b> {
     restart_points: Vec<u32>,
 
     /// The current number of keys that have been prefix compressed since the last restart point.
-    curr_compressed_count: u32,
+    curr_compressed_count: usize,
 
     /// True if the block has been finalized, i.e. [`BlockBuilder::finalize`] was called.
     block_finalized: bool,
@@ -48,15 +47,23 @@ pub(crate) struct BlockBuilder<'b> {
 }
 
 /// Crate-only methods
-impl<'b> BlockBuilder<'b> {
-    /// Create a new [`BlockBuilder`] instance.
-    pub(crate) fn new(options: &'b DbOptions) -> Self {
+impl BlockBuilder {
+    /**
+    Create a new [`BlockBuilder`] instance.
+
+    # Panics
+
+    Panics if a `prefix_compression_restart_interval` of zero is specified.
+    */
+    pub(crate) fn new(prefix_compression_restart_interval: usize) -> Self {
+        assert!(prefix_compression_restart_interval > 0, "Attempted to create a block builder with a prefix compression restart interval of 0. Only values > 1 are accepted.");
+
         let restart_points = vec![];
         // The first restart point is at offset 0 i.e. the first key is not compressed
         restart_points.push(0);
 
         Self {
-            options,
+            prefix_compression_restart_interval,
             buffer: vec![],
             restart_points,
             curr_compressed_count: 0,
@@ -81,24 +88,27 @@ impl<'b> BlockBuilder<'b> {
     This method was just called `Add` in LevelDB.
     */
     pub(crate) fn add_entry(&mut self, key: &LookupKey, value: &Vec<u8>) {
+        let key_bytes = key.as_bytes();
         // Panic if our invariants are not maintained. This is a bug.
         assert!(
             !self.block_finalized,
             "Attempted to add a key-value pair to a finalized block."
         );
         assert!(
-            self.buffer.is_empty() || self.last_key_added_bytes < &key,
+            self.buffer.is_empty() || self.last_key_added_bytes < key_bytes,
             "{}",
-            BuilderError::<'static>::OutOfOrder(&key, self.last_key_added_bytes.as_ref().unwrap())
+            BuilderError::OutOfOrder(
+                key.clone(),
+                LookupKey::try_from(self.last_key_added_bytes).unwrap()
+            )
         );
         assert!(
-            self.curr_compressed_count <= BLOCK_RESTART_INTERVAL,
+            self.curr_compressed_count <= self.prefix_compression_restart_interval,
             "Attempted to add too many consecutive compressed entries."
         );
 
-        let key_bytes = key.as_bytes();
         let mut shared_prefix_size: usize = 0;
-        if self.curr_compressed_count < BLOCK_RESTART_INTERVAL {
+        if self.curr_compressed_count < self.prefix_compression_restart_interval {
             // Compare to the previously added key to see how much the current key can be compressed
             let min_prefix_length = cmp::min(self.last_key_added_bytes.len(), key_bytes.len());
             while shared_prefix_size < min_prefix_length
@@ -108,26 +118,25 @@ impl<'b> BlockBuilder<'b> {
             }
         } else {
             // Restart compression
-            self.restart_points.push(self.buffer.len());
+            self.restart_points.push(self.buffer.len() as u32);
             self.curr_compressed_count = 0;
         }
 
-        let non_shared_bytes = key_bytes - shared_prefix_size;
+        let non_shared_bytes = (key_bytes.len() - shared_prefix_size) as u32;
 
         // Write number of shared bytes for the key
         self.buffer
-            .extend_from_slice(u32::encode_var_vec(shared_prefix_size));
+            .extend(u32::encode_var_vec(shared_prefix_size as u32));
 
         // Write number of non-shared bytes
-        self.buffer
-            .extend_from_slice(u32::encode_var_vec(non_shared_bytes));
+        self.buffer.extend(u32::encode_var_vec(non_shared_bytes));
 
         // Write length of the value
-        self.buffer
-            .extend_from_slice(u32::encode_var_vec(value.len()));
+        self.buffer.extend(u32::encode_var_vec(value.len() as u32));
 
         // Write non-shared part of the key i.e. the prefix-compressed key
-        self.buffer.extend_from_slice(key_bytes[non_shared_bytes..]);
+        self.buffer
+            .extend_from_slice(&key_bytes[(non_shared_bytes as usize)..]);
 
         // Write the value
         self.buffer.extend_from_slice(value);
@@ -164,15 +173,15 @@ impl<'b> BlockBuilder<'b> {
 
     This was called `BlockBuilder::Finish` in LevelDB.
     */
-    pub(crate) fn finalize(&mut self) -> &'b [u8] {
+    pub(crate) fn finalize<'s>(&'s mut self) -> &'s [u8] {
         // Append the restart points
         for point in self.restart_points.iter() {
-            self.buffer.extend_from_slice(u32::encode_fixed_vec(point));
+            self.buffer.extend(u32::encode_fixed_vec(*point));
         }
 
         // Append the number of restart points
         self.buffer
-            .extend_from_slice(u32::encode_fixed_vec(self.restart_points.len()));
+            .extend(u32::encode_fixed_vec(self.restart_points.len() as u32));
 
         self.block_finalized = true;
 
@@ -195,7 +204,7 @@ impl<'b> BlockBuilder<'b> {
     }
 
     /// Return true if the block does not have any entries.
-    pub(crate) fn is_empty(&self) {
+    pub(crate) fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
 }
