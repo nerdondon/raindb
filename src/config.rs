@@ -24,6 +24,13 @@ In LevelDB this is configurable and has a default size of 4 KiB.
 */
 pub(crate) const MAX_BLOCK_DATA_SIZE: usize = 4 * 1024;
 
+/**
+The number of keys between restart points when prefix compressing keys.
+
+This is configurable in LevelDB.
+*/
+pub(crate) const BLOCK_RESTART_INTERVAL: usize = 16;
+
 /// The maximum number of SSTable levels that is allowed.
 pub(crate) const MAX_NUM_LEVELS: usize = 7;
 

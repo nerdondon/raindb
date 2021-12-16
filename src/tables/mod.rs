@@ -8,3 +8,6 @@ mod footer;
 mod table;
 pub use table::BlockCacheKey;
 pub(crate) use table::Table;
+
+mod block_builder;
+use block_builder::BlockBuilder;
