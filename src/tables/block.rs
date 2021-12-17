@@ -307,7 +307,7 @@ where
     }
 }
 
-impl<'a, K> RainDbIterator for BlockIter<'a, K>
+impl<'a, K> RainDbIterator<'_> for BlockIter<'a, K>
 where
     K: RainDbKeyType,
 {

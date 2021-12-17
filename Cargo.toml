@@ -15,7 +15,7 @@ crc = "2.1.0"
 fs2 = "0.4.3"
 integer-encoding = "3.0.0"
 log = "0.4"
-nerdondon-hopscotch = "2.2.0"
+nerdondon-hopscotch = { version = "2.6.0", features = ["concurrent"] }
 parking_lot = "0.11.2"
 snap = "1.0.5"
 tempfile = "3"
