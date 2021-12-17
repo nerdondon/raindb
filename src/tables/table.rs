@@ -1,4 +1,3 @@
-use crc::{Crc, CRC_32_ISCSI};
 use integer_encoding::FixedInt;
 use snap::read::FrameDecoder;
 use std::convert::{TryFrom, TryInto};
@@ -17,24 +16,10 @@ use crate::{DbOptions, ReadOptions};
 
 use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
 use super::block_handle::BlockHandle;
+use super::constants::{BLOCK_DESCRIPTOR_SIZE_BYTES, CRC_CALCULATOR};
 use super::errors::{ReadError, TableResult};
 use super::filter_block::FilterBlockReader;
 use super::footer::{Footer, SIZE_OF_FOOTER_BYTES};
-
-/**
-The size of a block descriptor in bytes.
-
-This is a 1-byte enum + a 32-bit CRC (4 bytes).
-*/
-const BLOCK_DESCRIPTOR_SIZE_BYTES: usize = 1 + 4;
-
-/**
-CRC calculator using the iSCSI polynomial.
-
-LevelDB uses the [google/crc32c](https://github.com/google/crc32c) CRC implementation. This
-implementation specifies using the iSCSI polynomial so that is what we use here as well.
-*/
-const CRC_CALCULATOR: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
 /// Type alias for block cache entries.
 type DataBlockCacheEntry = Box<dyn CacheEntry<DataBlockReader>>;
@@ -43,6 +28,7 @@ type DataBlockCacheEntry = Box<dyn CacheEntry<DataBlockReader>>;
 An immutable, sorted map of strings to strings.
 
 # Concurrency
+
 A table is thread-safe.
 */
 pub(crate) struct Table {
@@ -76,6 +62,7 @@ pub(crate) struct Table {
 
 /// Public methods
 impl Table {
+    /// Open a table file and parse some initial information for iterating the file.
     pub fn open(options: DbOptions, file: Box<dyn ReadonlyRandomAccessFile>) -> TableResult<Table> {
         let file_length = file.len()?;
         if file_length < (SIZE_OF_FOOTER_BYTES as u64) {

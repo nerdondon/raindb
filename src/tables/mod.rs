@@ -2,6 +2,7 @@ pub mod block;
 pub mod errors;
 
 mod block_handle;
+mod constants;
 mod filter_block;
 mod footer;
 
