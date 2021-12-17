@@ -12,6 +12,7 @@ use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
 use crate::key::{LookupKey, Operation, RainDbKeyType};
 use crate::utils::cache::CacheEntry;
+use crate::utils::crc::unmask_checksum;
 use crate::{DbOptions, ReadOptions};
 
 use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
@@ -227,9 +228,10 @@ impl Table {
         // The block checksum is stored at the end of the buffer as a 32-bit int
         let offset_to_checksum = total_block_size - SIZE_OF_U32_BYTES;
         let checksum_on_disk = u32::decode_fixed(&raw_block_data[offset_to_checksum..]);
+        let unmasked_stored_checksum = unmask_checksum(checksum_on_disk);
         let calculated_block_checksum =
             CRC_CALCULATOR.checksum(&raw_block_data[0..offset_to_checksum]);
-        if checksum_on_disk != calculated_block_checksum {
+        if unmasked_stored_checksum != calculated_block_checksum {
             return Err(ReadError::FailedToParse(
                 "Failed to parse the block. There was a mismatch in the checksum".to_string(),
             ));
