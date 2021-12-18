@@ -426,7 +426,11 @@ impl MetaIndexKey {
     }
 }
 
-impl RainDbKeyType for MetaIndexKey {}
+impl RainDbKeyType for MetaIndexKey {
+    fn as_bytes(&self) -> Vec<u8> {
+        String::as_bytes(&self.0).to_vec()
+    }
+}
 
 impl TryFrom<Vec<u8>> for MetaIndexKey {
     type Error = ReadError;

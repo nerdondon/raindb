@@ -27,7 +27,10 @@ Trait that decorates keys in RainDB that are sortable and deserializable.
 This applies to the internal lookup key as well as the key used for sorting meta blocks in table
 files.
 */
-pub trait RainDbKeyType: Ord + TryFrom<Vec<u8>> {}
+pub trait RainDbKeyType: Ord + TryFrom<Vec<u8>> {
+    /// Returns a byte representation of the key.
+    fn as_bytes(&self) -> Vec<u8>;
+}
 
 /**
 This is the actual key used by RainDB. It is the user provided key with additional metadata.
@@ -87,15 +90,6 @@ impl LookupKey {
     /// Return the user key.
     pub(crate) fn get_user_key(&self) -> &Vec<u8> {
         &self.user_key
-    }
-
-    /**
-    Get the serialized form of the key.
-
-    This must be equivalent to the `Vec::<u8>::from`.
-    */
-    pub(crate) fn as_bytes(&self) -> Vec<u8> {
-        Vec::<u8>::from(self)
     }
 
     /// Get a reference to the lookup key's operation.
@@ -167,18 +161,22 @@ impl TryFrom<Vec<u8>> for LookupKey {
 
 impl From<&LookupKey> for Vec<u8> {
     fn from(key: &LookupKey) -> Vec<u8> {
+        key.as_bytes()
+    }
+}
+
+impl RainDbKeyType for LookupKey {
+    fn as_bytes(&self) -> Vec<u8> {
         // We know the size of the buffer we need before hand.
         // size = size of user key + 8 bytes for the sequence number + 1 byte for the operation
-        let buf: Vec<u8> = Vec::with_capacity(key.get_user_key().len() + 8 + 1);
-        buf.extend_from_slice(key.get_user_key());
-        buf.extend_from_slice(&key.sequence_number.encode_fixed_vec());
-        buf.extend_from_slice(&[*key.get_operation() as u8]);
+        let buf: Vec<u8> = Vec::with_capacity(self.get_user_key().len() + 8 + 1);
+        buf.extend_from_slice(self.get_user_key());
+        buf.extend_from_slice(&self.sequence_number.encode_fixed_vec());
+        buf.extend_from_slice(&[*self.get_operation() as u8]);
 
         buf
     }
 }
-
-impl RainDbKeyType for LookupKey {}
 
 impl BinarySeparable for &LookupKey {
     fn find_shortest_separator(smaller: &LookupKey, greater: &LookupKey) -> Vec<u8> {
