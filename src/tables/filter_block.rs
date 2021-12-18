@@ -6,18 +6,6 @@ use crate::filter_policy::FilterPolicy;
 use super::errors::{ReadError, TableResult};
 
 /**
-A compressed size for the amount of data covered by a filter.
-
-The currently set range size for filters is 2 KiB (2048 bytes) and the compression is achieved by
-taking the base 2 logarithm of 2048 to arrive at 11. The result of a logarithm is an exponent, hence
-the name of the constant.
-*/
-const FILTER_RANGE_SIZE_EXPONENT: u8 = 11;
-
-/// The uncompressed range size in bytes.
-const FILTER_RANGE_SIZE_BYTES: u32 = 1 << FILTER_RANGE_SIZE_EXPONENT;
-
-/**
 A reader for filter blocks.
 
 # Layout

@@ -12,7 +12,6 @@ database.
 */
 
 pub mod db;
-pub mod filter_policy;
 pub mod fs;
 
 mod compaction;
@@ -30,10 +29,13 @@ mod write_ahead_log;
 mod batch;
 pub use batch::{Batch, BatchElement};
 
-pub use utils::cache::Cache;
+pub mod filter_policy;
+pub use filter_policy::{BloomFilterPolicy, FilterPolicy};
+
+mod iterator;
+pub use iterator::RainDbIterator;
 
 pub mod options;
 pub use options::{DbOptions, ReadOptions, WriteOptions};
 
-mod iterator;
-pub use iterator::RainDbIterator;
+pub use utils::cache::Cache;
