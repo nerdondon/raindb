@@ -3,7 +3,7 @@ use std::cmp;
 use integer_encoding::{FixedInt, VarInt};
 
 use crate::config::SIZE_OF_U32_BYTES;
-use crate::key::LookupKey;
+use crate::key::RainDbKeyType;
 use crate::tables::errors::BuilderError;
 
 /**
@@ -26,7 +26,10 @@ See the RainDB docs for a more in-depth discussion of the block format.
 
 [LevelDB's `BlockBuilder` docs]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/table/block_builder.cc#L5-L27
 */
-pub(crate) struct BlockBuilder {
+pub(crate) struct BlockBuilder<'k, K>
+where
+    K: RainDbKeyType,
+{
     /// The number of keys to perform prefix compression on before restarting with a full key.
     prefix_compression_restart_interval: usize,
 
@@ -42,12 +45,15 @@ pub(crate) struct BlockBuilder {
     /// True if the block has been finalized, i.e. [`BlockBuilder::finalize`] was called.
     block_finalized: bool,
 
-    /// The last key that was added to the block as a byte buffer.
-    last_key_added_bytes: Vec<u8>,
+    /// The last key that was added to the block.
+    maybe_last_key_added: Option<&'k K>,
 }
 
 /// Crate-only methods
-impl BlockBuilder {
+impl<'b, K> BlockBuilder<'b, K>
+where
+    K: RainDbKeyType,
+{
     /**
     Create a new [`BlockBuilder`] instance.
 
@@ -68,7 +74,7 @@ impl BlockBuilder {
             restart_points,
             curr_compressed_count: 0,
             block_finalized: false,
-            last_key_added_bytes: vec![],
+            maybe_last_key_added: None,
         }
     }
 
@@ -87,20 +93,18 @@ impl BlockBuilder {
 
     This method was just called `Add` in LevelDB.
     */
-    pub(crate) fn add_entry(&mut self, key: &LookupKey, value: &Vec<u8>) {
+    pub(crate) fn add_entry(&mut self, key: &'b K, value: &Vec<u8>) {
         let key_bytes = key.as_bytes();
+
         // Panic if our invariants are not maintained. This is a bug.
         assert!(
             !self.block_finalized,
             "Attempted to add a key-value pair to a finalized block."
         );
         assert!(
-            self.buffer.is_empty() || self.last_key_added_bytes < key_bytes,
+            self.buffer.is_empty() || self.maybe_last_key_added.as_deref().unwrap() < key,
             "{}",
-            BuilderError::OutOfOrder(
-                key.clone(),
-                LookupKey::try_from(self.last_key_added_bytes).unwrap()
-            )
+            BuilderError::OutOfOrder
         );
         assert!(
             self.curr_compressed_count <= self.prefix_compression_restart_interval,
@@ -109,12 +113,16 @@ impl BlockBuilder {
 
         let mut shared_prefix_size: usize = 0;
         if self.curr_compressed_count < self.prefix_compression_restart_interval {
-            // Compare to the previously added key to see how much the current key can be compressed
-            let min_prefix_length = cmp::min(self.last_key_added_bytes.len(), key_bytes.len());
-            while shared_prefix_size < min_prefix_length
-                && self.last_key_added_bytes[shared_prefix_size] == key_bytes[shared_prefix_size]
-            {
-                shared_prefix_size += 1;
+            if let Some(last_key_added) = self.maybe_last_key_added {
+                // Compare to the previously added key to see how much the current key can be compressed
+                let last_key_added_bytes = last_key_added.as_bytes();
+                let min_prefix_length = cmp::min(last_key_added_bytes.len(), key_bytes.len());
+
+                while shared_prefix_size < min_prefix_length
+                    && last_key_added_bytes[shared_prefix_size] == key_bytes[shared_prefix_size]
+                {
+                    shared_prefix_size += 1;
+                }
             }
         } else {
             // Restart compression
@@ -142,7 +150,7 @@ impl BlockBuilder {
         self.buffer.extend_from_slice(value);
 
         // Update builder state
-        self.last_key_added_bytes = key.as_bytes();
+        self.maybe_last_key_added = Some(key);
         self.curr_compressed_count += 1;
     }
 
@@ -161,7 +169,7 @@ impl BlockBuilder {
         self.buffer.clear();
         self.curr_compressed_count = 0;
         self.block_finalized = false;
-        self.last_key_added_bytes.clear();
+        self.maybe_last_key_added = None;
     }
 
     /**
@@ -173,7 +181,7 @@ impl BlockBuilder {
 
     This was called `BlockBuilder::Finish` in LevelDB.
     */
-    pub(crate) fn finalize<'s>(&'s mut self) -> &'s [u8] {
+    pub(crate) fn finalize(&mut self) -> &[u8] {
         // Append the restart points
         for point in self.restart_points.iter() {
             self.buffer.extend(u32::encode_fixed_vec(*point));

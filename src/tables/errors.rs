@@ -5,8 +5,6 @@ implementations for common errors to enable error propagation.
 
 use std::{fmt, io};
 
-use crate::key::LookupKey;
-
 use super::footer::SIZE_OF_FOOTER_BYTES;
 
 /// Result that wraps [`ReadError`].
@@ -64,7 +62,7 @@ pub enum BuilderError {
     AlreadyClosed,
 
     /// Variant for attempting to add a key that is out of order.
-    OutOfOrder(LookupKey, LookupKey),
+    OutOfOrder,
 }
 
 impl std::error::Error for BuilderError {}
@@ -77,12 +75,9 @@ impl fmt::Display for BuilderError {
                 f,
                 "Attempted to perform an operation when the file had already been closed."
             ),
-            BuilderError::OutOfOrder(added_key, prev_key) => write!(
-                f,
-                "Attempted to add a key but it was out of order. The key is {:?} but the previous key was {:?}.",
-                added_key,
-                prev_key
-            ),
+            BuilderError::OutOfOrder => {
+                write!(f, "Attempted to add a key but it was out of order.")
+            }
         }
     }
 }
