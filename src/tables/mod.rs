@@ -10,6 +10,9 @@ mod table;
 pub use table::BlockCacheKey;
 pub(crate) use table::Table;
 
+pub(crate) mod table_builder;
+pub(crate) use table_builder::TableBuilder;
+
 mod block_builder;
 use block_builder::BlockBuilder;
 

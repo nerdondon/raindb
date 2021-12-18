@@ -8,6 +8,7 @@ use std::io;
 use std::num::TryFromIntError;
 
 use crate::compaction::CompactionWorkerError;
+use crate::tables::errors::BuilderError;
 use crate::tables::errors::ReadError;
 use crate::versioning;
 
@@ -29,6 +30,9 @@ pub enum RainDBError {
 
     /// Variant for errors stemming from reading table files.
     TableRead(ReadError),
+
+    /// Variant for errors stemming from building table files.
+    TableBuild(BuilderError),
 
     /// Variant for errors encountered while servicing a write request.
     Write(String),
@@ -55,6 +59,7 @@ impl fmt::Display for RainDBError {
             RainDBError::WAL(base_err) => write!(f, "{}", base_err),
             RainDBError::TableCache(base_err) => write!(f, "{}", base_err),
             RainDBError::TableRead(base_err) => write!(f, "{}", base_err),
+            RainDBError::TableBuild(base_err) => write!(f, "{}", base_err),
             RainDBError::Write(base_err) => write!(f, "{}", base_err),
             RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
             RainDBError::Compaction(base_err) => write!(f, "{}", base_err),
@@ -79,6 +84,12 @@ impl From<WALIOError> for RainDBError {
 impl From<ReadError> for RainDBError {
     fn from(err: ReadError) -> Self {
         RainDBError::TableRead(err)
+    }
+}
+
+impl From<BuilderError> for RainDBError {
+    fn from(err: BuilderError) -> Self {
+        RainDBError::TableBuild(err)
     }
 }
 
