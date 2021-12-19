@@ -2,7 +2,10 @@ use integer_encoding::FixedInt;
 use std::convert::TryFrom;
 
 use super::block_handle::BlockHandle;
-use super::errors::{ReadError, TableResult};
+use super::errors::{FooterError, ReadError, TableResult};
+
+/// Result that wraps [`FooterError`].
+type FooterResult<T> = Result<T, FooterError>;
 
 /**
 The fixed size of a footer.
@@ -83,9 +86,9 @@ impl TryFrom<&Vec<u8>> for Footer {
 }
 
 impl TryFrom<&Footer> for Vec<u8> {
-    type Error = ReadError;
+    type Error = FooterError;
 
-    fn try_from(value: &Footer) -> TableResult<Vec<u8>> {
+    fn try_from(value: &Footer) -> FooterResult<Vec<u8>> {
         let mut buf: Vec<u8> = vec![];
         let mut serialized_metaindex_handle = Vec::<u8>::from(&value.metaindex_handle);
         let mut serialized_index_handle = Vec::<u8>::from(&value.index_handle);
@@ -99,7 +102,7 @@ impl TryFrom<&Footer> for Vec<u8> {
         buf.append(&mut TABLE_MAGIC_NUMBER.encode_fixed_vec());
 
         if buf.len() != SIZE_OF_FOOTER_BYTES {
-            return Err(ReadError::FooterSerialization(buf.len()));
+            return Err(FooterError::FooterSerialization(buf.len()));
         }
 
         Ok(buf)
