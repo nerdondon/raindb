@@ -14,7 +14,7 @@ pub(crate) struct FileMetadata {
     pub(crate) file_number: u64,
 
     /// The size of the SSTable file in bytes.
-    file_size: Option<u64>,
+    file_size: u64,
 
     /// The smallest internal key served by the table.
     pub(crate) smallest_key: Option<LookupKey>,
@@ -30,12 +30,13 @@ impl FileMetadata {
         Self {
             file_number,
             allowed_seeks: None,
-            file_size: None,
+            file_size: 0,
             smallest_key: None,
             largest_key: None,
         }
     }
 
+    // Set file size.
     pub fn set_file_size(&mut self, file_size: u64) {
         // Allowed seeks is one seek per a configured number of bytes read in a seek
         let mut allowed_seeks = file_size / SEEK_DATA_SIZE_THRESHOLD_KIB;
@@ -43,7 +44,7 @@ impl FileMetadata {
             allowed_seeks = 100;
         }
 
-        self.file_size = Some(file_size);
+        self.file_size = file_size;
         self.allowed_seeks = Some(allowed_seeks);
     }
 }
