@@ -21,6 +21,9 @@ pub enum ReadError {
     BlockDecompression(io::Error),
     /// Variant for IO errors.
     IO(io::Error),
+
+    /// Variant for errors reading the filter block.
+    FilterBlock(String),
 }
 
 impl std::error::Error for ReadError {}
@@ -42,6 +45,7 @@ impl fmt::Display for ReadError {
                 )
             }
             ReadError::IO(base_err) => write!(f, "{}", base_err),
+            ReadError::FilterBlock(base_err) => write!(f, "Failed attempting to read the filter block. Continuing without filters. Original error: {}", base_err),
         }
     }
 }

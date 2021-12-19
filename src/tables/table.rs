@@ -6,12 +6,12 @@ use std::io::{self, Read};
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
 use crate::errors::RainDBResult;
-use crate::filter_policy::get_filter_block_name;
+use crate::filter_policy;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
 use crate::key::{LookupKey, Operation, RainDbKeyType};
 use crate::utils::cache::CacheEntry;
-use crate::utils::crc::unmask_checksum;
+use crate::utils::crc;
 use crate::{DbOptions, ReadOptions};
 
 use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
@@ -92,7 +92,19 @@ impl Table {
 
         log::debug!("Reading and parsing the filter block");
         let maybe_filter_block: Option<FilterBlockReader> =
-            Table::read_filter_meta_block(&options, &file, &metaindex_block);
+            match Table::read_filter_meta_block(&options, &file, &metaindex_block) {
+                Ok(filter_block) => filter_block,
+                Err(error) => {
+                    /*
+                    RainDB can continue to operate without filter blocks, albeit with possible
+                    degraded performance. Just log a warning and continue as if there was no filter
+                    block.
+                    */
+                    log::warn!("{}", error);
+
+                    None
+                }
+            };
 
         Ok(Table {
             options,
@@ -193,7 +205,10 @@ impl Table {
         BlockReader::new(block_data)
     }
 
-    /// Return decompressed byte buffer representing the block at the specified block handle.
+    /**
+    Return decompressed byte buffer from disk representing the block at the specified
+    block handle.
+    */
     fn read_block_from_disk(
         file: &Box<dyn ReadonlyRandomAccessFile>,
         block_handle: &BlockHandle,
@@ -215,7 +230,7 @@ impl Table {
         // The block checksum is stored at the end of the buffer as a 32-bit int
         let offset_to_checksum = total_block_size - SIZE_OF_U32_BYTES;
         let checksum_on_disk = u32::decode_fixed(&raw_block_data[offset_to_checksum..]);
-        let unmasked_stored_checksum = unmask_checksum(checksum_on_disk);
+        let unmasked_stored_checksum = crc::unmask_checksum(checksum_on_disk);
         let calculated_block_checksum =
             CRC_CALCULATOR.checksum(&raw_block_data[0..offset_to_checksum]);
         if unmasked_stored_checksum != calculated_block_checksum {
@@ -272,34 +287,27 @@ impl Table {
         options: &DbOptions,
         file: &Box<dyn ReadonlyRandomAccessFile>,
         metaindex_block: &MetaIndexBlockReader,
-    ) -> Option<FilterBlockReader> {
-        let filter_block_name = get_filter_block_name(options.filter_policy());
+    ) -> TableResult<Option<FilterBlockReader>> {
+        let filter_block_name = filter_policy::get_filter_block_name(options.filter_policy());
         let metaindex_block_iter = metaindex_block.iter();
         // Seek to the filter meta block
         match metaindex_block_iter.seek(&MetaIndexKey::new(filter_block_name)) {
-            Err(error) => {
-                /*
-                RainDB can continue to operate without filter blocks, albeit with possible
-                degraded performance. Just log a warning and continue as if there was no filter
-                block.
-                */
-                log::warn!("Encountered an error attempting to read the filter block. Continuing without filters. Original error: {}", error);
-                return None;
-            }
+            Err(error) => return Err(ReadError::FilterBlock(format!("{}", error))),
             _ => {}
         }
 
         match metaindex_block_iter.current() {
-            Some((_key, filter)) => {
-                match FilterBlockReader::new(options.filter_policy(), filter.to_vec()) {
-                    Err(error) => {
-                        log::warn!("Encountered an error getting the filter block reader. Continuing without filters. Original error: {}", error);
-                        return None;
+            Some((_key, raw_contents)) => {
+                let filter_block_handle = BlockHandle::try_from(raw_contents)?;
+                let raw_filter_block = Table::read_block_from_disk(file, &filter_block_handle)?;
+
+                match FilterBlockReader::new(options.filter_policy(), raw_filter_block) {
+                    Err(error) => return Err(ReadError::FilterBlock(format!("{}", error))),
+                    Ok(reader) => return Ok(Some(reader)),
                     }
-                    Ok(reader) => return Some(reader),
                 }
+            None => return Ok(None),
             }
-            None => return None,
         }
     }
 
