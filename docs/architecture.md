@@ -287,7 +287,7 @@ the meta block and the value is a block handle.
 
 The index block contains an entry for each data block where the key is a internal lookup key and the
 value is a block handle to the data block. Keys are sorted such that a key in the index is >= the
-last key in that data block and greater than the first key of the next data block.
+last key in that data block and less than the first key of the next data block.
 
 Each of these blocks are optionally compressed. This information as well as a checksum are stored
 after each block in what we will call the block descriptor. In LevelDB, this is confusingly called
@@ -312,8 +312,9 @@ file's footer consists of the following parts:
 
 - A block handle for the metaindex.
 - A block handle for the index.
-- 40 zeroed bytes - (size of metaindex block handle) - (size of index block handle) to make the
-  footer a fixed length
+- A series of zero bytes for padding. The amount of padding calculated in the following way: 40
+  zeroed bytes - (size of metaindex block handle) - (size of index block handle)
+  - The padding is to ensure that the footer is a fixed length
   - 40 comes from 2 \* 10 bytes (the max size of varint64)
 - 8-byte magic number
   - This is just a random quirk and could be zeros. In LevelDB this magic number was picked by
