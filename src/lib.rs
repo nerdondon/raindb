@@ -12,6 +12,8 @@ database.
 */
 
 pub mod db;
+pub use db::DB;
+
 pub mod fs;
 
 mod compaction;
@@ -25,6 +27,7 @@ mod tables;
 mod utils;
 mod versioning;
 mod write_ahead_log;
+mod writers;
 
 mod batch;
 pub use batch::{Batch, BatchElement};
