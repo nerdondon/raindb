@@ -7,19 +7,22 @@ use crate::config::{
     TableFileCompressionType, MAX_BLOCK_DATA_SIZE, PREFIX_COMPRESSION_RESTART_INTERVAL,
 };
 use crate::file_names::FileNameHandler;
+use crate::filter_policy;
 use crate::fs::RandomAccessFile;
 use crate::key::{LookupKey, RainDbKeyType};
-use crate::tables::block::MetaIndexKey;
 use crate::utils::bytes::BinarySeparable;
-use crate::utils::crc::mask_checksum;
+use crate::utils::crc;
 use crate::DbOptions;
 
+use super::block::MetaIndexKey;
 use super::block_handle::BlockHandle;
 use super::constants::{BLOCK_DESCRIPTOR_SIZE_BYTES, CRC_CALCULATOR};
 use super::errors::BuilderError;
+use super::footer::Footer;
 use super::BlockBuilder;
 use super::FilterBlockBuilder;
 
+/// Type alias for a [`Result`] that returns [`BuilderError`]'s.
 type TableBuildResult<T> = Result<T, BuilderError>;
 
 /**
@@ -130,18 +133,17 @@ impl<'t> TableBuilder<'t> {
         );
 
         if self.data_block_builder.approximate_size() >= MAX_BLOCK_DATA_SIZE {
-            let starting_offset = self.current_offset;
-            self.write_block()?;
+            let maybe_block_handle = self.flush_data_block()?;
 
-            // Create a block handle to the data block and add as an index entry
-            let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
-            let key_separator = BinarySeparable::find_shortest_separator(last_key_added, key);
-            let block_handle =
-                BlockHandle::new(self.current_offset, self.current_offset - starting_offset);
-            self.index_block_builder.add_entry(
-                &LookupKey::try_from(key_separator).unwrap(),
-                &Vec::from(&block_handle),
-            );
+            if let Some(block_handle) = maybe_block_handle {
+                // Insert an index entry if a block was written
+                let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
+                let key_separator = BinarySeparable::find_shortest_separator(last_key_added, key);
+                self.index_block_builder.add_entry(
+                    &LookupKey::try_from(key_separator).unwrap(),
+                    &Vec::from(&block_handle),
+                );
+            }
         }
 
         self.maybe_last_key_added = Some(key.clone());
@@ -165,20 +167,15 @@ impl<'t> TableBuilder<'t> {
         assert!(!self.file_closed, "{}", BuilderError::AlreadyClosed);
 
         // Flush pending data to disk
-        if let Some(last_key_added) = self.maybe_last_key_added.as_ref() {
-            if !self.data_block_builder.is_empty() {
-                let starting_offset = self.current_offset;
-                self.write_block()?;
-
-                // Create a block handle to the data block and add as an index entry
-                let key_separator = BinarySeparable::find_shortest_successor(last_key_added);
-                let block_handle =
-                    BlockHandle::new(self.current_offset, self.current_offset - starting_offset);
-                self.index_block_builder.add_entry(
-                    &LookupKey::try_from(key_separator).unwrap(),
-                    &Vec::from(&block_handle),
-                );
-            }
+        let maybe_block_handle = self.flush_data_block()?;
+        if let Some(block_handle) = maybe_block_handle {
+            // Insert an index entry if a block was written
+            let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
+            let key_separator = BinarySeparable::find_shortest_successor(last_key_added);
+            self.index_block_builder.add_entry(
+                &LookupKey::try_from(key_separator).unwrap(),
+                &Vec::from(&block_handle),
+            );
         }
 
         self.file_closed = true;
@@ -191,13 +188,22 @@ impl<'t> TableBuilder<'t> {
             BlockHandle::new(filter_block_offset, filter_block_contents.len() as u64);
 
         // Write the metaindex block
-        let metaindex_offset = self.current_offset;
         let metaindex_builder: BlockBuilder<'_, MetaIndexKey> =
             BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+        let filter_block_key = MetaIndexKey::new(filter_policy::get_filter_block_name(
+            self.options.filter_policy(),
+        ));
+        metaindex_builder.add_entry(&filter_block_key, &Vec::from(&filter_block_handle));
+        let metaindex_handle = self.write_block(&mut metaindex_builder)?;
 
         // Write the index block
+        let index_block_handle = self.write_block(&mut self.index_block_builder)?;
 
         // Write the footer
+        let footer = Footer::new(metaindex_handle, index_block_handle);
+        let serialized_footer = Vec::<u8>::try_from(&footer)?;
+        self.file.write_all(&serialized_footer)?;
+        self.current_offset += serialized_footer.len() as u64;
 
         Ok(())
     }
@@ -225,10 +231,38 @@ impl<'t> TableBuilder<'t> {
 
 /// Private methods
 impl TableBuilder<'_> {
-    /// Prepares a block and its metadata and writes them to disk.
-    fn write_block(&mut self) -> TableBuildResult<()> {
+    /// Write a data block to disk.
+    fn flush_data_block(&mut self) -> TableBuildResult<Option<BlockHandle>> {
+        if self.data_block_builder.is_empty() {
+            return Ok(None);
+        }
+
+        let block_handle = self.write_block(&mut self.data_block_builder)?;
+        self.file.flush()?;
+
+        // Signal filter block builder that a new block was written
+        self.filter_block_builder
+            .notify_new_data_block(self.current_offset as usize);
+
+        Ok(Some(block_handle))
+    }
+
+    /**
+    Prepares a block and its metadata and writes them to disk.
+
+    Returns the a [`BlockHandle`] to the newly written block.
+    */
+    fn write_block<K>(
+        &mut self,
+        block_builder: &mut BlockBuilder<'_, K>,
+    ) -> TableBuildResult<BlockHandle>
+    where
+        K: RainDbKeyType,
+    {
+        let start_offset = self.current_offset;
+
         // Finalize data block
-        let block_contents = self.data_block_builder.finalize();
+        let block_contents = block_builder.finalize();
 
         // For now, compression is always on and always uses Snappy
         // TODO: Support turning compression on and off and also more compression algorithms
@@ -247,12 +281,9 @@ impl TableBuilder<'_> {
             )?;
         }
 
-        // Signal filter block builder that a new block was written
-        self.filter_block_builder
-            .notify_new_data_block(self.current_offset as usize);
+        block_builder.reset();
 
-        self.data_block_builder.reset();
-        Ok(())
+        Ok(BlockHandle::new(start_offset, block_contents.len() as u64))
     }
 
     /// Actually performs the operations to write a block to disk.
@@ -273,10 +304,9 @@ impl TableBuilder<'_> {
         // Write block descriptor
         self.file.write_all(&[compression_type as u8])?;
         self.file
-            .write_all(&u32::encode_fixed_vec(mask_checksum(checksum)))?;
+            .write_all(&u32::encode_fixed_vec(crc::mask_checksum(checksum)))?;
 
         self.current_offset += (block_contents.len() + BLOCK_DESCRIPTOR_SIZE_BYTES) as u64;
-        self.file.flush()?;
 
         Ok(())
     }
