@@ -163,4 +163,43 @@ impl Version {
     fn get_overlapping_files(&self) -> Vec<Arc<FileMetadata>> {
         todo!("working on it!");
     }
+
+    /**
+    Binary search a sorted set of disjoint files for the file containing the specified key.
+
+    # Invariants
+
+    The passed in `files` **must** be a sorted set and the files must store key ranges that do
+    not overlap with the key ranges in any other file.
+
+    Returns the index of the file whose key range contains the target key (i.e. its largest key is
+    greater than or equal the target). Otherwise returns `None`.
+    */
+    fn find_file_containing_key(
+        files: &[Arc<FileMetadata>],
+        target_user_key: &LookupKey,
+    ) -> Option<usize> {
+        let mut left: usize = 0;
+        let mut right: usize = files.len();
+        while left < right {
+            let mid: usize = (left + right) / 2;
+            let file = files[mid];
+
+            if file.largest_key() < target_user_key {
+                // The largest key in the file at mid is less than the target, so the set of files
+                // at or before mid are not interesting.
+                left = mid + 1;
+            } else {
+                // The largest key in the file at mid is greater than or equal to the target, so
+                // the set of files after mid are not interesting.
+                right = mid;
+            }
+        }
+
+        if right == files.len() {
+            return None;
+        }
+
+        Some(right)
+    }
 }
