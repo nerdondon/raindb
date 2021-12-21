@@ -165,17 +165,23 @@ impl Version {
     }
 
     /**
-    Binary search a sorted set of disjoint files for the file containing the specified key.
+    /**
+    Binary search a sorted set of disjoint files for a file whose largest key forms a tight upper
+    bound on the target key.
 
     # Invariants
 
     The passed in `files` **must** be a sorted set and the files must store key ranges that do
     not overlap with the key ranges in any other file.
 
-    Returns the index of the file whose key range contains the target key (i.e. its largest key is
-    greater than or equal the target). Otherwise returns `None`.
+    Returns the index of the file whose key range creates an upper bound on the target key (i.e.
+    its largest key is greater than or equal the target). Otherwise returns `None`.
+
+    # Legacy
+
+    This is synonomous with LevelDB's `leveldb::FindFile` method.
     */
-    fn find_file_containing_key(
+    fn find_file_with_upper_bound_range(
         files: &[Arc<FileMetadata>],
         target_user_key: &LookupKey,
     ) -> Option<usize> {
