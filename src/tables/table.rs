@@ -14,7 +14,7 @@ use crate::utils::cache::CacheEntry;
 use crate::utils::crc;
 use crate::{DbOptions, ReadOptions};
 
-use super::block::{BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
+use super::block::{BlockIter, BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
 use super::block_handle::BlockHandle;
 use super::constants::{BLOCK_DESCRIPTOR_SIZE_BYTES, CRC_CALCULATOR};
 use super::errors::{ReadError, TableResult};
@@ -84,11 +84,11 @@ impl Table {
 
         log::debug!("Reading and parsing the index block");
         let index_block: DataBlockReader =
-            Table::get_data_block_reader(&file, footer.get_index_handle())?;
+            Table::get_data_block_reader_from_disk(&file, footer.get_index_handle())?;
 
         log::debug!("Reading and parsing the metaindex block");
         let metaindex_block: MetaIndexBlockReader =
-            Table::get_data_block_reader(&file, footer.get_metaindex_handle())?;
+            Table::get_data_block_reader_from_disk(&file, footer.get_metaindex_handle())?;
 
         log::debug!("Reading and parsing the filter block");
         let maybe_filter_block: Option<FilterBlockReader> =
@@ -152,30 +152,7 @@ impl Table {
             return Ok(None);
         }
 
-        // Search the block itself for the key by first checking the cache for the block
-        let maybe_cached_block_entry = self.get_block_reader_from_cache(&block_handle)?;
-
-        /*
-        This is a kind of roundabout but the cache only returns `CacheEntry` objects which returns
-        references to block readers (i.e. `&DataBlockReader`) while getting a fresh block reader
-        returns the whole instance (i.e. `DataBlockReader`).
-        */
-        let maybe_new_block_reader: Option<DataBlockReader> = if maybe_cached_block_entry.is_none()
-        {
-            let reader: DataBlockReader = Table::get_data_block_reader(&self.file, &block_handle)?;
-            if read_options.fill_cache {
-                self.cache_block_reader(reader, &block_handle);
-            }
-
-            Some(reader)
-        } else {
-            None
-        };
-
-        let block_reader: &DataBlockReader = match maybe_cached_block_entry.as_ref() {
-            Some(cache_entry) => cache_entry.get_value(),
-            None => maybe_new_block_reader.as_ref().unwrap(),
-        };
+        let block_reader = self.get_block_reader(&read_options, &block_handle)?;
 
         // We have the block reader, now use the iterator to try to find the value for the key.
         let block_reader_iter = block_reader.iter();
@@ -191,12 +168,23 @@ impl Table {
             None => Ok(None),
         }
     }
+
+    /// Get a two-level iterator for this table.
+    pub fn two_level_iter(&self, read_options: ReadOptions) -> TwoLevelIterator {
+        TwoLevelIterator {
+            table: self,
+            read_options,
+            index_block_iter: self.index_block.iter(),
+            maybe_data_block_iter: None,
+            data_block_handle_bytes: None,
+        }
+    }
 }
 
 // Private methods
 impl Table {
-    /// Return a reader for the data block at the specified handle.
-    fn get_data_block_reader<K: RainDbKeyType>(
+    /// Return a reader from disk for the data block at the specified handle.
+    fn get_data_block_reader_from_disk<K: RainDbKeyType>(
         file: &Box<dyn ReadonlyRandomAccessFile>,
         block_handle: &BlockHandle,
     ) -> TableResult<BlockReader<K>> {
@@ -304,11 +292,48 @@ impl Table {
                 match FilterBlockReader::new(options.filter_policy(), raw_filter_block) {
                     Err(error) => return Err(ReadError::FilterBlock(format!("{}", error))),
                     Ok(reader) => return Ok(Some(reader)),
-                    }
                 }
-            None => return Ok(None),
             }
+            None => return Ok(None),
         }
+    }
+
+    /**
+    Get a block reader by checking the block cache first and reading it from disk if there's a
+    cache miss.
+    */
+    fn get_block_reader(
+        &self,
+        read_options: &ReadOptions,
+        block_handle: &BlockHandle,
+    ) -> TableResult<&DataBlockReader> {
+        // Search the block itself for the key by first checking the cache for the block
+        let maybe_cached_block_entry = self.get_block_reader_from_cache(&block_handle);
+
+        /*
+        This is a kind of roundabout but the cache only returns `CacheEntry` objects which returns
+        references to block readers (i.e. `&DataBlockReader`) while getting a fresh block reader
+        returns the whole instance (i.e. `DataBlockReader`).
+        */
+        let maybe_new_block_reader: Option<DataBlockReader> = if maybe_cached_block_entry.is_none()
+        {
+            let reader: DataBlockReader =
+                Table::get_data_block_reader_from_disk(&self.file, &block_handle)?;
+            if read_options.fill_cache {
+                self.cache_block_reader(reader, &block_handle);
+            }
+
+            Some(reader)
+        } else {
+            None
+        };
+
+        let block_reader: &DataBlockReader = match maybe_cached_block_entry.as_ref() {
+            Some(cache_entry) => cache_entry.get_value(),
+            None => maybe_new_block_reader.as_ref().unwrap(),
+        };
+
+        Ok(block_reader)
     }
 
     /**
@@ -319,13 +344,13 @@ impl Table {
     fn get_block_reader_from_cache(
         &self,
         block_handle: &BlockHandle,
-    ) -> TableResult<Option<DataBlockCacheEntry>> {
+    ) -> Option<DataBlockCacheEntry> {
         let block_cache = self.options.block_cache();
         let block_cache_key =
             BlockCacheKey::new(self.cache_partition_id, block_handle.get_offset());
         let maybe_cache_entry = block_cache.get(&block_cache_key);
 
-        Ok(maybe_cache_entry)
+        maybe_cache_entry
     }
 
     /// Cache the specified block reader in the block cache.
@@ -388,5 +413,223 @@ impl From<&BlockCacheKey> for Vec<u8> {
         serialized_value.append(&mut u64::encode_fixed_vec(value.block_offset));
 
         serialized_value
+    }
+}
+
+/**
+A two-level iterator that first iterates the index block and then iterates a corresponding data
+block.
+
+This iterator yields the concatenation of all key-value pairs in a sequence of blocks (e.g. in a
+table file).
+*/
+struct TwoLevelIterator<'t> {
+    /// The table the iterator is for.
+    table: &'t Table,
+
+    /// Options for configuring the behavior of reads done by the iterator.
+    read_options: ReadOptions,
+
+    /// Iterator for the index block.
+    index_block_iter: BlockIter<'t, LookupKey>,
+
+    /// Iterator for a data block.
+    maybe_data_block_iter: Option<BlockIter<'t, LookupKey>>,
+
+    /**
+    The serialized block handle used to get the data block in the [`TwoLevelIterator::data_block`]
+    field.
+    */
+    data_block_handle_bytes: Option<&'t Vec<u8>>,
+}
+
+/// Private methods
+impl<'t> TwoLevelIterator<'t> {
+    fn init_data_block(&'t mut self) -> TableResult<()> {
+        if !self.index_block_iter.is_valid() {
+            self.maybe_data_block_iter = None;
+            self.data_block_handle_bytes = None;
+        } else {
+            let data_block_handle_bytes = self.index_block_iter.current().unwrap().1;
+            if self.data_block_handle_bytes.is_some()
+                && self.data_block_handle_bytes.as_deref().unwrap() == data_block_handle_bytes
+            {
+                // Don't need to do anything since the data block is already stored
+            } else {
+                let block_handle = BlockHandle::try_from(data_block_handle_bytes).unwrap();
+                let data_block = self
+                    .table
+                    .get_block_reader(&self.read_options, &block_handle)?;
+
+                self.maybe_data_block_iter = Some(data_block.iter());
+                self.data_block_handle_bytes = Some(data_block_handle_bytes);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Move the index iterator and data iterator forward until we find a non-empty block.
+    fn skip_empty_data_blocks_forward(&'t mut self) -> TableResult<()> {
+        while self.maybe_data_block_iter.is_none()
+            || !self.maybe_data_block_iter.as_ref().unwrap().is_valid()
+        {
+            if !self.index_block_iter.is_valid() {
+                // We've reached the end of the index block so there are no more data blocks
+                self.maybe_data_block_iter = None;
+                self.data_block_handle_bytes = None;
+                return Ok(());
+            }
+
+            // Move index iterator to check for the next data block handle
+            self.index_block_iter.next();
+            self.init_data_block()?;
+
+            if self.maybe_data_block_iter.is_some() {
+                self.maybe_data_block_iter.as_mut().unwrap().seek_to_first();
+            }
+        }
+
+        Ok(())
+    }
+
+    /**
+    Move the index iterator and data iterator backward until we find a non-empty block.
+
+    If a data block is found, this will set the data block iterator to the last entry of the
+    data block.
+    */
+    fn skip_empty_data_blocks_backward(&'t mut self) -> TableResult<()> {
+        while self.maybe_data_block_iter.is_none()
+            || !self.maybe_data_block_iter.as_ref().unwrap().is_valid()
+        {
+            if !self.index_block_iter.is_valid() {
+                // We've reached the end of the index block so there are no more data blocks
+                self.maybe_data_block_iter = None;
+                self.data_block_handle_bytes = None;
+                return Ok(());
+            }
+
+            // Move index iterator to check for the previous data block handle
+            self.index_block_iter.prev();
+            self.init_data_block()?;
+
+            if self.maybe_data_block_iter.is_some() {
+                self.maybe_data_block_iter.as_mut().unwrap().seek_to_last();
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
+    type Key = LookupKey;
+    type Error = ReadError;
+
+    fn is_valid(&self) -> bool {
+        self.maybe_data_block_iter.is_some()
+            && self.maybe_data_block_iter.as_ref().unwrap().is_valid()
+    }
+
+    fn seek(&'t mut self, target: &Self::Key) -> Result<(), Self::Error> {
+        self.index_block_iter.seek(target);
+        self.init_data_block()?;
+
+        if self.maybe_data_block_iter.is_some() {
+            self.maybe_data_block_iter.as_mut().unwrap().seek(target);
+        }
+
+        self.skip_empty_data_blocks_forward()?;
+
+        Ok(())
+    }
+
+    fn seek_to_first(&'t mut self) -> Result<(), Self::Error> {
+        self.index_block_iter.seek_to_first();
+        self.init_data_block()?;
+
+        if self.maybe_data_block_iter.is_some() {
+            self.maybe_data_block_iter.as_mut().unwrap().seek_to_first();
+        }
+
+        self.skip_empty_data_blocks_forward()?;
+
+        Ok(())
+    }
+
+    fn seek_to_last(&'t mut self) -> Result<(), Self::Error> {
+        self.index_block_iter.seek_to_last();
+        self.init_data_block()?;
+
+        if self.maybe_data_block_iter.is_some() {
+            self.maybe_data_block_iter.as_mut().unwrap().seek_to_last();
+        }
+
+        self.skip_empty_data_blocks_backward()?;
+
+        Ok(())
+    }
+
+    fn next(&'t mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+        if !self.is_valid() {
+            return None;
+        }
+
+        let maybe_entry = self.maybe_data_block_iter.as_ref().unwrap().next();
+        match self.skip_empty_data_blocks_forward() {
+            Err(error) => {
+                log::error!("There was an error skipping forward in a two-level iterator. Original error: {}", error);
+                return None;
+            }
+            _ => {}
+        }
+
+        match maybe_entry {
+            Some(entry) => {
+                // Return the entry we found initially if it exists.
+                Some(entry)
+            }
+            None => {
+                // We did not find an entry initially so return the current entry after moving the
+                // iterator forward.
+                self.current()
+            }
+        }
+    }
+
+    fn prev(&'t mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+        if !self.is_valid() {
+            return None;
+        }
+
+        let maybe_entry = self.maybe_data_block_iter.as_ref().unwrap().prev();
+        match self.skip_empty_data_blocks_backward() {
+            Err(error) => {
+                log::error!("There was an error skipping backward in a two-level iterator. Original error: {}", error);
+                return None;
+            }
+            _ => {}
+        }
+
+        match maybe_entry {
+            Some(entry) => {
+                // Return the entry we found initially if it exists.
+                Some(entry)
+            }
+            None => {
+                // We did not find an entry initially so return the current entry after moving the
+                // iterator backward.
+                self.current()
+            }
+        }
+    }
+
+    fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
+        if !self.is_valid() {
+            return None;
+        }
+
+        self.maybe_data_block_iter.as_ref().unwrap().current()
     }
 }
