@@ -5,11 +5,10 @@ The database module contains the primary API for interacting with the key-value 
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time;
+use std::time::{self, Instant};
 
 use crate::batch::Batch;
 use crate::compaction::{CompactionWorker, LevelCompactionStats, ManualCompaction, TaskKind};
@@ -23,10 +22,53 @@ use crate::file_names::{DATA_DIR, WAL_DIR};
 use crate::key::LookupKey;
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::table_cache::TableCache;
-use crate::versioning::VersionSet;
+use crate::tables::TableBuilder;
+use crate::utils::linked_list::SharedNode;
+use crate::versioning::file_metadata::FileMetadata;
+use crate::versioning::version::Version;
+use crate::versioning::{VersionChangeManifest, VersionSet};
 use crate::write_ahead_log::WALWriter;
 use crate::writers::Writer;
 use crate::{DbOptions, RainDbIterator, ReadOptions, WriteOptions};
+
+/**
+Database state property bag.
+
+The state stored in here is intended to be passed around to objects and closures that cannot
+take a direct dependency on the main [`DB`] object e.g. the compaction worker thread.
+*/
+pub(crate) struct PortableDatabaseState {
+    /// Options for configuring the operation of the database.
+    options: DbOptions,
+
+    /**
+    Database state that require a lock to be held before being read or written to.
+
+    In the course of database operation, this is usually instantiated in and obtained from [`DB`].
+
+    [`DB`]: crate::db::DB
+    */
+    guarded_db_fields: Arc<Mutex<GuardedDbFields>>,
+
+    /// A cache of table files.
+    table_cache: Arc<TableCache>,
+
+    /// Field indicating if the database is shutting down.
+    is_shutting_down: Arc<AtomicBool>,
+
+    /**
+    Field indicating if there is an immutable memtable.
+
+    An memtable is made immutable when it is undergoing the compaction process.
+    */
+    has_immutable_memtable: Arc<AtomicBool>,
+
+    /**
+    A condition variable used to notify parked threads that background work (e.g. compaction) has
+    finished.
+    */
+    background_work_finished_signal: Arc<Condvar>,
+}
 
 /// Struct holding database fields that need a lock before accessing.
 pub(crate) struct GuardedDbFields {
@@ -76,6 +118,10 @@ pub(crate) struct GuardedDbFields {
     Set of tables to protect from deletion because they are part of ongoing compactions.
 
     The tables are identified by their file numbers.
+
+    # Legacy
+
+    This is synonomous to the `DBImpl::pending_outputs_` field in LevelDB.
     */
     pub(crate) tables_in_use: HashSet<u64>,
 }

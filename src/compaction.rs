@@ -3,50 +3,17 @@ use std::ops::AddAssign;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{fmt, io};
 
-use crate::db::GuardedDbFields;
-use crate::errors::RainDBResult;
+use crate::db::{GuardedDbFields, PortableDatabaseState};
 use crate::key::LookupKey;
-use crate::memtable::MemTable;
-use crate::versioning::file_metadata::FileMetadata;
+use crate::table_cache::TableCache;
 use crate::versioning::VersionChangeManifest;
-use crate::DbOptions;
+use crate::{DbOptions, DB};
 
 /// Name of the compaction thread.
 const COMPACTION_THREAD_NAME: &str = "raindb-tumtum";
-
-/// Database state used by the worker thread.
-struct DatabaseState {
-    /// Options for configuring the operation of the database.
-    options: DbOptions,
-
-    /**
-    Database state that require a lock to be held before being read or written to.
-
-    In the course of database operation, this is usually instantiated in and obtained from [`DB`].
-
-    [`DB`]: crate::db::DB
-    */
-    guarded_db_fields: Arc<Mutex<GuardedDbFields>>,
-
-    /// Field indicating if the database is shutting down.
-    is_shutting_down: Arc<AtomicBool>,
-
-    /**
-    Field indicating if there is an immutable memtable.
-
-    An memtable is made immutable when it is undergoing the compaction process.
-    */
-    has_immutable_memtable: Arc<AtomicBool>,
-
-    /**
-    A condition variable used to notify parked threads that background work (e.g. compaction) has
-    finished.
-    */
-    background_work_finished_signal: Arc<Condvar>,
-}
 
 /// The kinds of tasks that the compaction worker can schedule.
 #[derive(Debug)]
@@ -83,24 +50,27 @@ impl CompactionWorker {
     Create a new instance of [`CompactionWorker`].
 
     * `options` - Options for configuring the operation of the database.
+    * `table_cache` - A cache of table files.
     * `guarded_db_fields` - Database state that require a lock to be held before being read or written to.
     * `is_shutting_down` - Indicator for if the database is shutting down.
     * `has_immutable_memtable` - Indicator for if there is an immutable memtable.
     * `background_work_finished_signal` - Signal the completion of background work
 
-    Most of the parameters are put into the [`DatabaseState`] struct and passed to the actual
+    Most of the parameters are put into the [`PortableDatabaseState`] struct and passed to the actual
     compaction thread for convenience. Expanded documentation of these params can be found in said
     struct.
     */
     pub fn new(
         options: DbOptions,
+        table_cache: Arc<TableCache>,
         guarded_db_fields: Arc<Mutex<GuardedDbFields>>,
         is_shutting_down: Arc<AtomicBool>,
         has_immutable_memtable: Arc<AtomicBool>,
         background_work_finished_signal: Arc<Condvar>,
     ) -> CompactionWorkerResult<Self> {
-        let db_state = DatabaseState {
+        let db_state = PortableDatabaseState {
             options,
+            table_cache,
             guarded_db_fields,
             is_shutting_down,
             has_immutable_memtable,
@@ -165,8 +135,8 @@ impl CompactionWorker {
 
     It re-checks some compaction pre-conditions and does some clean-up work at the end.
     */
-    fn compaction_task(db_state: &DatabaseState) {
-        let DatabaseState {
+    fn compaction_task(db_state: &'static PortableDatabaseState) {
+        let PortableDatabaseState {
             guarded_db_fields,
             is_shutting_down,
             background_work_finished_signal,
@@ -185,7 +155,7 @@ impl CompactionWorker {
                 compaction work."
             );
         } else {
-            CompactionWorker::compact_memtable(db_state, &mut db_fields_guard);
+            CompactionWorker::coordinate_compaction(db_state, &mut db_fields_guard);
         }
 
         db_fields_guard.background_compaction_scheduled = false;
@@ -196,10 +166,16 @@ impl CompactionWorker {
         background_work_finished_signal.notify_all();
     }
 
-    /// Performs the actual compaction tasks.
+    /**
+    Performs the actual compaction tasks.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `DBImpl::BackgroundCompaction` method.
+    */
     fn coordinate_compaction(
-        db_state: &DatabaseState,
-        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        db_state: &PortableDatabaseState,
+        db_fields_guard: &'static mut MutexGuard<GuardedDbFields>,
     ) {
         if db_fields_guard.maybe_immutable_memtable.is_some() {
             // There is an immutable memtable. Compact that.
@@ -214,8 +190,8 @@ impl CompactionWorker {
     An immutable memtable must exist if this method is called.
     */
     fn compact_memtable(
-        db_state: &DatabaseState,
-        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        db_state: &PortableDatabaseState,
+        db_fields_guard: &'static mut MutexGuard<GuardedDbFields>,
     ) {
         assert!(db_fields_guard.maybe_immutable_memtable.is_some());
 
