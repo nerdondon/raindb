@@ -199,32 +199,13 @@ impl CompactionWorker {
         let change_manifest = VersionChangeManifest::default();
         // Apply the changes to the current version
         let base_version = db_fields_guard.version_set.get_current_version().unwrap();
-        CompactionWorker::write_level0_table(
+        DB::write_level0_table(
             db_state,
-            &mut db_fields_guard,
-            &db_fields_guard.maybe_immutable_memtable.as_ref().unwrap(),
+            db_fields_guard,
+            db_fields_guard.maybe_immutable_memtable.as_ref().unwrap(),
+            base_version,
             &mut change_manifest,
         );
-    }
-
-    /// Convert the immutable memtable to a table file.
-    pub(crate) fn write_level0_table(
-        db_state: &DatabaseState,
-        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
-        memtable: &Box<dyn MemTable>,
-        change_manifest: &mut VersionChangeManifest,
-    ) -> RainDBResult<()> {
-        // Actual work starts here so get a timer for metric gathering purposes
-        let compaction_instant = Instant::now();
-        let file_number = db_fields_guard.version_set.get_new_file_number();
-        let file_metadata = FileMetadata::new(file_number);
-        db_fields_guard.tables_in_use.insert(file_number);
-
-        let stats = LevelCompactionStats {
-            compaction_duration: compaction_instant.elapsed(),
-            ..LevelCompactionStats::default()
-        };
-        Ok(())
     }
 }
 
@@ -272,10 +253,10 @@ pub(crate) struct LevelCompactionStats {
     compaction_duration: Duration,
 
     /// The number of bytes read during the compaction.
-    bytes_read: usize,
+    bytes_read: u64,
 
     /// The number of bytes written during the compaction.
-    bytes_written: usize,
+    bytes_written: u64,
 }
 
 /// Private methods

@@ -671,4 +671,133 @@ impl DB {
         mutex_guard.maybe_bad_database_state = Some(catastrophic_error);
         self.background_work_finished_signal.notify_all();
     }
+
+    /// Convert the immutable memtable to a table file.
+    pub(crate) fn write_level0_table(
+        db_state: &PortableDatabaseState,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        memtable: &'static Box<dyn MemTable>,
+        base_version: SharedNode<Version>,
+        change_manifest: &mut VersionChangeManifest,
+    ) -> RainDBResult<()> {
+        // Actual work starts here so get a timer for metric gathering purposes
+        let compaction_instant = Instant::now();
+        let file_number = db_fields_guard.version_set.get_new_file_number();
+        let file_metadata = FileMetadata::new(file_number);
+        db_fields_guard.tables_in_use.insert(file_number);
+
+        log::info!(
+            "Starting to build level-0 table file with file number {}.",
+            file_number
+        );
+        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+            &mut db_fields_guard,
+            || -> RainDBResult<()> {
+                DB::build_table_from_iterator(
+                    &db_state.options,
+                    &mut file_metadata,
+                    memtable.iter(),
+                    &db_state.table_cache,
+                )
+            },
+        )?;
+
+        log::info!(
+            "Level-0 table file {} created with a file size of {}.",
+            file_number,
+            file_metadata.get_file_size()
+        );
+        db_fields_guard.tables_in_use.remove(&file_number);
+
+        // If the file size is zero, that means that the file was deleted and should not be added
+        // to the manifest.
+        let mut file_level: usize = 0;
+        if file_metadata.get_file_size() > 0 {
+            let smallest_user_key = file_metadata.smallest_key().get_user_key();
+            let largest_user_key = file_metadata.largest_key().get_user_key();
+            file_level = base_version
+                .read()
+                .element
+                .pick_level_for_memtable_output(smallest_user_key, largest_user_key);
+            todo!("i went with a DFS strat for impl here")
+        }
+
+        let stats = LevelCompactionStats {
+            compaction_duration: compaction_instant.elapsed(),
+            bytes_written: file_metadata.get_file_size(),
+            ..LevelCompactionStats::default()
+        };
+        Ok(())
+    }
+
+    /**
+    Build a table file from the contents of a [`RainDbIterator`].
+
+    The generated table file will be named after the provided table number. Upon successful
+    table file generation, relevant fields of the the passed in [`FileMetadata`] will be filled in
+    will metadata from the generated file.
+
+    If the passed in iterator is empty, a table file will **not** be generated and the file size
+    field of the metadata struct will be set to zero.
+
+    [`RainDbIterator`]: crate::RainDbIterator
+    */
+    fn build_table_from_iterator(
+        options: &DbOptions,
+        metadata: &mut FileMetadata,
+        iterator: Box<dyn RainDbIterator<Key = LookupKey, Error = RainDBError>>,
+        table_cache: &Arc<TableCache>,
+    ) -> RainDBResult<()> {
+        let file_name_handler = FileNameHandler::new(options.db_path().to_string());
+        let table_file_name = file_name_handler.get_table_file_name(metadata.file_number());
+        iterator.seek_to_first()?;
+
+        if iterator.is_valid() {
+            let table_builder = TableBuilder::new(options.clone(), metadata.file_number())?;
+            metadata.set_smallest_key(Some(iterator.current().unwrap().0.clone()));
+
+            // Iterate the memtable and add the entries to a table
+            let mut larget_key_seen: &LookupKey;
+            while let Some((key, value)) = iterator.current() {
+                larget_key_seen = key;
+                table_builder.add_entry(key, value);
+                iterator.next();
+            }
+
+            metadata.set_largest_key(Some(larget_key_seen.clone()));
+            table_builder.finalize()?;
+            metadata.set_file_size(table_builder.file_size());
+
+            // Verify that the table file is usable by attempting to create an iterator from it
+            match table_cache.find_table(metadata.file_number()) {
+                Ok(table_cache_entry) => {
+                    let table = table_cache_entry.get_value();
+                    let _table_iter = table.two_level_iter(ReadOptions::default());
+                }
+                Err(error) => {
+                    log::error!(
+                        "There was an issue attempting to open the table file with number {} after \
+                        creating it. Deleting file. Original error: {}.",
+                        metadata.file_number(),
+                        error
+                    );
+                    // Delete the table file if there was an error
+                    options
+                        .filesystem_provider()
+                        .remove_file(&table_file_name)?;
+
+                    return Err(error);
+                }
+            }
+
+            if metadata.get_file_size() < 1 {
+                // Delete the file if it is empty
+                options
+                    .filesystem_provider()
+                    .remove_file(&table_file_name)?;
+            }
+        }
+
+        Ok(())
+    }
 }

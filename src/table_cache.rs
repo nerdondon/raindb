@@ -64,12 +64,9 @@ impl TableCache {
     pub fn remove(&self, file_number: u64) {
         self.cache.remove(&file_number);
     }
-}
 
-/// Private methods
-impl TableCache {
     /// Get a reference to a cache entry of a table reader.
-    fn find_table(&self, file_number: u64) -> RainDBResult<Box<dyn CacheEntry<Table>>> {
+    pub fn find_table(&self, file_number: u64) -> RainDBResult<Box<dyn CacheEntry<Table>>> {
         // Check the cache for if there is already a reader and return that if there is
         let maybe_cached_table = self.cache.get(&file_number);
         if maybe_cached_table.is_some() {
