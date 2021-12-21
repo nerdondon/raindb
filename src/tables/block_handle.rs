@@ -17,7 +17,7 @@ pub(crate) const BLOCK_HANDLE_MAX_ENCODED_LENGTH_BYTES: u64 = 10 + 10;
 A block handle consists of two varint64 values representing the size and the offset of the block in
 the file.
 */
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct BlockHandle {
     /// The offset in the raw byte buffer that the block resides.
     offset: u64,
