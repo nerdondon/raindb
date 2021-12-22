@@ -672,64 +672,6 @@ impl DB {
         self.background_work_finished_signal.notify_all();
     }
 
-    /// Convert the immutable memtable to a table file.
-    pub(crate) fn write_level0_table(
-        db_state: &PortableDatabaseState,
-        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
-        memtable: &'static Box<dyn MemTable>,
-        base_version: SharedNode<Version>,
-        change_manifest: &mut VersionChangeManifest,
-    ) -> RainDBResult<()> {
-        // Actual work starts here so get a timer for metric gathering purposes
-        let compaction_instant = Instant::now();
-        let file_number = db_fields_guard.version_set.get_new_file_number();
-        let file_metadata = FileMetadata::new(file_number);
-        db_fields_guard.tables_in_use.insert(file_number);
-
-        log::info!(
-            "Starting to build level-0 table file with file number {}.",
-            file_number
-        );
-        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
-            &mut db_fields_guard,
-            || -> RainDBResult<()> {
-                DB::build_table_from_iterator(
-                    &db_state.options,
-                    &mut file_metadata,
-                    memtable.iter(),
-                    &db_state.table_cache,
-                )
-            },
-        )?;
-
-        log::info!(
-            "Level-0 table file {} created with a file size of {}.",
-            file_number,
-            file_metadata.get_file_size()
-        );
-        db_fields_guard.tables_in_use.remove(&file_number);
-
-        // If the file size is zero, that means that the file was deleted and should not be added
-        // to the manifest.
-        let mut file_level: usize = 0;
-        if file_metadata.get_file_size() > 0 {
-            let smallest_user_key = file_metadata.smallest_key().get_user_key();
-            let largest_user_key = file_metadata.largest_key().get_user_key();
-            file_level = base_version
-                .read()
-                .element
-                .pick_level_for_memtable_output(smallest_user_key, largest_user_key);
-            todo!("i went with a DFS strat for impl here")
-        }
-
-        let stats = LevelCompactionStats {
-            compaction_duration: compaction_instant.elapsed(),
-            bytes_written: file_metadata.get_file_size(),
-            ..LevelCompactionStats::default()
-        };
-        Ok(())
-    }
-
     /**
     Build a table file from the contents of a [`RainDbIterator`].
 
@@ -798,6 +740,67 @@ impl DB {
             }
         }
 
+        Ok(())
+    }
+}
+
+/// Crate-only methods
+impl DB {
+    /// Convert the immutable memtable to a table file.
+    pub(crate) fn write_level0_table(
+        db_state: &PortableDatabaseState,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        memtable: &'static Box<dyn MemTable>,
+        base_version: SharedNode<Version>,
+        change_manifest: &mut VersionChangeManifest,
+    ) -> RainDBResult<()> {
+        // Actual work starts here so get a timer for metric gathering purposes
+        let compaction_instant = Instant::now();
+        let file_number = db_fields_guard.version_set.get_new_file_number();
+        let file_metadata = FileMetadata::new(file_number);
+        db_fields_guard.tables_in_use.insert(file_number);
+
+        log::info!(
+            "Starting to build level-0 table file with file number {}.",
+            file_number
+        );
+        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+            &mut db_fields_guard,
+            || -> RainDBResult<()> {
+                DB::build_table_from_iterator(
+                    &db_state.options,
+                    &mut file_metadata,
+                    memtable.iter(),
+                    &db_state.table_cache,
+                )
+            },
+        )?;
+
+        log::info!(
+            "Level-0 table file {} created with a file size of {}.",
+            file_number,
+            file_metadata.get_file_size()
+        );
+        db_fields_guard.tables_in_use.remove(&file_number);
+
+        // If the file size is zero, that means that the file was deleted and should not be added
+        // to the manifest.
+        let mut file_level: usize = 0;
+        if file_metadata.get_file_size() > 0 {
+            let smallest_user_key = file_metadata.smallest_key().get_user_key();
+            let largest_user_key = file_metadata.largest_key().get_user_key();
+            file_level = base_version
+                .read()
+                .element
+                .pick_level_for_memtable_output(smallest_user_key, largest_user_key);
+            todo!("i went with a DFS strat for impl here")
+        }
+
+        let stats = LevelCompactionStats {
+            compaction_duration: compaction_instant.elapsed(),
+            bytes_written: file_metadata.get_file_size(),
+            ..LevelCompactionStats::default()
+        };
         Ok(())
     }
 }
