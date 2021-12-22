@@ -9,7 +9,7 @@ use crate::errors::RainDBResult;
 use crate::filter_policy;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
-use crate::key::{LookupKey, Operation, RainDbKeyType};
+use crate::key::{InternalKey, Operation, RainDbKeyType};
 use crate::utils::cache::CacheEntry;
 use crate::utils::crc;
 use crate::{DbOptions, ReadOptions};
@@ -124,7 +124,11 @@ impl Table {
 
     Returns an non-deleted value if the key is in the table. Otherwise, return `None`.
     */
-    pub fn get(&self, read_options: ReadOptions, key: &LookupKey) -> TableResult<Option<Vec<u8>>> {
+    pub fn get(
+        &self,
+        read_options: ReadOptions,
+        key: &InternalKey,
+    ) -> TableResult<Option<Vec<u8>>> {
         // Search the index block for the offset of a block that may or may not contain the key we
         // are looking for
         let index_block_iter = self.index_block.iter();
@@ -431,10 +435,10 @@ struct TwoLevelIterator<'t> {
     read_options: ReadOptions,
 
     /// Iterator for the index block.
-    index_block_iter: BlockIter<'t, LookupKey>,
+    index_block_iter: BlockIter<'t, InternalKey>,
 
     /// Iterator for a data block.
-    maybe_data_block_iter: Option<BlockIter<'t, LookupKey>>,
+    maybe_data_block_iter: Option<BlockIter<'t, InternalKey>>,
 
     /**
     The serialized block handle used to get the data block in the [`TwoLevelIterator::data_block`]
@@ -524,7 +528,7 @@ impl<'t> TwoLevelIterator<'t> {
 }
 
 impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
-    type Key = LookupKey;
+    type Key = InternalKey;
     type Error = ReadError;
 
     fn is_valid(&self) -> bool {

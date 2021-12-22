@@ -24,7 +24,7 @@ make things more readable, RainDB will take the opposite approach and eagerly de
 intermediate structs. Explicitly, we will take a performance hit if it means the idea behind the
 code can be made more obvious. Cases where this is evident are the following:
 
-1. The memtable will store keys as a struct (`LookupKey`) instead of constantly serializing and
+1. The memtable will store keys as a struct (`InternalKey`) instead of constantly serializing and
    deserializing byte buffers.
 1. Reading blocks from tables ([details](#data-block-format))
 
@@ -141,7 +141,7 @@ The read path is as follows:
 
 ## Data Formats
 
-### Internal key format (a.k.a.) the lookup key
+### Internal key format
 
 Because the data structures that make up an LSM tree are append-only, duplicate keys can be
 introduced when updates occur. In order to ensure that the most up to date version of a key can be
@@ -152,7 +152,7 @@ a put operation or a deletion. This can also be referred to as a tombstone and i
 8-bit unsigned integer. In sum the internal key looks as below:
 
 ```rust
-struct LookupKey {
+struct InternalKey {
     user_key: Vec<u8>,
     sequence_number: u64,
     operation: Operation,
@@ -285,9 +285,9 @@ access to the data.
 The metaindex block contains an entry for every meta block where the key is the name (a string) of
 the meta block and the value is a block handle.
 
-The index block contains an entry for each data block where the key is a internal lookup key and the
-value is a block handle to the data block. Keys are sorted such that a key in the index is >= the
-last key in that data block and less than the first key of the next data block.
+The index block contains an entry for each data block where the key is an internal key and the value
+is a block handle to the data block. Keys are sorted such that a key in the index is >= the last key
+in that data block and less than the first key of the next data block.
 
 Each of these blocks are optionally compressed. This information as well as a checksum are stored
 after each block in what we will call the block descriptor. In LevelDB, this is confusingly called

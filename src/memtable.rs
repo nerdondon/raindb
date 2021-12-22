@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nerdondon_hopscotch::concurrent_skiplist::{ConcurrentSkipList, SkipNode};
 
 use crate::errors::RainDBError;
-use crate::key::LookupKey;
+use crate::key::InternalKey;
 use crate::RainDbIterator;
 
 /// The interface that a data structure must implement to be used as a memtable in RainDB.
@@ -12,23 +12,23 @@ pub trait MemTable: Send + Sync {
     fn approximate_memory_usage(&self) -> usize;
 
     /// Insert a new key-value pair into the memtable.
-    fn insert(&self, key: LookupKey, value: Vec<u8>);
+    fn insert(&self, key: InternalKey, value: Vec<u8>);
 
     /**
     Get the `value` for the given `key`.
 
     Returns `None` if the `key` does not exist in the memtable.
     */
-    fn get(&self, key: &LookupKey) -> Option<&Vec<u8>>;
+    fn get(&self, key: &InternalKey) -> Option<&Vec<u8>>;
 
     /// Return a [`RainDbIterator`] over the contents of the memtable.
-    fn iter(&self) -> Box<dyn RainDbIterator<Key = LookupKey, Error = RainDBError> + '_>;
+    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_>;
 }
 
 /// A memtable that is backed by a skiplist.
 pub(crate) struct SkipListMemTable {
     /// The actual skip list backing the memtable.
-    store: Arc<ConcurrentSkipList<LookupKey, Vec<u8>>>,
+    store: Arc<ConcurrentSkipList<InternalKey, Vec<u8>>>,
 }
 
 /// Public methods
@@ -46,7 +46,7 @@ impl MemTable for SkipListMemTable {
         self.store.get_approx_mem_usage()
     }
 
-    fn insert(&self, key: LookupKey, value: Vec<u8>) {
+    fn insert(&self, key: InternalKey, value: Vec<u8>) {
         /*
         SAFETY:
         RainDB enforces that there is only a single writer adding to the memtable at a time.
@@ -54,11 +54,11 @@ impl MemTable for SkipListMemTable {
         unsafe { self.store.insert(key, value) }
     }
 
-    fn get(&self, key: &LookupKey) -> Option<&Vec<u8>> {
+    fn get(&self, key: &InternalKey) -> Option<&Vec<u8>> {
         self.store.get(&key)
     }
 
-    fn iter(&self) -> Box<dyn RainDbIterator<Key = LookupKey, Error = RainDBError> + '_> {
+    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_> {
         Box::new(SkipListMemTableIter {
             store: Arc::clone(&self.store),
             current_node: self.store.first_node(),
@@ -69,17 +69,17 @@ impl MemTable for SkipListMemTable {
 /// Holds iterator state for the skip list memtable.
 struct SkipListMemTableIter<'a> {
     /// A reference to the skip list backing the memtable.
-    store: Arc<ConcurrentSkipList<LookupKey, Vec<u8>>>,
+    store: Arc<ConcurrentSkipList<InternalKey, Vec<u8>>>,
 
     /// The key-value pair that was found last.
-    current_node: Option<&'a SkipNode<LookupKey, Vec<u8>>>,
+    current_node: Option<&'a SkipNode<InternalKey, Vec<u8>>>,
 }
 
 impl<'a, 'i> RainDbIterator<'i> for SkipListMemTableIter<'a>
 where
     'i: 'a,
 {
-    type Key = LookupKey;
+    type Key = InternalKey;
     type Error = RainDBError;
 
     fn is_valid(&self) -> bool {

@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::config::{MAX_MEM_COMPACT_LEVEL, MAX_NUM_LEVELS};
-use crate::key::{LookupKey, MAX_SEQUENCE_NUMBER};
+use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
 use crate::table_cache::TableCache;
 use crate::DbOptions;
 
@@ -188,8 +188,9 @@ impl Version {
         2. The number of overlapping bytes in the level after the next (l + 2) do not breach a set
            threshold
         */
-        let start_key = LookupKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
-        let end_key = LookupKey::new(largest_user_key.to_vec(), 0, crate::key::Operation::Delete);
+        let start_key =
+            InternalKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
+        let end_key = InternalKey::new(largest_user_key.to_vec(), 0, crate::key::Operation::Delete);
         while level < MAX_MEM_COMPACT_LEVEL {
             if self.has_overlap_in_level(level + 1, smallest_user_key, largest_user_key) {
                 break;
@@ -228,7 +229,7 @@ impl Version {
     pub fn get_overlapping_files(
         &self,
         level: usize,
-        key_range: Range<&LookupKey>,
+        key_range: Range<&InternalKey>,
     ) -> Vec<&Arc<FileMetadata>> {
         assert!(level > 0);
         assert!(level <= MAX_NUM_LEVELS);
@@ -330,7 +331,7 @@ impl Version {
         // Create the earliest full key from the specified user key, recalling that sequence
         // numbers are sorted in decreasing order.
         let smallest_full_key =
-            LookupKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
+            InternalKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
         let maybe_file_index = Version::find_file_with_upper_bound_range(files, &smallest_full_key);
 
         if maybe_file_index.is_none() {
@@ -362,7 +363,7 @@ impl Version {
     */
     fn find_file_with_upper_bound_range(
         files: &[Arc<FileMetadata>],
-        target_user_key: &LookupKey,
+        target_user_key: &InternalKey,
     ) -> Option<usize> {
         let mut left: usize = 0;
         let mut right: usize = files.len();

@@ -43,7 +43,7 @@ pub enum RainDBError {
     /// Variant for errors encountered during compaction.
     Compaction(CompactionWorkerError),
 
-    /// Variant for lookup key parsing errors.
+    /// Variant for internal key parsing errors.
     KeyParsing(String),
 
     /// Variant used for one off situations. This should be used sparingly.

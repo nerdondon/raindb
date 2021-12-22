@@ -7,7 +7,7 @@ use std::time::Duration;
 use std::{fmt, io};
 
 use crate::db::{GuardedDbFields, PortableDatabaseState};
-use crate::key::LookupKey;
+use crate::key::InternalKey;
 use crate::table_cache::TableCache;
 use crate::versioning::VersionChangeManifest;
 use crate::{DbOptions, DB};
@@ -242,9 +242,9 @@ pub struct ManualCompaction {
     /// True if the compaction is completed. Otherwise, false.
     pub done: bool,
     /// The key to start compaction from. `None` means the start of the key range.
-    pub begin: Option<LookupKey>,
+    pub begin: Option<InternalKey>,
     /// The key to end compaction at. `None` means the end of the key range.
-    pub end: Option<LookupKey>,
+    pub end: Option<InternalKey>,
 }
 
 /// Carries compaction metrics for a level.

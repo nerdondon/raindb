@@ -2,12 +2,12 @@
 This module contains implementations of keys used to index values in the RainDB. There are two main
 keys that are used:
 
-    1. Lookup keys for looking up values in the database
+    1. Internal keys for tracking and looking up values in the database
     1. Metaindex keys that are used for looking up metadata in table files
 
-# More on lookup keys
+# More on internal keys
 
-Entries in the database are represented by an internal key that adds additional metadata e.g. a
+Entries in the database are tracked by an internal key that adds additional metadata e.g. a
 sequence number and the operation that was performed.
 
 The sequence number is a global, monotonically increasing 64-bit unsigned int. It is never reset.
@@ -34,7 +34,7 @@ pub(crate) const MAX_SEQUENCE_NUMBER: u64 = u64::MAX;
 /**
 Trait that decorates keys in RainDB that are sortable and deserializable.
 
-This applies to the internal lookup key as well as the key used for sorting meta blocks in table
+This applies to the internal key as well as the key used for sorting meta blocks in table
 files.
 */
 pub trait RainDbKeyType: Ord + TryFrom<Vec<u8>> {
@@ -57,7 +57,7 @@ integer (forming an 8 byte trailer) where the sequence number takes up the first
 operation takes up the last 8 bits.
 */
 #[derive(Clone, Debug, Eq, Hash)]
-pub struct LookupKey {
+pub struct InternalKey {
     /// The user suplied key.
     user_key: Vec<u8>,
     /// The sequence number of the operation associated with this generated key.
@@ -67,10 +67,10 @@ pub struct LookupKey {
 }
 
 /// Crate-only methods
-impl LookupKey {
-    /// Construct a new [`LookupKey`].
+impl InternalKey {
+    /// Construct a new [`InternalKey`].
     pub(crate) fn new(user_key: Vec<u8>, sequence_number: u64, operation: Operation) -> Self {
-        LookupKey {
+        InternalKey {
             user_key,
             sequence_number,
             operation,
@@ -78,9 +78,11 @@ impl LookupKey {
     }
 
     /**
-    Construct a new [`LookupKey`] for seek operations.
+    Construct a new [`InternalKey`] for seek operations.
 
     # Legacy
+
+    This is analogous to LevelDB's `LookupKey`.
 
     Seek operations will utilize the [`Operation::Put`] operation tag because it is the largest
     discriminant in the [`Operation`] enum. LevelDB does this because it embeds the operation tag in
@@ -90,7 +92,7 @@ impl LookupKey {
     whereas LevelDB usually only works byte buffers with serialized keys.
     */
     pub(crate) fn new_for_seeking(user_key: Vec<u8>, sequence_number: u64) -> Self {
-        LookupKey {
+        InternalKey {
             user_key,
             sequence_number,
             operation: Operation::Put,
@@ -102,13 +104,13 @@ impl LookupKey {
         self.user_key.as_slice()
     }
 
-    /// Get a reference to the lookup key's operation.
+    /// Get a reference to operation tag for this key.
     pub(crate) fn get_operation(&self) -> &Operation {
         &self.operation
     }
 }
 
-impl Ord for LookupKey {
+impl Ord for InternalKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Return ordering by the user provided keys if they are not equal
         if self.user_key.as_slice().ne(other.user_key.as_slice()) {
@@ -122,13 +124,13 @@ impl Ord for LookupKey {
     }
 }
 
-impl PartialOrd for LookupKey {
+impl PartialOrd for InternalKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for LookupKey {
+impl PartialEq for InternalKey {
     fn eq(&self, other: &Self) -> bool {
         // Operation is checked here but the equality relation should be implied by the check on
         // `sequence_number`. More clearly, a sequence number is assigned per operation so if the
@@ -141,10 +143,10 @@ impl PartialEq for LookupKey {
     }
 }
 
-impl TryFrom<Vec<u8>> for LookupKey {
+impl TryFrom<Vec<u8>> for InternalKey {
     type Error = RainDBError;
 
-    fn try_from(buf: Vec<u8>) -> RainDBResult<LookupKey> {
+    fn try_from(buf: Vec<u8>) -> RainDBResult<InternalKey> {
         let trailer_size: usize = 8 + 1;
         if buf.len() < trailer_size {
             return Err(RainDBError::KeyParsing(format!(
@@ -161,7 +163,7 @@ impl TryFrom<Vec<u8>> for LookupKey {
             u64::decode_fixed(&buf[trailer_start_index..sequence_number_end_index]);
         let operation: Operation = buf[buf.len() - 1].try_into()?;
 
-        Ok(LookupKey::new(
+        Ok(InternalKey::new(
             user_key.to_vec(),
             sequence_number,
             operation,
@@ -169,13 +171,13 @@ impl TryFrom<Vec<u8>> for LookupKey {
     }
 }
 
-impl From<&LookupKey> for Vec<u8> {
-    fn from(key: &LookupKey) -> Vec<u8> {
+impl From<&InternalKey> for Vec<u8> {
+    fn from(key: &InternalKey) -> Vec<u8> {
         key.as_bytes()
     }
 }
 
-impl RainDbKeyType for LookupKey {
+impl RainDbKeyType for InternalKey {
     fn as_bytes(&self) -> Vec<u8> {
         // We know the size of the buffer we need before hand.
         // size = size of user key + 8 bytes for the sequence number + 1 byte for the operation
@@ -188,8 +190,8 @@ impl RainDbKeyType for LookupKey {
     }
 }
 
-impl BinarySeparable for &LookupKey {
-    fn find_shortest_separator(smaller: &LookupKey, greater: &LookupKey) -> Vec<u8> {
+impl BinarySeparable for &InternalKey {
+    fn find_shortest_separator(smaller: &InternalKey, greater: &InternalKey) -> Vec<u8> {
         // Try to shorten the user part of the key first
         let user_separator = BinarySeparable::find_shortest_separator(
             smaller.get_user_key(),
@@ -204,7 +206,7 @@ impl BinarySeparable for &LookupKey {
             number. This is the maximum value of a `u64` because sequence numbers are sorted
             in reverse order.
             */
-            let full_separator = LookupKey::new_for_seeking(user_separator, MAX_SEQUENCE_NUMBER);
+            let full_separator = InternalKey::new_for_seeking(user_separator, MAX_SEQUENCE_NUMBER);
             assert!(smaller < &full_separator);
             assert!(&full_separator < greater);
 
@@ -225,7 +227,7 @@ impl BinarySeparable for &LookupKey {
             key. Turn it into a valid key by choosing the closest possible sequence number. This is
             the maximum value of a `u64` because sequence numbers are sorted in reverse order.
             */
-            let full_successor = LookupKey::new_for_seeking(user_successor, MAX_SEQUENCE_NUMBER);
+            let full_successor = InternalKey::new_for_seeking(user_successor, MAX_SEQUENCE_NUMBER);
             assert!(value < &full_successor);
 
             return full_successor.as_bytes();

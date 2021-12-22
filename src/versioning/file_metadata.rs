@@ -1,5 +1,5 @@
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
-use crate::key::LookupKey;
+use crate::key::InternalKey;
 
 /// Metadata about an SSTable file.
 #[derive(Debug)]
@@ -17,10 +17,10 @@ pub(crate) struct FileMetadata {
     file_size: u64,
 
     /// The smallest internal key served by the table.
-    smallest_key: Option<LookupKey>,
+    smallest_key: Option<InternalKey>,
 
     /// The largest internal key served by the table.
-    largest_key: Option<LookupKey>,
+    largest_key: Option<InternalKey>,
 }
 
 /// Crate-only methods
@@ -60,7 +60,7 @@ impl FileMetadata {
 
     Panics if the `smallest_key` field is `None`.
     */
-    pub(crate) fn smallest_key(&self) -> &LookupKey {
+    pub(crate) fn smallest_key(&self) -> &InternalKey {
         self.smallest_key.as_ref().unwrap()
     }
 
@@ -71,17 +71,17 @@ impl FileMetadata {
 
     Panics if the `largest_key` field is `None`.
     */
-    pub(crate) fn largest_key(&self) -> &LookupKey {
+    pub(crate) fn largest_key(&self) -> &InternalKey {
         self.largest_key.as_ref().unwrap()
     }
 
     /// Set the file metadata's smallest key.
-    pub(crate) fn set_smallest_key(&mut self, smallest_key: Option<LookupKey>) {
+    pub(crate) fn set_smallest_key(&mut self, smallest_key: Option<InternalKey>) {
         self.smallest_key = smallest_key;
     }
 
     /// Set the file metadata's largest key.
-    pub(crate) fn set_largest_key(&mut self, largest_key: Option<LookupKey>) {
+    pub(crate) fn set_largest_key(&mut self, largest_key: Option<InternalKey>) {
         self.largest_key = largest_key;
     }
 

@@ -19,7 +19,7 @@ use crate::config::{
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
 use crate::file_names::{DATA_DIR, WAL_DIR};
-use crate::key::LookupKey;
+use crate::key::InternalKey;
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::table_cache::TableCache;
 use crate::tables::TableBuilder;
@@ -644,13 +644,13 @@ impl DB {
     fn apply_batch_to_memtable(&self, batch: &Batch) -> RainDBResult<()> {
         let mut curr_sequence_num = batch.get_starting_seq_number().unwrap();
         for batch_element in batch.iter() {
-            let lookup_key = LookupKey::new(
+            let internal_key = InternalKey::new(
                 batch_element.get_key().to_vec(),
                 curr_sequence_num,
                 batch_element.get_operation(),
             );
             let value = batch_element.get_value().map_or(vec![], |val| val.to_vec());
-            self.memtable.insert(lookup_key, value);
+            self.memtable.insert(internal_key, value);
 
             curr_sequence_num += 1;
         }
@@ -687,7 +687,7 @@ impl DB {
     fn build_table_from_iterator(
         options: &DbOptions,
         metadata: &mut FileMetadata,
-        iterator: Box<dyn RainDbIterator<Key = LookupKey, Error = RainDBError>>,
+        iterator: Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>,
         table_cache: &Arc<TableCache>,
     ) -> RainDBResult<()> {
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
@@ -699,7 +699,7 @@ impl DB {
             metadata.set_smallest_key(Some(iterator.current().unwrap().0.clone()));
 
             // Iterate the memtable and add the entries to a table
-            let mut larget_key_seen: &LookupKey;
+            let mut larget_key_seen: &InternalKey;
             while let Some((key, value)) = iterator.current() {
                 larget_key_seen = key;
                 table_builder.add_entry(key, value);

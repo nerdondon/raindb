@@ -9,7 +9,7 @@ use crate::config::{
 use crate::file_names::FileNameHandler;
 use crate::filter_policy;
 use crate::fs::RandomAccessFile;
-use crate::key::{LookupKey, RainDbKeyType};
+use crate::key::{InternalKey, RainDbKeyType};
 use crate::utils::bytes::BinarySeparable;
 use crate::utils::crc;
 use crate::DbOptions;
@@ -59,10 +59,10 @@ pub(crate) struct TableBuilder<'t> {
     current_offset: u64,
 
     /// A block builder for data entries.
-    data_block_builder: BlockBuilder<'t, LookupKey>,
+    data_block_builder: BlockBuilder<'t, InternalKey>,
 
     /// A block builder for index entries.
-    index_block_builder: BlockBuilder<'t, LookupKey>,
+    index_block_builder: BlockBuilder<'t, InternalKey>,
 
     /// A builder for the table file's filter block.
     filter_block_builder: FilterBlockBuilder,
@@ -71,7 +71,7 @@ pub(crate) struct TableBuilder<'t> {
     num_entries: usize,
 
     /// The last key that was added to the table.
-    maybe_last_key_added: Option<LookupKey>,
+    maybe_last_key_added: Option<InternalKey>,
 }
 
 /// Public methods
@@ -121,7 +121,7 @@ impl<'t> TableBuilder<'t> {
     generall occurs from a pre-existing collection of data, there isn't much of a delay until the
     next entry is added or the entire table is finalized and flushed to disk.
     */
-    pub fn add_entry(&mut self, key: &'t LookupKey, value: &Vec<u8>) -> TableBuildResult<()> {
+    pub fn add_entry(&mut self, key: &'t InternalKey, value: &Vec<u8>) -> TableBuildResult<()> {
         // Panic if our invariants are not maintained. This is a bug.
         assert!(!self.file_closed, "{}", BuilderError::AlreadyClosed);
         assert!(
@@ -140,7 +140,7 @@ impl<'t> TableBuilder<'t> {
                 let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
                 let key_separator = BinarySeparable::find_shortest_separator(last_key_added, key);
                 self.index_block_builder.add_entry(
-                    &LookupKey::try_from(key_separator).unwrap(),
+                    &InternalKey::try_from(key_separator).unwrap(),
                     &Vec::from(&block_handle),
                 );
             }
@@ -173,7 +173,7 @@ impl<'t> TableBuilder<'t> {
             let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
             let key_separator = BinarySeparable::find_shortest_successor(last_key_added);
             self.index_block_builder.add_entry(
-                &LookupKey::try_from(key_separator).unwrap(),
+                &InternalKey::try_from(key_separator).unwrap(),
                 &Vec::from(&block_handle),
             );
         }

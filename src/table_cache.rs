@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::errors::RainDBResult;
 use crate::file_names::FileNameHandler;
 use crate::fs::FileSystem;
-use crate::key::LookupKey;
+use crate::key::InternalKey;
 use crate::tables::Table;
 use crate::utils::cache::{CacheEntry, LRUCache};
 use crate::DbOptions;
@@ -52,7 +52,7 @@ impl TableCache {
         &self,
         read_options: ReadOptions,
         file_number: u64,
-        key: &LookupKey,
+        key: &InternalKey,
     ) -> RainDBResult<Option<Vec<u8>>> {
         let table_cache_entry = self.find_table(file_number)?;
         let table = table_cache_entry.get_value();

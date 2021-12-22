@@ -4,12 +4,12 @@ use std::convert::TryFrom;
 
 use crate::config::SIZE_OF_U32_BYTES;
 use crate::iterator::RainDbIterator;
-use crate::key::{LookupKey, RainDbKeyType};
+use crate::key::{InternalKey, RainDbKeyType};
 
 use super::errors::{ReadError, TableResult};
 
-/// A block where the keys of entries are RainDB lookup keys.
-pub type DataBlockReader = BlockReader<LookupKey>;
+/// A block where the keys of entries are RainDB internal keys.
+pub type DataBlockReader = BlockReader<InternalKey>;
 
 /// A block where the keys of entries are metaindex keys.
 pub(crate) type MetaIndexBlockReader = BlockReader<MetaIndexKey>;
