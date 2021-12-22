@@ -50,7 +50,7 @@ pub struct DbOptions {
 
     **This defaults to 2 MiB.**
     */
-    max_file_size: usize,
+    max_file_size: u64,
 
     /**
     A wrapper around a particular file system to use.
@@ -90,8 +90,8 @@ impl DbOptions {
     }
 
     /// Get the databases maximum table file size.
-    pub fn max_file_size(&self) -> &usize {
-        &self.max_file_size
+    pub fn max_file_size(&self) -> u64 {
+        self.max_file_size
     }
 
     /// Get a strong reference to the file system provider.
