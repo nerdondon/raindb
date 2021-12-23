@@ -172,6 +172,9 @@ pub struct DB {
     finished.
     */
     background_work_finished_signal: Arc<Condvar>,
+
+    /// Accumulator for compaction operation statistics/metrics per level.
+    compaction_stats: [LevelCompactionStats; MAX_NUM_LEVELS],
 }
 
 /// Public methods
@@ -793,14 +796,27 @@ impl DB {
                 .read()
                 .element
                 .pick_level_for_memtable_output(smallest_user_key, largest_user_key);
-            todo!("i went with a DFS strat for impl here")
+            // TODO: Just clone the file metadata and pass that in. make a From method for the upcoming Compaction metadata struct to file metadata so the method is reusable.
+            change_manifest.add_file(
+                file_level,
+                file_metadata.file_number(),
+                file_metadata.get_file_size(),
+                file_metadata.smallest_key().clone()..file_metadata.largest_key().clone(),
+            );
         }
+        log::info!(
+            "Level-0 table file {} will be placed at level {}.",
+            file_number,
+            file_level
+        );
 
         let stats = LevelCompactionStats {
             compaction_duration: compaction_instant.elapsed(),
             bytes_written: file_metadata.get_file_size(),
             ..LevelCompactionStats::default()
         };
+        db_fields_guard.compaction_stats[file_level] += stats;
+
         Ok(())
     }
 }
