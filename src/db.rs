@@ -32,14 +32,20 @@ use crate::writers::Writer;
 use crate::{DbOptions, RainDbIterator, ReadOptions, WriteOptions};
 
 /**
-Database state property bag.
+Database state property bag that can be shared via closures and sent to other threds.
 
 The state stored in here is intended to be passed around to objects and closures that cannot
 take a direct dependency on the main [`DB`] object e.g. the compaction worker thread.
 */
+#[derive(Clone)]
 pub(crate) struct PortableDatabaseState {
-    /// Options for configuring the operation of the database.
-    options: DbOptions,
+    /**
+    Clone of options for configuring the operation of the database.
+
+    This disconnects the options from the data but this should be okay since options is readonly
+    after initialization.
+    */
+    pub(crate) options: DbOptions,
 
     /**
     Database state that require a lock to be held before being read or written to.
@@ -48,26 +54,26 @@ pub(crate) struct PortableDatabaseState {
 
     [`DB`]: crate::db::DB
     */
-    guarded_db_fields: Arc<Mutex<GuardedDbFields>>,
+    pub(crate) guarded_db_fields: Arc<Mutex<GuardedDbFields>>,
 
     /// A cache of table files.
-    table_cache: Arc<TableCache>,
+    pub(crate) table_cache: Arc<TableCache>,
 
     /// Field indicating if the database is shutting down.
-    is_shutting_down: Arc<AtomicBool>,
+    pub(crate) is_shutting_down: Arc<AtomicBool>,
 
     /**
     Field indicating if there is an immutable memtable.
 
     An memtable is made immutable when it is undergoing the compaction process.
     */
-    has_immutable_memtable: Arc<AtomicBool>,
+    pub(crate) has_immutable_memtable: Arc<AtomicBool>,
 
     /**
     A condition variable used to notify parked threads that background work (e.g. compaction) has
     finished.
     */
-    background_work_finished_signal: Arc<Condvar>,
+    pub(crate) background_work_finished_signal: Arc<Condvar>,
 }
 
 /// Struct holding database fields that need a lock before accessing.
@@ -77,7 +83,7 @@ pub(crate) struct GuardedDbFields {
 
     This field is synonomous with the `leveldb::DBImpl::logfile_number_` field.
     */
-    curr_wal_file_number: u64,
+    pub(crate) curr_wal_file_number: u64,
 
     /// A background compaction was scheduled.
     pub(crate) background_compaction_scheduled: bool,
@@ -88,6 +94,10 @@ pub(crate) struct GuardedDbFields {
 
     This error is sticky and essentially stops all future writes to the database when it is set. An
     example of when this may occur, is when a write to the write-ahead log fails.
+
+    # Legacy
+
+    This is synonomous to `DBImpl::bg_error_` in LevelDB.
     */
     pub(crate) maybe_bad_database_state: Option<RainDBError>,
 
@@ -252,6 +262,18 @@ impl DB {
 
 /// Private methods
 impl DB {
+    /// Generate portable database state.
+    fn generate_portable_state(&self) -> PortableDatabaseState {
+        PortableDatabaseState {
+            options: self.options.clone(),
+            table_cache: Arc::clone(&self.table_cache),
+            guarded_db_fields: Arc::clone(&self.guarded_fields),
+            is_shutting_down: Arc::clone(&self.is_shutting_down),
+            has_immutable_memtable: Arc::clone(&self.has_immutable_memtable),
+            background_work_finished_signal: Arc::clone(&self.background_work_finished_signal),
+        }
+    }
+
     /**
     Apply changes contained in the write batch. The requesting thread is queued if there are
     multiple write requests.
@@ -342,7 +364,11 @@ impl DB {
                 // There was an error writing the write-ahead log and the log itself may
                 // even be in a bad state that could show up if the database is re-opened.
                 // So we force the database into a mode where all future write fail.
-                self.set_bad_database_state(&mut fields_mutex_guard, write_result.unwrap_err());
+                DB::set_bad_database_state(
+                    &self.generate_portable_state(),
+                    &mut fields_mutex_guard,
+                    write_result.unwrap_err(),
+                );
             }
 
             fields_mutex_guard
@@ -661,20 +687,6 @@ impl DB {
         Ok(())
     }
 
-    /// Set field indicating that the database is in bad state and should not be written to.
-    fn set_bad_database_state(
-        &self,
-        mutex_guard: &mut MutexGuard<GuardedDbFields>,
-        catastrophic_error: RainDBError,
-    ) {
-        if mutex_guard.maybe_bad_database_state.is_some() {
-            return;
-        }
-
-        mutex_guard.maybe_bad_database_state = Some(catastrophic_error);
-        self.background_work_finished_signal.notify_all();
-    }
-
     /**
     Build a table file from the contents of a [`RainDbIterator`].
 
@@ -749,6 +761,26 @@ impl DB {
 
 /// Crate-only methods
 impl DB {
+    /**
+    Set field indicating that the database is in bad state and should not be written to.
+
+    # Legacy
+
+    This is synonomous to `DBImpl::RecordBackgroundError` in LevelDB.
+    */
+    pub(crate) fn set_bad_database_state(
+        db_state: &PortableDatabaseState,
+        mutex_guard: &mut MutexGuard<GuardedDbFields>,
+        catastrophic_error: RainDBError,
+    ) {
+        if mutex_guard.maybe_bad_database_state.is_some() {
+            return;
+        }
+
+        mutex_guard.maybe_bad_database_state = Some(catastrophic_error);
+        db_state.background_work_finished_signal.notify_all();
+    }
+
     /// Convert the immutable memtable to a table file.
     pub(crate) fn write_level0_table(
         db_state: &PortableDatabaseState,
