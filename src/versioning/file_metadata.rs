@@ -1,8 +1,11 @@
+use std::cmp::Ordering;
+
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
 use crate::key::InternalKey;
+use crate::utils::comparator::Comparator;
 
 /// Metadata about an SSTable file.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct FileMetadata {
     /**
     The number of multi-level seeks through this file that are allowed before a compaction is
@@ -88,5 +91,24 @@ impl FileMetadata {
     /// Get the file number.
     pub(crate) fn file_number(&self) -> u64 {
         self.file_number
+    }
+}
+
+/// Comparator that orders [`FileMetadata`] instances by their `smallest_key` field.
+struct FileMetadataBySmallestKey {}
+
+impl Comparator<FileMetadata> for FileMetadataBySmallestKey {
+    fn compare(a: FileMetadata, b: FileMetadata) -> Ordering {
+        let a_smallest_key = a.smallest_key();
+        let b_smallest_key = b.smallest_key();
+        let order = a_smallest_key.cmp(b_smallest_key);
+
+        match &order {
+            Ordering::Greater | Ordering::Less => order,
+            Ordering::Equal => {
+                // Break ties by file number
+                return a.file_number().cmp(&b.file_number());
+            }
+        }
     }
 }
