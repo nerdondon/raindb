@@ -1,3 +1,8 @@
+/*!
+This module contains abstractions used in compaction operations. Core to this is the
+[`CompactionWorker`] worker thread.
+*/
+
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::ops::AddAssign;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,6 +12,7 @@ use std::time::Duration;
 use std::{fmt, io};
 
 use crate::db::{GuardedDbFields, PortableDatabaseState};
+use crate::errors::RainDBError;
 use crate::key::InternalKey;
 use crate::table_cache::TableCache;
 use crate::versioning::VersionChangeManifest;
@@ -162,7 +168,7 @@ impl CompactionWorker {
 
         // The previous compaction may have created too many files in a level, so check and
         // schedule a compaction if needed
-        // CompactionWorker::maybe_schedule_compaction - share with db.rs
+        // TODO: CompactionWorker::maybe_schedule_compaction - share with db.rs
         background_work_finished_signal.notify_all();
     }
 
@@ -187,6 +193,8 @@ impl CompactionWorker {
     /**
     Performs a compaction routine on the immutable memtable.
 
+    # Panics
+
     An immutable memtable must exist if this method is called.
     */
     fn compact_memtable(
@@ -195,9 +203,8 @@ impl CompactionWorker {
     ) {
         assert!(db_fields_guard.maybe_immutable_memtable.is_some());
 
-        // Save the memtable to a new table file
+        log::info!("Compacting the immutable memtable to a table file.");
         let change_manifest = VersionChangeManifest::default();
-        // Apply the changes to the current version
         let base_version = db_fields_guard.version_set.get_current_version().unwrap();
         DB::write_level0_table(
             db_state,
@@ -205,6 +212,35 @@ impl CompactionWorker {
             db_fields_guard.maybe_immutable_memtable.as_ref().unwrap(),
             base_version,
             &mut change_manifest,
+        );
+
+        // Do periodic check for shutdown state before proceeding to the next major compaction
+        // operation
+        if db_state.is_shutting_down.load(Ordering::Acquire) {
+            log::error!(
+                "Compaction thread discovered that the database was shutting down. Halting \
+                compaction work. Recording background error to stop other writes from occurring."
+            );
+
+            DB::set_bad_database_state(
+                db_state,
+                &mut db_fields_guard,
+                RainDBError::Compaction(CompactionWorkerError::UnexpectedState(
+                    "Detected database shutdown signal while compacting the memtable.".to_string(),
+                )),
+            )
+        }
+
+        // The memtable was converted to a table file so the associated WAL is also obsolete.
+        // Remove references via the change manifest.
+        change_manifest.prev_wal_file_number = Some(0);
+        // The `curr_wal_file_number` field was optimistically updated prior to compaction
+        // (e.g. see `DB::make_room_for_write`)
+        change_manifest.wal_file_number = Some(db_fields_guard.curr_wal_file_number);
+
+        log::info!(
+            "Compaction thread is applying changes memtable compaction change to the current \
+            version."
         );
     }
 }
@@ -217,6 +253,9 @@ pub(crate) type CompactionWorkerResult<T> = Result<T, CompactionWorkerError>;
 pub enum CompactionWorkerError {
     /// Variant for IO errors encountered during worker operations.
     IO(io::Error),
+
+    /// Variant for halting compactions due to unexpected state.
+    UnexpectedState(String),
 }
 
 impl std::error::Error for CompactionWorkerError {}
@@ -225,6 +264,7 @@ impl fmt::Display for CompactionWorkerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompactionWorkerError::IO(base_err) => write!(f, "{}", base_err),
+            CompactionWorkerError::UnexpectedState(reason) => write!(f, "{}", reason),
         }
     }
 }
