@@ -17,9 +17,19 @@ pub(crate) const SIZE_OF_FOOTER_BYTES: usize = 48;
 /**
 A magic number to provide padding.
 
+The magic number was picked summing the [`u8`] representation of each charcter in the string
+"batmann and robin".
+*/
+#[cfg(not(feature = "strict"))]
+const TABLE_MAGIC_NUMBER: u64 = 1646;
+
+/**
+A magic number to provide padding.
+
 The magic number was picked by running `echo http://code.google.com/p/leveldb/ | sha1sum` and
 taking the leading 64 bits.
 */
+#[cfg(feature = "strict")]
 const TABLE_MAGIC_NUMBER: u64 = 0xdb4775248b80fb57;
 
 /**

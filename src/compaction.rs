@@ -18,8 +18,17 @@ use crate::table_cache::TableCache;
 use crate::versioning::VersionChangeManifest;
 use crate::{DbOptions, DB};
 
-/// Name of the compaction thread.
+/**
+Name of the compaction thread.
+
+Tumtum is the name of a friends dog.
+*/
+#[cfg(not(feature = "strict"))]
 const COMPACTION_THREAD_NAME: &str = "raindb-tumtum";
+
+/// Name of the compaction thread.
+#[cfg(feature = "strict")]
+const COMPACTION_THREAD_NAME: &str = "raindb-compact";
 
 /// The kinds of tasks that the compaction worker can schedule.
 #[derive(Debug)]
