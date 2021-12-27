@@ -1,12 +1,18 @@
 use std::sync::Arc;
 
+use parking_lot::MutexGuard;
+
+use crate::config::MAX_NUM_LEVELS;
+use crate::db::GuardedDbFields;
 use crate::fs::FileSystem;
+use crate::key::InternalKey;
 use crate::table_cache::TableCache;
 use crate::utils::linked_list::{LinkedList, SharedNode};
 use crate::DbOptions;
 
 use super::errors::{ReadError, ReadResult};
-use super::version::Version;
+use super::version::{Version, VersionBuilder};
+use super::VersionChangeManifest;
 
 /// Manages the versions of the database.
 #[derive(Debug)]
@@ -28,7 +34,11 @@ pub(crate) struct VersionSet {
     The most recently used file number.
 
     This is a counter that is incremented as new files are crated. File numbers can be re-used when
-    a write-ahead log and memtable pair are converte to a table file.
+    a write-ahead log and memtable pair are converted to a table file.
+
+    # Legacy
+
+    This is analogous to LevelDB's `VersionSet::next_file_number_` field.
     */
     curr_file_number: u64,
 
@@ -55,6 +65,9 @@ pub(crate) struct VersionSet {
 
     /// A list of versions in the version set where the current version is at the tail of the list.
     versions: LinkedList<Version>,
+
+    /// Per-level keys at which the next compaction at that level should start.
+    compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS],
 }
 
 /// Public methods
@@ -75,11 +88,12 @@ impl VersionSet {
             curr_wal_number: 0,
             prev_wal_number: None,
             versions,
+            compaction_pointers: [None; MAX_NUM_LEVELS],
         }
     }
 
     /// Return the number of table files at the specified level in the current version.
-    pub fn num_files_at_level(&self, level: u64) -> ReadResult<usize> {
+    pub fn num_files_at_level(&self, level: usize) -> ReadResult<usize> {
         if self.get_current_version().is_none() {
             // This should never happen because a version is core to the operation of RainDB.
             return Err(ReadError::NoVersionsFound);
@@ -176,16 +190,46 @@ impl VersionSet {
     pub fn set_prev_sequence_number(&mut self, sequence_number: u64) {
         self.prev_sequence_number = sequence_number;
     }
-}
 
-/// Crate-only methods
-impl VersionSet {
     // Get a reference to the current version.
-    pub(crate) fn get_current_version(&self) -> Option<SharedNode<Version>> {
+    pub fn get_current_version(&self) -> Option<SharedNode<Version>> {
         self.versions.tail()
     }
 
-    pub(crate) fn finalize(&self, version: Version) {
-        todo!("working on it!");
+    /**
+    Persist the changes in the change manifest to the on-disk manifest file and apply the
+    changes by creating a new version in the version set.
+
+    # Panics
+
+    Panics if the WAL file number in the change manifest is less than the current WAL file number.
+    File numbers can be re-used but otherwise they must be increasing.
+    */
+    pub fn log_and_apply(
+        &mut self,
+        change_manifest: VersionChangeManifest,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+    ) {
+        if change_manifest.wal_file_number.is_some() {
+            let wal_file_number = *change_manifest.wal_file_number.as_ref().unwrap();
+            assert!(wal_file_number >= self.curr_wal_number);
+            // The new WAL file number must have been one that was handed out by the version set
+            // via `VersionSet::get_new_file_number`
+            assert!(wal_file_number < self.curr_wal_number + 1);
+        } else {
+            // The WAL file number may not be set when performing a recovery operation
+            change_manifest.wal_file_number = Some(self.curr_wal_number);
+        }
+
+        if change_manifest.prev_wal_file_number.is_none() {
+            change_manifest.prev_wal_file_number = self.prev_wal_number.clone();
+        }
+
+        change_manifest.curr_file_number = Some(self.curr_file_number);
+        change_manifest.prev_sequence_number = Some(self.prev_sequence_number);
+        let current_version = self.get_current_version().unwrap();
+        let version_builder = VersionBuilder::new(current_version);
+        version_builder.accumulate_changes(&change_manifest);
+        let new_version = version_builder.apply_changes(&mut self.compaction_pointers);
     }
 }

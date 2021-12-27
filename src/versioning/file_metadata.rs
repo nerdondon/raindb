@@ -92,13 +92,18 @@ impl FileMetadata {
     pub(crate) fn file_number(&self) -> u64 {
         self.file_number
     }
+
+    /// Decrement the number of allowed seeks.
+    pub(crate) fn decrement_allowed_seeks(&mut self) {
+        self.allowed_seeks = self.allowed_seeks.map(|seeks| seeks - 1);
+    }
 }
 
 /// Comparator that orders [`FileMetadata`] instances by their `smallest_key` field.
-struct FileMetadataBySmallestKey {}
+pub(crate) struct FileMetadataBySmallestKey {}
 
-impl Comparator<FileMetadata> for FileMetadataBySmallestKey {
-    fn compare(a: FileMetadata, b: FileMetadata) -> Ordering {
+impl Comparator<&FileMetadata> for FileMetadataBySmallestKey {
+    fn compare(a: &FileMetadata, b: &FileMetadata) -> Ordering {
         let a_smallest_key = a.smallest_key();
         let b_smallest_key = b.smallest_key();
         let order = a_smallest_key.cmp(b_smallest_key);

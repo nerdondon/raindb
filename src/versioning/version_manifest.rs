@@ -1,8 +1,27 @@
+use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::key::InternalKey;
 
 use super::file_metadata::FileMetadata;
+
+/// Represents a file to be deleted at a specified level.
+#[derive(Hash)]
+pub(crate) struct DeletedFile {
+    /// The level to delete the file from.
+    level: usize,
+
+    /// The file number of the file to delete.
+    file_number: u64,
+}
+
+/// Crate-only methods
+impl DeletedFile {
+    /// Create a new instance of [`DeletedFile`].
+    pub(crate) fn new(level: usize, file_number: u64) -> Self {
+        Self { level, file_number }
+    }
+}
 
 /**
 A manifest of changes and change information to be applied to a [`crate::versioning::VersionSet`].
@@ -17,22 +36,47 @@ pub(crate) struct VersionChangeManifest {
     /// The file number for the write-ahead log for the new memtable.
     pub(crate) wal_file_number: Option<u64>,
 
-    /// The file number for the write-ahead log for the memtable that is currently being compacted.
+    /**
+    The file number for the write-ahead log backing the memtable that is currently being
+    compacted.
+    */
     pub(crate) prev_wal_file_number: Option<u64>,
 
-    /// The last sequence number that is used in the changes
-    pub(crate) last_sequence_number: Option<u64>,
+    /**
+    The last sequence number that was used in the changes.
+
+    This is snapshotted from the version set when changes are being applied.
+    */
+    pub(crate) prev_sequence_number: Option<u64>,
 
     /**
-    The number to use when creating a new file.
+    The most recently used file number.
 
-    This information snapshotted from the version set for persistence to disk and is primarily used
-    for recovery operations.
+    This information is snapshotted from the version set for persistence to disk and is primarily
+    used for recovery operations.
+
+    # Legacy
+
+    This is analogous to LevelDB's `VersionEdit::next_file_number_` field.
     */
-    pub(crate) next_file_number: Option<u64>,
+    pub(crate) curr_file_number: Option<u64>,
 
     /// New files to add to the next version with the level the file it should be added at.
     pub(crate) new_files: Vec<(usize, FileMetadata)>,
+
+    /**
+    Deleted files per level that will be removed in the next version.
+
+    Deleted files are marked by a tuple of
+    */
+    pub(crate) deleted_files: HashSet<DeletedFile>,
+
+    /**
+    Keys at which the next compaction should start when compacting the associated level.
+
+    Compaction pointers are stored as a tuple of (level, key).
+    */
+    pub(crate) compaction_pointers: Vec<(usize, InternalKey)>,
 }
 
 /// Crate-only methods
@@ -62,6 +106,11 @@ impl VersionChangeManifest {
 
         self.new_files.push((level, metadata));
     }
+
+    /// Add a compaction pointer to the change manifest.
+    pub(crate) fn add_compaction_pointer(&mut self, level: usize, key: InternalKey) {
+        self.compaction_pointers.push((level, key));
+    }
 }
 
 /// Create an empty [`VersionChangeManifest`].
@@ -70,9 +119,11 @@ impl Default for VersionChangeManifest {
         Self {
             wal_file_number: None,
             prev_wal_file_number: None,
-            last_sequence_number: None,
-            next_file_number: None,
+            prev_sequence_number: None,
+            curr_file_number: None,
             new_files: vec![],
+            deleted_files: HashSet::new(),
+            compaction_pointers: vec![],
         }
     }
 }
