@@ -1,6 +1,5 @@
 /*!
-The write-ahead log (WAL) persists writes to disk to enable recovery of in-memory information in
-the event of a crash.
+The log file format is used by both write-ahead logs and manifest files (a.k.a. descriptor logs).
 
 The log file contents are series of 32 KiB blocks.
 
@@ -18,12 +17,12 @@ data in subsequent blocks.
 
 use integer_encoding::FixedInt;
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 use std::io::{self, ErrorKind, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::errors::{WALIOError, WALSerializationErrorKind};
-use crate::file_names::FileNameHandler;
+use crate::errors::{LogIOError, LogSerializationErrorKind};
 use crate::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 /**
@@ -34,13 +33,14 @@ This is 3 bytes.
 const HEADER_LENGTH_BYTES: usize = 2 + 1;
 
 /**
-The size of blocks in the write-ahead log.
+The size of blocks in the log file format.
 
 This is set at 32 KiB.
 */
 const BLOCK_SIZE_BYTES: usize = 32 * 1024;
 
-type WALIOResult<T> = Result<T, WALIOError>;
+/// Alias for a [`Result`] that wraps a [`LogIOError`].
+type LogIOResult<T> = Result<T, LogIOError>;
 
 /**
 Block record types denote whether the data contained in the block is split across multiple
@@ -63,16 +63,16 @@ pub(crate) enum BlockType {
 }
 
 impl TryFrom<u8> for BlockType {
-    type Error = WALIOError;
+    type Error = LogIOError;
 
-    fn try_from(value: u8) -> WALIOResult<BlockType> {
+    fn try_from(value: u8) -> LogIOResult<BlockType> {
         let operation = match value {
             0 => BlockType::Full,
             1 => BlockType::First,
             2 => BlockType::Middle,
             3 => BlockType::Last,
             _ => {
-                return Err(WALIOError::Seralization(WALSerializationErrorKind::Other(
+                return Err(LogIOError::Seralization(LogSerializationErrorKind::Other(
                     format!(
                         "There was an problem parsing the block type. The value received was {}",
                         value
@@ -123,15 +123,17 @@ impl From<&BlockRecord> for Vec<u8> {
 }
 
 impl TryFrom<&Vec<u8>> for BlockRecord {
-    type Error = WALIOError;
+    type Error = LogIOError;
 
-    fn try_from(buf: &Vec<u8>) -> WALIOResult<BlockRecord> {
+    fn try_from(buf: &Vec<u8>) -> LogIOResult<BlockRecord> {
         if buf.len() < HEADER_LENGTH_BYTES {
             let error_msg = format!(
-                "Failed to deserialize the provided buffer to a WAL record. The buffer was expected to be at least the size of the header ({} bytes) but was {}.",
-                HEADER_LENGTH_BYTES, buf.len()
+                "Failed to deserialize the provided buffer to a log block record. The buffer was \
+                expected to be at least the size of the header ({} bytes) but was {}.",
+                HEADER_LENGTH_BYTES,
+                buf.len()
             );
-            return Err(WALIOError::Seralization(WALSerializationErrorKind::Other(
+            return Err(LogIOError::Seralization(LogSerializationErrorKind::Other(
                 error_msg,
             )));
         }
@@ -150,16 +152,16 @@ impl TryFrom<&Vec<u8>> for BlockRecord {
     }
 }
 
-/** Handles all write activity to the write-ahead log. */
-pub(crate) struct WALWriter {
+/** Handles all write activity to a log file. */
+pub(crate) struct LogWriter {
     /** A wrapper around a particular file system to use. */
     fs: Arc<Box<dyn FileSystem>>,
 
-    /** The underlying file representing the WAL.  */
-    wal_file: Box<dyn RandomAccessFile>,
+    /// The path to the log file.
+    log_file_path: PathBuf,
 
-    /** Handler for file names used by the database. */
-    file_name_handler: FileNameHandler,
+    /** The underlying file representing the log.  */
+    log_file: Box<dyn RandomAccessFile>,
 
     /**
     The byte offset within the file.
@@ -170,43 +172,35 @@ pub(crate) struct WALWriter {
     current_cursor_position: usize,
 }
 
-/// Public methods.
-impl WALWriter {
-    /**
-    Construct a new `WALWriter`.
-
-    * `fs`- The wrapped file system to use for I/O.
-    * `db_path` - The absolute path where the database files reside.
-    * `file_number` - The file number of the write-ahead log.
-    */
+/// Public methods
+impl LogWriter {
+    /// Construct a new [`LogWriter`].
     pub fn new<P: AsRef<Path>>(
         fs: Arc<Box<dyn FileSystem>>,
-        db_path: P,
-        file_number: u64,
-    ) -> WALIOResult<Self> {
-        let file_name_handler =
-            FileNameHandler::new(db_path.as_ref().to_str().unwrap().to_string());
-        let wal_path = file_name_handler.get_wal_path(file_number);
-
-        log::info!("Creating WAL file at {}", wal_path.as_path().display());
-        let wal_file = fs.create_file(wal_path.as_path())?;
+        log_file_path: P,
+    ) -> LogIOResult<Self> {
+        log::info!(
+            "Creating a log file at {}",
+            log_file_path.as_ref().to_string_lossy()
+        );
+        let log_file = fs.create_file(log_file_path.as_ref())?;
 
         let mut block_offset = 0;
-        let wal_file_size = fs.get_file_size(&wal_path)? as usize;
-        if wal_file_size > 0 {
-            block_offset = wal_file_size % BLOCK_SIZE_BYTES;
+        let log_file_size = fs.get_file_size(log_file_path.as_ref())? as usize;
+        if log_file_size > 0 {
+            block_offset = log_file_size % BLOCK_SIZE_BYTES;
         }
 
-        Ok(WALWriter {
+        Ok(LogWriter {
             fs,
-            file_name_handler,
-            wal_file,
+            log_file_path: log_file_path.as_ref().to_path_buf(),
+            log_file,
             current_cursor_position: block_offset,
         })
     }
 
     /// Append `data` to the log.
-    pub fn append(&mut self, data: &[u8]) -> WALIOResult<()> {
+    pub fn append(&mut self, data: &[u8]) -> LogIOResult<()> {
         let mut data_to_write = &data[..];
         let mut is_first_data_chunk = true;
 
@@ -215,10 +209,11 @@ impl WALWriter {
 
             if block_available_space < HEADER_LENGTH_BYTES {
                 log::debug!(
-                    "There is not enough remaining space in the current block for the header. \
-                    Filling it with zeroes."
+                    "Log file {:?}. There is not enough remaining space in the current block \
+                    for the header. Filling it with zeroes.",
+                    self.log_file_path
                 );
-                self.wal_file
+                self.log_file
                     .write_all(&vec![0, 0, 0][0..block_available_space])?;
                 self.current_cursor_position = 0;
                 block_available_space = BLOCK_SIZE_BYTES;
@@ -252,10 +247,10 @@ impl WALWriter {
     }
 }
 
-/// Private methods.
-impl WALWriter {
+/// Private methods
+impl LogWriter {
     /// Write the block out to the underlying medium.
-    fn emit_block(&mut self, block_type: BlockType, data_chunk: &[u8]) -> WALIOResult<()> {
+    fn emit_block(&mut self, block_type: BlockType, data_chunk: &[u8]) -> LogIOResult<()> {
         // Convert `usize` to `u16` so that it fits in our header format.
         let data_length = u16::try_from(data_chunk.len())?;
         let block = BlockRecord {
@@ -265,34 +260,45 @@ impl WALWriter {
         };
 
         log::info!(
-            "Writing new record to WAL with length {} and block type {:?}.",
+            "Writing new record to log file at {:?} with length {} and block type {:?}.",
+            self.log_file_path,
             data_length,
             block.block_type
         );
-        self.wal_file
+        self.log_file
             .write_all(Vec::<u8>::from(&block).as_slice())?;
-        self.wal_file.flush()?;
+        self.log_file.flush()?;
 
         let bytes_written = HEADER_LENGTH_BYTES + data_chunk.len();
         self.current_cursor_position += bytes_written;
-        log::info!("Wrote {} bytes to the WAL.", bytes_written);
+        log::info!("Wrote {} bytes to the log file.", bytes_written);
         Ok(())
     }
 }
 
-/** Handles all read activity to the write-ahead log. */
-pub(crate) struct WALReader {
+impl fmt::Debug for LogWriter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LogWriter")
+            .field("log_file_path", &self.log_file_path)
+            .finish()
+    }
+}
+
+/** Handles all read activity to a log file. */
+pub(crate) struct LogReader {
     /** A wrapper around a particular file system to use. */
     fs: Arc<Box<dyn FileSystem>>,
 
-    /** The underlying file representing the WAL.  */
-    wal_file: Box<dyn ReadonlyRandomAccessFile>,
+    /** The underlying file representing the log. */
+    log_file: Box<dyn ReadonlyRandomAccessFile>,
 
-    /** Handler for databases filenames. */
-    file_name_handler: FileNameHandler,
+    /// The path to the log file.
+    log_file_path: PathBuf,
+
+    /** The underlying file representing the log.  */
 
     /**
-    An initial offset to start reading the WAL from.
+    An initial offset to start reading the log file from.
 
     This can be a byte offset and is not necessarily aligned the start of a block.
     */
@@ -306,33 +312,28 @@ pub(crate) struct WALReader {
     current_cursor_position: usize,
 }
 
-/// Public methods.
-impl WALReader {
+/// Public methods
+impl LogReader {
     /**
-    Construct a new `WALReader`.
+    Construct a new [`LogReader`].
 
     * `fs`- The wrapped file system to use for I/O.
     * `db_path` - The absolute path where the database files reside.
-    * `file_number` - The file number of the write-ahead log.
-    * `initial_block_offset` - An initial offset to start reading the WAL from.
+    * `file_number` - The file number of the log.
+    * `initial_block_offset` - An initial offset to start reading the log file from.
     */
     pub fn new<P: AsRef<Path>>(
         fs: Arc<Box<dyn FileSystem>>,
-        db_path: P,
-        file_number: u64,
+        log_file_path: P,
         initial_block_offset: usize,
-    ) -> WALIOResult<Self> {
-        let file_name_handler =
-            FileNameHandler::new(db_path.as_ref().to_str().unwrap().to_string());
-        let wal_path = file_name_handler.get_wal_path(file_number);
-
-        log::info!("Reading the WAL file at {}", wal_path.as_path().display());
-        let wal_file = fs.open_file(wal_path.as_path())?;
+    ) -> LogIOResult<Self> {
+        log::info!("Reading the log file at {:?}", log_file_path.as_ref());
+        let log_file = fs.open_file(log_file_path.as_ref())?;
 
         let reader = Self {
             fs,
-            wal_file,
-            file_name_handler,
+            log_file,
+            log_file_path: log_file_path.as_ref().to_path_buf(),
             initial_offset: initial_block_offset,
             current_cursor_position: initial_block_offset,
         };
@@ -340,10 +341,10 @@ impl WALReader {
         Ok(reader)
     }
 
-    /// Read a record from the WAL.
-    pub fn read_record(&mut self) -> WALIOResult<Vec<u8>> {
+    /// Read a record from the log file.
+    pub fn read_record(&mut self) -> LogIOResult<Vec<u8>> {
         self.current_cursor_position += self.seek_to_initial_block()? as usize;
-        // A buffer consolidating all of the fragments retrieved from the WAL file.
+        // A buffer consolidating all of the fragments retrieved from the log file.
         let mut data_buffer: Vec<u8> = vec![];
 
         loop {
@@ -365,7 +366,7 @@ impl WALReader {
 }
 
 /// Private methods.
-impl WALReader {
+impl LogReader {
     /**
     Seek to the first block on or before the initial offset that was provided.
 
@@ -374,7 +375,7 @@ impl WALReader {
 
     Returns the number of bytes the cursor was moved.
     */
-    fn seek_to_initial_block(&mut self) -> WALIOResult<u64> {
+    fn seek_to_initial_block(&mut self) -> LogIOResult<u64> {
         let offset_in_block = self.initial_offset % BLOCK_SIZE_BYTES;
         let mut block_start_position = self.initial_offset - offset_in_block;
 
@@ -386,7 +387,7 @@ impl WALReader {
         // Move the file's underlying cursor to the start of the first block
         if block_start_position > 0 {
             return Ok(self
-                .wal_file
+                .log_file
                 .seek(SeekFrom::Start(block_start_position as u64))?);
         }
 
@@ -398,14 +399,14 @@ impl WALReader {
 
     Returns the parsed [`BlockRecord`](BlockRecord).
     */
-    fn read_physical_record(&mut self) -> WALIOResult<BlockRecord> {
+    fn read_physical_record(&mut self) -> LogIOResult<BlockRecord> {
         // Read the header
         let mut header_buffer = [0; 3];
-        let header_bytes_read = self.wal_file.read(&mut header_buffer)?;
+        let header_bytes_read = self.log_file.read(&mut header_buffer)?;
         if header_bytes_read < HEADER_LENGTH_BYTES {
             // The end of the file was reached before we were able to read a full header. This
             // can occur if the log writer died in the middle of writing the record.
-            return Err(WALIOError::IO(io::Error::new(
+            return Err(LogIOError::IO(io::Error::new(
                 ErrorKind::UnexpectedEof,
                 "Unexpectedly reached the end of the file while attempting to read a header."
                     .to_string(),
@@ -416,12 +417,12 @@ impl WALReader {
 
         // Read the payload
         let mut data_buffer = Vec::with_capacity(data_length as usize);
-        let data_bytes_read = self.wal_file.read(&mut data_buffer)?;
+        let data_bytes_read = self.log_file.read(&mut data_buffer)?;
 
         if data_bytes_read < (data_length as usize) {
             // The end of the file was reached before we were able to read a full data chunk. This
             // can occur if the log writer died in the middle of writing the record.
-            return Err(WALIOError::IO(io::Error::new(
+            return Err(LogIOError::IO(io::Error::new(
                 ErrorKind::UnexpectedEof,
                 "Unexpectedly reached the end of the file while attempting to read the data chunk."
                     .to_string(),
@@ -447,6 +448,6 @@ impl WALReader {
 
     /// Log bytes dropped because corruption was detected.
     fn log_corruption(num_bytes_corrupted: u64) {
-        WALReader::log_drop(num_bytes_corrupted, "Detected corruption.".to_owned())
+        LogReader::log_drop(num_bytes_corrupted, "Detected corruption.".to_owned())
     }
 }

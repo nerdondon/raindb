@@ -20,6 +20,7 @@ use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
 use crate::file_names::{DATA_DIR, WAL_DIR};
 use crate::key::InternalKey;
+use crate::logs::LogWriter;
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::table_cache::TableCache;
 use crate::tables::TableBuilder;
@@ -27,7 +28,6 @@ use crate::utils::linked_list::SharedNode;
 use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::Version;
 use crate::versioning::{VersionChangeManifest, VersionSet};
-use crate::write_ahead_log::WALWriter;
 use crate::writers::Writer;
 use crate::{DbOptions, RainDbIterator, ReadOptions, WriteOptions};
 
@@ -149,7 +149,7 @@ pub struct DB {
     memtable: Box<dyn MemTable>,
 
     /// The writer for the current write-ahead log file.
-    wal: WALWriter,
+    wal: LogWriter,
 
     /// A cache of table files.
     table_cache: Arc<TableCache>,
@@ -213,7 +213,8 @@ impl DB {
 
         // Create WAL
         let wal_file_number = 0;
-        let wal = WALWriter::new(Arc::clone(&fs), wal_path.to_str().unwrap(), wal_file_number)?;
+        let wal_file_path = file_name_handler.get_wal_path(wal_file_number);
+        let wal = LogWriter::new(Arc::clone(&fs), wal_file_path)?;
 
         // Create memtable
         let memtable = Box::new(SkipListMemTable::new());
@@ -502,11 +503,9 @@ impl DB {
 
                 // First create a new WAL file.
                 let new_wal_number = mutex_guard.version_set.get_new_file_number();
-                let maybe_wal_writer = WALWriter::new(
-                    self.options.filesystem_provider(),
-                    self.options.db_path(),
-                    new_wal_number,
-                );
+                let wal_file_path = self.file_name_handler.get_wal_path(new_wal_number);
+                let maybe_wal_writer =
+                    LogWriter::new(self.options.filesystem_provider(), wal_file_path);
 
                 if maybe_wal_writer.is_err() {
                     let error = maybe_wal_writer.err().unwrap();
@@ -523,7 +522,7 @@ impl DB {
                     mutex_guard.version_set.reuse_file_number(new_wal_number);
 
                     // Re-throw the error
-                    return Err(RainDBError::WAL(error));
+                    return Err(RainDBError::Log(error));
                 }
 
                 // Replace old WAL state fields with new WAL values

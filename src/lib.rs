@@ -21,12 +21,12 @@ mod config;
 mod errors;
 mod file_names;
 mod key;
+mod logs;
 mod memtable;
 mod table_cache;
 mod tables;
 mod utils;
 mod versioning;
-mod write_ahead_log;
 mod writers;
 
 mod batch;

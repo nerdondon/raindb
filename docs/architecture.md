@@ -45,6 +45,12 @@ LSM trees are append-only structures where different kinds of storage are used f
 system. Data is written to the memory layer (memtable) and that initial data is pushed down to
 slower storage mediums as more writes are received.
 
+Write's are always done to the memtable. Because the memtable resides in memory, we need a more
+durable structure to persist operations in the event of a crash. As is traditional in database
+systems, we utilize a write-ahead log to ensure the durability of operations. When the write-ahead
+log reaches a configured size, it is converted to a table file and a new WAL is created. This is
+done as part of the compaction process.
+
 The state of the database is represented as a set of versions. This is to keep iterators valid and
 to provide snapshotting capabilities. This state is kept in memory so snapshots should be used with
 consideration of that and clients will need to ensure that they release a snapshot so that the
@@ -121,8 +127,13 @@ level using only bulk reads and writes (i.e., minimizing expensive seeks).
 #### Manifest files
 
 Manifest files list the set of table files that make up each level, the corresponding key ranges,
-and other important metadata. A new manifest file is created whenever the database is reopened. The
-manifest file is append only. File removals are indicated by tombstones.
+and other important metadata. A new manifest file is created whenever the database is reopened and
+the current manifest file number is written to a file named _CURRENT_. The manifest file is append
+only. File removals are indicated by tombstones. In LevelDB, a manifest file is also known as a
+descriptor log file.
+
+Manifest files are a type of log and thus use the [log file format](#persistent-log-file-format)
+described in the data format section.
 
 More information on the format of sorted table files can be found in the
 [data formats section](#table-file-format).
@@ -163,17 +174,13 @@ The sequence number will be serialized in a fixed length format and will be 64 b
 LevelDB. In LevelDB, the sequence number is a 56-bit uint and the operation is represented by
 8-bits. LevelDB encodes these fields together to add up to a single 64-bit block.
 
-### Write-ahead log (WAL) format
+### Persistent log file format
 
-Write's are always done to the memtable. Because the memtable resides in memory, we need a more
-durable structure to persist operations in the event of a crash. As is traditional in database
-systems, we utilize a write-ahead log to ensure the durability of operations. When the write-ahead
-log reaches a configured size, it is converted to a table file and a new WAL is created. This is
-done as part of the compaction process.
+Two structures in RainDB use the log format: write-ahead logs and manifest files.
 
-The WAL consists of a series of 32KiB blocks. For each block, RainDB has a 3 byte header that
+Log files consist of a series of 32KiB blocks. For each block, RainDB has a 3 byte header that
 consists of a 2 byte uint for the length of the data in the block and 1 byte to represent the block
-record type. Together, a block in the WAL can be represented by this struct:
+record type. Together, a block in the log can be represented by this struct:
 
 ```rust
 struct BlockRecord {
@@ -234,10 +241,10 @@ the trailer.
 
 **C** will be stored as a `Full` record in the fourth block.
 
-NOTE: Any corruption in the WAL is logged but ignored. LevelDB has a setting for "paranoid checks"
-that will raise an error when corruption is detected, but RainDB does not currently have this
-setting. The erroroneous WAL will be preserved for investigation but the database process will
-start.
+NOTE: Any corruption in the a log file is logged to operational logs but, otherwise, ignored.
+LevelDB has a setting for "paranoid checks" that will raise an error when corruption is detected,
+but RainDB does not currently have this setting. The erroroneous log file will be preserved for
+investigation but the database process will start.
 
 ### Table file format
 

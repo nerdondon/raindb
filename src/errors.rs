@@ -22,8 +22,8 @@ pub enum RainDBError {
     /// Variant for errors stemming from top-level I/O operations.
     IO(io::Error),
 
-    /// Variant for errors stemming from WAL operations.
-    WAL(WALIOError),
+    /// Variant for errors stemming from log file operations.
+    Log(LogIOError),
 
     /// Variant for errors stemming from operating on the table cache.
     TableCache(String),
@@ -56,7 +56,7 @@ impl fmt::Display for RainDBError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RainDBError::IO(base_err) => write!(f, "{}", base_err),
-            RainDBError::WAL(base_err) => write!(f, "{}", base_err),
+            RainDBError::Log(base_err) => write!(f, "{}", base_err),
             RainDBError::TableCache(base_err) => write!(f, "{}", base_err),
             RainDBError::TableRead(base_err) => write!(f, "{}", base_err),
             RainDBError::TableBuild(base_err) => write!(f, "{}", base_err),
@@ -75,9 +75,9 @@ impl From<io::Error> for RainDBError {
     }
 }
 
-impl From<WALIOError> for RainDBError {
-    fn from(err: WALIOError) -> Self {
-        RainDBError::WAL(err)
+impl From<LogIOError> for RainDBError {
+    fn from(err: LogIOError) -> Self {
+        RainDBError::Log(err)
     }
 }
 
@@ -93,16 +93,16 @@ impl From<BuilderError> for RainDBError {
     }
 }
 
-/// Metadata describing the corruption detected in the WAL.
+/// Metadata describing the corruption detected in a log file.
 #[derive(Debug)]
-pub struct WALCorruptionErrorMetadata {
+pub struct LogCorruptionErrorMetadata {
     bytes_corrupted: u64,
     reason: String,
 }
 
-/// Errors related to writing to the write-ahead log (WAL).
+/// Errors related to writing to a log file.
 #[derive(Debug)]
-pub enum WALIOError {
+pub enum LogIOError {
     /**
     Variant for errors that are related to IO.
     */
@@ -111,13 +111,13 @@ pub enum WALIOError {
     /**
     Variant for IO issues where the cause is malformed data on the file system.
     */
-    Corruption(WALCorruptionErrorMetadata),
+    Corruption(LogCorruptionErrorMetadata),
 
     /**
     Variant for parsing issues that arise specifically from deserializing data from the
     file system.
     */
-    Seralization(WALSerializationErrorKind),
+    Seralization(LogSerializationErrorKind),
 }
 
 /**
@@ -125,31 +125,31 @@ Different kinds of errors that can arise from serialization and deserialization 
 WAL.
 */
 #[derive(Debug)]
-pub enum WALSerializationErrorKind {
+pub enum LogSerializationErrorKind {
     FromInt(TryFromIntError),
     Other(String),
 }
 
-impl std::error::Error for WALIOError {}
+impl std::error::Error for LogIOError {}
 
-impl fmt::Display for WALIOError {
+impl fmt::Display for LogIOError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WALIOError::IO(base_err) => write!(f, "{}", base_err),
-            WALIOError::Corruption(err_metadata) => write!(f, "{:?}", err_metadata),
-            WALIOError::Seralization(err_metadata) => write!(f, "{:?}", err_metadata),
+            LogIOError::IO(base_err) => write!(f, "{}", base_err),
+            LogIOError::Corruption(err_metadata) => write!(f, "{:?}", err_metadata),
+            LogIOError::Seralization(err_metadata) => write!(f, "{:?}", err_metadata),
         }
     }
 }
 
-impl From<io::Error> for WALIOError {
+impl From<io::Error> for LogIOError {
     fn from(err: io::Error) -> Self {
-        WALIOError::IO(err)
+        LogIOError::IO(err)
     }
 }
 
-impl From<TryFromIntError> for WALIOError {
+impl From<TryFromIntError> for LogIOError {
     fn from(err: TryFromIntError) -> Self {
-        WALIOError::Seralization(WALSerializationErrorKind::FromInt(err))
+        LogIOError::Seralization(LogSerializationErrorKind::FromInt(err))
     }
 }
