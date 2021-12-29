@@ -118,7 +118,7 @@ pub(crate) struct Version {
 /// Public methods
 impl Version {
     pub fn new(db_options: DbOptions, table_cache: &Arc<TableCache>) -> Self {
-        let files = [vec![]; MAX_NUM_LEVELS];
+        let files = Default::default();
 
         Self {
             db_options,
@@ -186,7 +186,7 @@ impl Version {
 
     /// Clones the current version while resetting compaction metadata.
     pub fn new_from_current(&self) -> Version {
-        let new_version = self.clone();
+        let mut new_version = self.clone();
         new_version.set_seek_compaction_metadata(None);
         new_version.set_size_compaction_metadata(None);
 
@@ -265,7 +265,7 @@ impl Version {
         assert!(level > 0);
         assert!(level <= MAX_NUM_LEVELS);
 
-        let overlapping_files = vec![];
+        let mut overlapping_files = vec![];
         let mut start_user_key = key_range.start.get_user_key();
         let mut end_user_key = key_range.end.get_user_key();
         let mut index: usize = 0;
@@ -442,7 +442,7 @@ impl Version {
         let mut right: usize = files.len();
         while left < right {
             let mid: usize = (left + right) / 2;
-            let file = files[mid];
+            let file = &files[mid];
 
             if file.largest_key() < target_user_key {
                 // The largest key in the file at mid is less than the target, so the set of files
@@ -516,10 +516,17 @@ pub(crate) struct VersionBuilder {
 
     This is stored in `VersionSet::Builder::LevelState` in LevelDB.
     */
-    added_files: [HashSet<FileMetadata>; MAX_NUM_LEVELS],
+    added_files: [HashSet<Arc<FileMetadata>>; MAX_NUM_LEVELS],
 
     /// Aggregated per-level keys at which the next compaction at that level should start.
     compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS],
+
+    /**
+    Indicates if the builder has already been used to apply its stored changes.
+
+    Changes stored in a builder cannot be applied multiple times.
+    */
+    already_invoked: bool,
 }
 
 /// Crate-only methods
@@ -528,9 +535,10 @@ impl VersionBuilder {
     pub(crate) fn new(base_version: SharedNode<Version>) -> Self {
         Self {
             base_version,
-            deleted_files: [HashSet::new(); MAX_NUM_LEVELS],
-            added_files: [HashSet::new(); MAX_NUM_LEVELS],
-            compaction_pointers: [None; MAX_NUM_LEVELS],
+            deleted_files: Default::default(),
+            added_files: Default::default(),
+            compaction_pointers: Default::default(),
+            already_invoked: false,
         }
     }
 
@@ -558,7 +566,7 @@ impl VersionBuilder {
 
         // Record new files
         for (level, file) in &change_manifest.new_files {
-            let new_file = file.clone();
+            let new_file = Arc::new(file.clone());
             self.deleted_files[*level].remove(&new_file.file_number());
             self.added_files[*level].insert(new_file);
         }
@@ -569,31 +577,43 @@ impl VersionBuilder {
 
     This method will also update the specified version set compaction pointers.
 
+    **A builder can not be called again after invoking this method.**
+
     # Panics
 
     In non-optimized builds (e.g. the debug profile), this method will panic if there are files
     with overlapping key ranges in levels > 0.
+
+    This method will panic if called and the `already_invoked` flag is set to true.
 
     # Legacy
 
     This is synonomous to LevelDB's `VersionSet::Builder::SaveTo`.
     */
     pub(crate) fn apply_changes(
-        &self,
+        &mut self,
         vset_compaction_pointers: &mut [Option<InternalKey>; MAX_NUM_LEVELS],
     ) -> Version {
+        assert!(
+            !self.already_invoked,
+            "Cannot call `apply_changes` more than once on a `VersionBuilder`."
+        );
+        self.already_invoked = true;
+
         // Apply compaction pointer updates
-        for (level, ptr) in self.compaction_pointers.iter().enumerate() {
+        for (level, ptr) in self.compaction_pointers.iter_mut().enumerate() {
             if ptr.is_some() {
                 vset_compaction_pointers[level] = ptr.take();
             }
         }
 
         let base = &self.base_version.read().element;
-        let new_version = base.new_from_current();
+        let mut new_version = base.new_from_current();
         for level in 0..MAX_NUM_LEVELS {
-            let mut level_added_files: Vec<FileMetadata> =
-                self.added_files[level].into_iter().collect();
+            let mut level_added_files: Vec<Arc<FileMetadata>> = self.added_files[level]
+                .iter()
+                .map(|file| Arc::clone(file))
+                .collect();
             level_added_files.sort_by(|a, b| FileMetadataBySmallestKey::compare(a, b));
 
             // The files in the base version should be sorted already because all changes are made
@@ -603,33 +623,33 @@ impl VersionBuilder {
             sorted_base_files.sort_by(|a, b| FileMetadataBySmallestKey::compare(a, b));
 
             // Merge added files and remove deleted files similar to merge algorithm in merge sort
-            let added_files_idx = 0;
-            let base_files_idx = 0;
+            let mut added_files_idx = 0;
+            let mut base_files_idx = 0;
             new_version.files[level] =
                 Vec::with_capacity(base.num_files_at_level(level) + self.added_files.len());
             while added_files_idx < level_added_files.len()
                 && base_files_idx < sorted_base_files.len()
             {
-                let added_file = level_added_files[added_files_idx];
-                let base_file = sorted_base_files[base_files_idx];
+                let added_file = &level_added_files[added_files_idx];
+                let base_file = &sorted_base_files[base_files_idx];
                 if FileMetadataBySmallestKey::compare(&*base_file, &added_file) == Ordering::Less {
-                    self.maybe_add_file(&mut new_version, level, Arc::clone(&base_file));
+                    self.maybe_add_file(&mut new_version, level, Arc::clone(base_file));
                     base_files_idx += 1;
                 } else {
-                    self.maybe_add_file(&mut new_version, level, Arc::new(added_file));
+                    self.maybe_add_file(&mut new_version, level, Arc::clone(added_file));
                     added_files_idx += 1;
                 }
             }
 
             while base_files_idx < sorted_base_files.len() {
-                let base_file = sorted_base_files[base_files_idx];
-                self.maybe_add_file(&mut new_version, level, Arc::clone(&base_file));
+                let base_file = &sorted_base_files[base_files_idx];
+                self.maybe_add_file(&mut new_version, level, Arc::clone(base_file));
                 base_files_idx += 1;
             }
 
             while added_files_idx < level_added_files.len() {
-                let added_file = level_added_files[added_files_idx];
-                self.maybe_add_file(&mut new_version, level, Arc::new(added_file));
+                let added_file = &level_added_files[added_files_idx];
+                self.maybe_add_file(&mut new_version, level, Arc::clone(added_file));
                 added_files_idx += 1;
             }
 
@@ -665,7 +685,7 @@ impl VersionBuilder {
 
     This method will panic if the file to be added overlaps the previous file's key range.
     */
-    fn maybe_add_file(&mut self, version: &mut Version, level: usize, file: Arc<FileMetadata>) {
+    fn maybe_add_file(&self, version: &mut Version, level: usize, file: Arc<FileMetadata>) {
         if self.deleted_files[level].contains(&file.file_number()) {
             // Don't add the file if it is marked for deletion
             return;
