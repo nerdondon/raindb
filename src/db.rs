@@ -189,7 +189,7 @@ pub struct DB {
 
 /// Public methods
 impl DB {
-    pub fn open(options: DbOptions) -> RainDBResult<DB> {
+    pub fn open(options: DbOptions) -> RainDBResult<()> {
         log::info!(
             "Initializing raindb with the following options {:#?}",
             options
@@ -221,12 +221,13 @@ impl DB {
 
         // Start compaction service
 
-        Ok(DB {
+        /* Ok(DB {
             options,
             wal,
             memtable,
             file_name_handler,
-        })
+        }) */
+        Ok(())
     }
 
     pub fn get(&self, read_options: ReadOptions, key: &Vec<u8>) {
