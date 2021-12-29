@@ -93,6 +93,12 @@ impl From<BuilderError> for RainDBError {
     }
 }
 
+impl From<CompactionWorkerError> for RainDBError {
+    fn from(err: CompactionWorkerError) -> Self {
+        RainDBError::Compaction(err)
+    }
+}
+
 /// Metadata describing the corruption detected in a log file.
 #[derive(Debug)]
 pub struct LogCorruptionErrorMetadata {

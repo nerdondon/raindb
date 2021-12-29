@@ -15,6 +15,7 @@ use crate::db::{GuardedDbFields, PortableDatabaseState};
 use crate::errors::RainDBError;
 use crate::key::InternalKey;
 use crate::table_cache::TableCache;
+use crate::versioning::errors::WriteError;
 use crate::versioning::VersionChangeManifest;
 use crate::{DbOptions, DB};
 
@@ -194,7 +195,7 @@ impl CompactionWorker {
     ) {
         if db_fields_guard.maybe_immutable_memtable.is_some() {
             // There is an immutable memtable. Compact that.
-            CompactionWorker::compact_memtable(db_state, &mut db_fields_guard);
+            CompactionWorker::compact_memtable(db_state, db_fields_guard);
             return;
         }
     }
@@ -214,14 +215,23 @@ impl CompactionWorker {
 
         log::info!("Compacting the immutable memtable to a table file.");
         let change_manifest = VersionChangeManifest::default();
-        let base_version = db_fields_guard.version_set.get_current_version().unwrap();
-        DB::write_level0_table(
+        let base_version = db_fields_guard.version_set.get_current_version();
+        let write_table_result = DB::write_level0_table(
             db_state,
             db_fields_guard,
             db_fields_guard.maybe_immutable_memtable.as_ref().unwrap(),
             base_version,
             &mut change_manifest,
         );
+
+        if let Err(write_table_error) = write_table_result {
+            DB::set_bad_database_state(
+                db_state,
+                db_fields_guard,
+                CompactionWorkerError::WriteTable(Box::new(write_table_error)).into(),
+            );
+            return;
+        }
 
         // Do periodic check for shutdown state before proceeding to the next major compaction
         // operation
@@ -233,11 +243,13 @@ impl CompactionWorker {
 
             DB::set_bad_database_state(
                 db_state,
-                &mut db_fields_guard,
-                RainDBError::Compaction(CompactionWorkerError::UnexpectedState(
+                db_fields_guard,
+                CompactionWorkerError::UnexpectedState(
                     "Detected database shutdown signal while compacting the memtable.".to_string(),
-                )),
-            )
+                )
+                .into(),
+            );
+            return;
         }
 
         // The memtable was converted to a table file so the associated WAL is also obsolete.
@@ -251,6 +263,23 @@ impl CompactionWorker {
             "Compaction thread is applying changes memtable compaction change to the current \
             version."
         );
+
+        let apply_result = db_fields_guard
+            .version_set
+            .log_and_apply(change_manifest, db_fields_guard);
+        if let Err(apply_error) = apply_result {
+            log::error!(
+                "There was an error logging and applying the change manifest. Error: {}",
+                apply_error
+            );
+
+            DB::set_bad_database_state(
+                db_state,
+                db_fields_guard,
+                CompactionWorkerError::VersionManifestError(apply_error).into(),
+            );
+            return;
+        }
     }
 }
 
@@ -263,6 +292,12 @@ pub enum CompactionWorkerError {
     /// Variant for IO errors encountered during worker operations.
     IO(io::Error),
 
+    /// Variant for issues that occur when writing a table file.
+    WriteTable(Box<RainDBError>),
+
+    /// Variant for issues that occur when persisting and applying a version change manifest.
+    VersionManifestError(WriteError),
+
     /// Variant for halting compactions due to unexpected state.
     UnexpectedState(String),
 }
@@ -273,6 +308,8 @@ impl fmt::Display for CompactionWorkerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompactionWorkerError::IO(base_err) => write!(f, "{}", base_err),
+            CompactionWorkerError::WriteTable(base_err) => write!(f, "{}", base_err),
+            CompactionWorkerError::VersionManifestError(base_err) => write!(f, "{}", base_err),
             CompactionWorkerError::UnexpectedState(reason) => write!(f, "{}", reason),
         }
     }
@@ -281,6 +318,12 @@ impl fmt::Display for CompactionWorkerError {
 impl From<io::Error> for CompactionWorkerError {
     fn from(err: io::Error) -> Self {
         CompactionWorkerError::IO(err)
+    }
+}
+
+impl From<WriteError> for CompactionWorkerError {
+    fn from(err: WriteError) -> Self {
+        CompactionWorkerError::VersionManifestError(err)
     }
 }
 

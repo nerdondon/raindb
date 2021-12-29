@@ -110,6 +110,19 @@ impl InternalKey {
     }
 }
 
+impl RainDbKeyType for InternalKey {
+    fn as_bytes(&self) -> Vec<u8> {
+        // We know the size of the buffer we need before hand.
+        // size = size of user key + 8 bytes for the sequence number + 1 byte for the operation
+        let mut buf: Vec<u8> = Vec::with_capacity(self.get_user_key().len() + 8 + 1);
+        buf.extend_from_slice(self.get_user_key());
+        buf.extend_from_slice(&self.sequence_number.encode_fixed_vec());
+        buf.extend_from_slice(&[*self.get_operation() as u8]);
+
+        buf
+    }
+}
+
 impl Ord for InternalKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Return ordering by the user provided keys if they are not equal
@@ -174,19 +187,6 @@ impl TryFrom<Vec<u8>> for InternalKey {
 impl From<&InternalKey> for Vec<u8> {
     fn from(key: &InternalKey) -> Vec<u8> {
         key.as_bytes()
-    }
-}
-
-impl RainDbKeyType for InternalKey {
-    fn as_bytes(&self) -> Vec<u8> {
-        // We know the size of the buffer we need before hand.
-        // size = size of user key + 8 bytes for the sequence number + 1 byte for the operation
-        let buf: Vec<u8> = Vec::with_capacity(self.get_user_key().len() + 8 + 1);
-        buf.extend_from_slice(self.get_user_key());
-        buf.extend_from_slice(&self.sequence_number.encode_fixed_vec());
-        buf.extend_from_slice(&[*self.get_operation() as u8]);
-
-        buf
     }
 }
 

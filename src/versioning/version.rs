@@ -34,7 +34,7 @@ pub(crate) struct SeekChargeMetadata {
 /// Public methods
 impl SeekChargeMetadata {
     /// Create a new instance of [`SeekChargeMetadata`].
-    pub fn new(seek_file: Option<Arc<FileMetadata>>, seek_file_level: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             seek_file: None,
             seek_file_level: None,
@@ -302,6 +302,48 @@ impl Version {
 
         overlapping_files
     }
+
+    /**
+    Finalize a version by calculating compaction scores.
+
+    Level 0 is treated differently than other levels where it is bounded by number of files rather
+    than the total bytes in the level for two reasons:
+
+    1. With larger memtables, level 0 compactions can be read intensive
+
+    1. The files in level 0 are merged on every reads, so we want to minimize the number of
+       individual files when the file size is small. File sizes can be small if the memtable maximum
+       size setting is low, if the compression ratios are high, or if there are lots of rights or
+       individual deletions.
+
+    # Legacy
+
+    This is synonomous with LevelDB's `VersionSet::Finalize`.
+    */
+    pub fn finalize(&mut self) {
+        let mut best_level: usize = 0;
+        let mut best_score: f64 = -1.;
+
+        for level in 0..MAX_NUM_LEVELS {
+            let new_score: f64;
+            if level == 0 {
+                new_score = (self.files[level].len() / L0_COMPACTION_TRIGGER) as f64;
+            } else {
+                let level_file_size = utils::sum_file_sizes(&self.files[level]) as f64;
+                new_score = level_file_size / Version::max_bytes_for_level(level);
+            }
+
+            if new_score > best_score {
+                best_score = new_score;
+                best_level = level;
+            }
+        }
+
+        self.set_size_compaction_metadata(Some(SizeCompactionMetadata {
+            compaction_level: best_level,
+            compaction_score: best_score,
+        }));
+    }
 }
 
 /// Private methods
@@ -427,6 +469,25 @@ impl Version {
     */
     fn max_grandparent_overlap_bytes(options: &DbOptions) -> u64 {
         options.max_file_size() * 10
+    }
+
+    /**
+    Calculate the maximum number of bytes allowed for a level
+
+    Note that the level 0 result is not really used because the level 0 compaction threshold is
+    based on the number of files in the level.
+    */
+    fn max_bytes_for_level(level: usize) -> f64 {
+        // The threshold is calculated as 10x multiples of 1 MiB.
+        const STARTING_MULTIPLE_BYTES: f64 = 1. * 1024. * 1024.;
+        let mut level = level;
+        let mut result: f64 = 10. * STARTING_MULTIPLE_BYTES;
+        while level > 1 {
+            result *= 10.;
+            level -= 1;
+        }
+
+        result
     }
 }
 

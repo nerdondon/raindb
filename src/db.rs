@@ -850,4 +850,49 @@ impl DB {
 
         Ok(())
     }
+
+    /// Set a new `CURRENT` file.
+    pub(crate) fn set_current_file(
+        filesystem_provider: Arc<Box<dyn FileSystem>>,
+        file_name_handler: &FileNameHandler,
+        manifest_file_number: u64,
+    ) -> io::Result<()> {
+        let manifest_file_path = file_name_handler.get_manifest_file_name(manifest_file_number);
+        let manifest_file_name = manifest_file_path.file_name().unwrap();
+        let temp_file_path = file_name_handler.get_temp_file_name(manifest_file_number);
+        let mut temp_file = filesystem_provider.create_file(&temp_file_path)?;
+        let contents = [
+            manifest_file_name.to_string_lossy().as_bytes(),
+            "\n".as_bytes(),
+        ]
+        .concat();
+
+        let temp_file_write_result = temp_file.append(&contents);
+        if temp_file_write_result.is_err() {
+            log::error!(
+                "Creating a new CURRENT file failed at writing the manifest file name ({:?}) to \
+                the temp file at {:?}.",
+                manifest_file_name,
+                &temp_file_path
+            );
+
+            filesystem_provider.remove_file(&temp_file_path)?;
+            return Err(temp_file_write_result.err().unwrap());
+        }
+
+        let current_file_path = file_name_handler.get_current_file_path();
+        let rename_result = filesystem_provider.rename(&temp_file_path, &current_file_path);
+        if rename_result.is_err() {
+            log::error!(
+                "Creating a new CURRENT file failed at renaming the temp file ({:?}) to the \
+                CURRENT file.",
+                &temp_file_path
+            );
+
+            filesystem_provider.remove_file(&temp_file_path)?;
+            return Err(rename_result.err().unwrap());
+        }
+
+        Ok(())
+    }
 }
