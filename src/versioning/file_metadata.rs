@@ -1,8 +1,11 @@
 use std::cmp::Ordering;
 
+use integer_encoding::VarIntWriter;
+
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
 use crate::key::InternalKey;
 use crate::utils::comparator::Comparator;
+use crate::utils::write_io::WriteHelpers;
 
 /// Metadata about an SSTable file.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -115,5 +118,20 @@ impl Comparator<&FileMetadata> for FileMetadataBySmallestKey {
                 return a.file_number().cmp(&b.file_number());
             }
         }
+    }
+}
+
+impl From<&FileMetadata> for Vec<u8> {
+    fn from(file: &FileMetadata) -> Self {
+        let mut buf = vec![];
+
+        buf.write_varint(file.file_number()).unwrap();
+        buf.write_varint(file.get_file_size()).unwrap();
+        buf.write_length_prefixed_slice(&Vec::<u8>::from(file.smallest_key()))
+            .unwrap();
+        buf.write_length_prefixed_slice(&Vec::<u8>::from(file.largest_key()))
+            .unwrap();
+
+        buf
     }
 }

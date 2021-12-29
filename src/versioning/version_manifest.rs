@@ -1,7 +1,10 @@
+use integer_encoding::VarIntWriter;
 use std::collections::HashSet;
+use std::io::Write;
 use std::ops::Range;
 
 use crate::key::InternalKey;
+use crate::utils::write_io::WriteHelpers;
 
 use super::file_metadata::FileMetadata;
 
@@ -99,7 +102,7 @@ impl VersionChangeManifest {
         file_size: u64,
         key_range: Range<InternalKey>,
     ) {
-        let metadata = FileMetadata::new(file_number);
+        let mut metadata = FileMetadata::new(file_number);
         metadata.set_file_size(file_size);
         metadata.set_smallest_key(Some(key_range.start));
         metadata.set_largest_key(Some(key_range.end));
@@ -125,5 +128,84 @@ impl Default for VersionChangeManifest {
             deleted_files: HashSet::new(),
             compaction_pointers: vec![],
         }
+    }
+}
+
+/**
+Tags to mark fields in the manifest serialization format.
+
+These tags are written to disk and should not be changed.
+*/
+#[repr(u32)]
+enum ManifestFieldTags {
+    Comparator = 1,
+    CurrentWALNumber = 2,
+    CurrentFileNumber = 3,
+    PrevSequenceNumber = 4,
+    CompactionPointer = 5,
+    DeletedFile = 6,
+    NewFile = 7,
+    /**
+    8 was used for large value references in LevelDB. RainDB keeps it reserved in case we want to
+    have binary compatibility with LevelDB in the future.
+    */
+    LargeValueRef = 8,
+    PrevWALNumber = 9,
+}
+
+impl From<&VersionChangeManifest> for Vec<u8> {
+    fn from(manifest: &VersionChangeManifest) -> Self {
+        let mut buf: Vec<u8> = vec![];
+
+        if manifest.wal_file_number.is_some() {
+            buf.write_varint(ManifestFieldTags::CurrentWALNumber as u32)
+                .unwrap();
+            buf.write_varint(manifest.wal_file_number.unwrap()).unwrap();
+        }
+
+        if manifest.prev_wal_file_number.is_some() {
+            buf.write_varint(ManifestFieldTags::PrevWALNumber as u32)
+                .unwrap();
+            buf.write_varint(manifest.prev_wal_file_number.unwrap())
+                .unwrap();
+        }
+
+        if manifest.curr_file_number.is_some() {
+            buf.write_varint(ManifestFieldTags::CurrentFileNumber as u32)
+                .unwrap();
+            buf.write_varint(manifest.curr_file_number.unwrap())
+                .unwrap();
+        }
+
+        if manifest.prev_sequence_number.is_some() {
+            buf.write_varint(ManifestFieldTags::PrevSequenceNumber as u32)
+                .unwrap();
+            buf.write_varint(manifest.prev_sequence_number.unwrap())
+                .unwrap();
+        }
+
+        for (level, ptr) in &manifest.compaction_pointers {
+            buf.write_varint(ManifestFieldTags::CompactionPointer as u32)
+                .unwrap();
+            buf.write_varint(*level as u32).unwrap();
+            buf.write_length_prefixed_slice(&Vec::<u8>::from(ptr))
+                .unwrap();
+        }
+
+        for file_descriptor in &manifest.deleted_files {
+            let DeletedFile { level, file_number } = file_descriptor;
+            buf.write_varint(ManifestFieldTags::DeletedFile as u32)
+                .unwrap();
+            buf.write_varint(*level as u32).unwrap();
+            buf.write_varint(*file_number).unwrap();
+        }
+
+        for (level, file) in &manifest.new_files {
+            buf.write_varint(ManifestFieldTags::NewFile as u32).unwrap();
+            buf.write_varint(*level as u32).unwrap();
+            buf.write_all(&Vec::<u8>::from(file)).unwrap();
+        }
+
+        buf
     }
 }
