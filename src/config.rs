@@ -85,7 +85,8 @@ the small write is not impacted too much.
 pub(crate) const SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES: usize = 128 * 1024;
 
 /**
-Maximum level to which a new compacted memtable is pushed if it does not create overlap in keys.
+Maximum level to which a newly compacted memtable is pushed if it does not create an overlap in
+keys.
 
 We try to push to level 2 to avoid the relatively expensive level 0 to level 1 compactions and to
 avoid some expensive manifest file operations. We do not push all the way to the largest level since
