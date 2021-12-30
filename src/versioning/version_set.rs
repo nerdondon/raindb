@@ -314,7 +314,7 @@ impl VersionSet {
                         self.manifest_file_number,
                     ) {
                         return Err(WriteError::ManifestWrite(
-                            ManifestWriteErrorKind::SwapCurrentFile(error),
+                            ManifestWriteErrorKind::SwapCurrentFile(error.into()),
                         ));
                     }
                 }
@@ -352,7 +352,7 @@ impl VersionSet {
                     if let Err(remove_file_error) = remove_file_result {
                         log::error!("There was an error cleaning up the newly created manifest file after encountering a different error. Error: {}.", &remove_file_error);
                         return Err(WriteError::ManifestWrite(
-                            ManifestWriteErrorKind::ManifestErrorCleanup(remove_file_error),
+                            ManifestWriteErrorKind::ManifestErrorCleanup(remove_file_error.into()),
                         ));
                     }
                 }

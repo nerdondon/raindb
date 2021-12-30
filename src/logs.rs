@@ -18,11 +18,11 @@ data in subsequent blocks.
 use integer_encoding::FixedInt;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
-use std::io::{self, ErrorKind, SeekFrom, Write};
+use std::io::{ErrorKind, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::errors::{LogIOError, LogSerializationErrorKind};
+use crate::errors::{DBIOError, LogIOError, LogSerializationErrorKind};
 use crate::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 /**
@@ -406,10 +406,11 @@ impl LogReader {
         if header_bytes_read < HEADER_LENGTH_BYTES {
             // The end of the file was reached before we were able to read a full header. This
             // can occur if the log writer died in the middle of writing the record.
-            return Err(LogIOError::IO(io::Error::new(
+            return Err(LogIOError::IO(DBIOError::new(
                 ErrorKind::UnexpectedEof,
                 "Unexpectedly reached the end of the file while attempting to read a header."
-                    .to_string(),
+                    .to_string()
+                    .as_str(),
             )));
         }
 
@@ -422,10 +423,11 @@ impl LogReader {
         if data_bytes_read < (data_length as usize) {
             // The end of the file was reached before we were able to read a full data chunk. This
             // can occur if the log writer died in the middle of writing the record.
-            return Err(LogIOError::IO(io::Error::new(
+            return Err(LogIOError::IO(DBIOError::new(
                 ErrorKind::UnexpectedEof,
                 "Unexpectedly reached the end of the file while attempting to read the data chunk."
-                    .to_string(),
+                    .to_string()
+                    .as_str(),
             )));
         }
 

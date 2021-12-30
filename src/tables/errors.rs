@@ -5,13 +5,15 @@ implementations for common errors to enable error propagation.
 
 use std::{fmt, io};
 
+use crate::errors::DBIOError;
+
 use super::footer::SIZE_OF_FOOTER_BYTES;
 
 /// Result that wraps [`ReadError`].
 pub type TableResult<T> = Result<T, ReadError>;
 
 /// Errors that can result from a read operation.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ReadError {
     /// Variant for parsing errors.
     FailedToParse(String),
@@ -20,10 +22,10 @@ pub enum ReadError {
     Footer(FooterError),
 
     /// Variant for block decompression issues.
-    BlockDecompression(io::Error),
+    BlockDecompression(DBIOError),
 
     /// Variant for IO errors.
-    IO(io::Error),
+    IO(DBIOError),
 
     /// Variant for errors reading the filter block.
     FilterBlock(String),
@@ -55,7 +57,7 @@ impl fmt::Display for ReadError {
 
 impl From<io::Error> for ReadError {
     fn from(err: io::Error) -> Self {
-        ReadError::IO(err)
+        ReadError::IO(err.into())
     }
 }
 
@@ -66,7 +68,7 @@ impl From<FooterError> for ReadError {
 }
 
 /// Errors that can result from operations involving the table file footer.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum FooterError {
     /// Variant for footer serialiation errors where the value is the size of the serialized buffer.
     FooterSerialization(usize),
@@ -85,10 +87,10 @@ impl fmt::Display for FooterError {
 }
 
 /// Errors that can result from a table file builder operations.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum BuilderError {
     /// Variant for IO errors.
-    IO(io::Error),
+    IO(DBIOError),
 
     /// Variant for operations that were performed when the file was already closed.
     AlreadyClosed,
@@ -120,7 +122,7 @@ impl fmt::Display for BuilderError {
 
 impl From<io::Error> for BuilderError {
     fn from(err: io::Error) -> Self {
-        BuilderError::IO(err)
+        BuilderError::IO(err.into())
     }
 }
 

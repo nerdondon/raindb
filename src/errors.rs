@@ -1,5 +1,5 @@
 /*!
-This module contains error types specific to RainDB as well as wrappers and `From` implementations
+This module contains error types specific to RainDB as well as wrappers and [`From`] implementations
 for common errors to enable error propagation.
 */
 
@@ -16,11 +16,18 @@ use crate::versioning;
 
 pub type RainDBResult<T> = Result<T, RainDBError>;
 
-/// Top-level database errors.
-#[derive(Debug)]
+/**
+Top-level database errors.
+
+Consider restructuring based on analysis in [this post] on Rust error handling in
+[`std::io::Error`].
+
+[this post]: https://matklad.github.io/2020/10/15/study-of-std-io-error.html
+*/
+#[derive(Clone, Debug)]
 pub enum RainDBError {
     /// Variant for errors stemming from top-level I/O operations.
-    IO(io::Error),
+    IO(DBIOError),
 
     /// Variant for errors stemming from log file operations.
     Log(LogIOError),
@@ -71,7 +78,7 @@ impl fmt::Display for RainDBError {
 
 impl From<io::Error> for RainDBError {
     fn from(err: io::Error) -> Self {
-        RainDBError::IO(err)
+        RainDBError::IO(err.into())
     }
 }
 
@@ -100,19 +107,19 @@ impl From<CompactionWorkerError> for RainDBError {
 }
 
 /// Metadata describing the corruption detected in a log file.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LogCorruptionErrorMetadata {
     bytes_corrupted: u64,
     reason: String,
 }
 
 /// Errors related to writing to a log file.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LogIOError {
     /**
     Variant for errors that are related to IO.
     */
-    IO(io::Error),
+    IO(DBIOError),
 
     /**
     Variant for IO issues where the cause is malformed data on the file system.
@@ -130,7 +137,7 @@ pub enum LogIOError {
 Different kinds of errors that can arise from serialization and deserialization activities in the
 WAL.
 */
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LogSerializationErrorKind {
     FromInt(TryFromIntError),
     Other(String),
@@ -150,12 +157,55 @@ impl fmt::Display for LogIOError {
 
 impl From<io::Error> for LogIOError {
     fn from(err: io::Error) -> Self {
-        LogIOError::IO(err)
+        LogIOError::IO(err.into())
     }
 }
 
 impl From<TryFromIntError> for LogIOError {
     fn from(err: TryFromIntError) -> Self {
         LogIOError::Seralization(LogSerializationErrorKind::FromInt(err))
+    }
+}
+
+/// Wrapper for [`std::io::Error`] that implements [`Copy`].
+#[derive(Clone, Debug)]
+pub struct DBIOError {
+    error_kind: io::ErrorKind,
+
+    custom_message: &'static str,
+}
+
+/// Crate-only methods
+impl DBIOError {
+    pub(crate) fn new(error_kind: io::ErrorKind, custom_message: &'static str) -> Self {
+        Self {
+            error_kind,
+            custom_message,
+        }
+    }
+}
+
+impl Copy for DBIOError {}
+
+impl std::error::Error for DBIOError {}
+
+impl fmt::Display for DBIOError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl From<io::Error> for DBIOError {
+    /**
+    Coerce an [`std::io::Error`] to RainDB's wrapper.
+
+    The custom message is set to the original error's display string because there is currently
+    no way to get the custom message that is set on some [`std::io::Error`]'s.
+    */
+    fn from(io_err: io::Error) -> Self {
+        DBIOError {
+            error_kind: io_err.kind(),
+            custom_message: format!("{}", io_err).as_str(),
+        }
     }
 }

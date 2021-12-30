@@ -3,11 +3,9 @@ This module contains error types specific to version operations as well as wrapp
 implementations for common errors to enable error propagation.
 */
 
-use std::{fmt, io};
+use std::fmt;
 
-use crate::errors::LogIOError;
-
-use super::version::SeekChargeMetadata;
+use crate::errors::{DBIOError, LogIOError};
 
 /// Alias for a [`Result`] that wraps [`ReadError`].
 pub type ReadResult<T> = Result<T, ReadError>;
@@ -16,10 +14,10 @@ pub type ReadResult<T> = Result<T, ReadError>;
 pub type WriteResult<T> = Result<T, WriteError>;
 
 /// Errors that can result from a read operation.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ReadError {
     /// Variant for keys not found in the version.
-    KeyNotFound(SeekChargeMetadata),
+    KeyNotFound,
 
     /// Variant for not having any versions.
     NoVersionsFound,
@@ -30,7 +28,7 @@ impl std::error::Error for ReadError {}
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReadError::KeyNotFound(charge_metadata) => {
+            ReadError::KeyNotFound => {
                 write!(f, "The key was not found in this version.")
             }
             ReadError::NoVersionsFound => {
@@ -41,7 +39,7 @@ impl fmt::Display for ReadError {
 }
 
 /// Errors that can result from a write operation.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum WriteError {
     /// Variant for errors writing to the manifest.
     ManifestWrite(ManifestWriteErrorKind),
@@ -58,19 +56,19 @@ impl fmt::Display for WriteError {
 }
 
 /// Different errors that can occur when writing to a manifest file.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ManifestWriteErrorKind {
     /// Variant for errors stemming from log I/O operations.
     LogIO(LogIOError),
 
     /// Variant for errors that occur swapping the *CURRENT* file.
-    SwapCurrentFile(io::Error),
+    SwapCurrentFile(DBIOError),
 
     /**
     Variant for errors that occur cleaning up side effects after encountering a previous error
     writing to the manifest file.
     */
-    ManifestErrorCleanup(io::Error),
+    ManifestErrorCleanup(DBIOError),
 }
 
 impl From<LogIOError> for WriteError {

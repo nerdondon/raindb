@@ -5,7 +5,7 @@ use std::fmt;
 use std::io::{self, Read};
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
-use crate::errors::RainDBResult;
+use crate::errors::{DBIOError, RainDBResult};
 use crate::filter_policy;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;

@@ -12,7 +12,7 @@ use std::time::Duration;
 use std::{fmt, io};
 
 use crate::db::{GuardedDbFields, PortableDatabaseState};
-use crate::errors::RainDBError;
+use crate::errors::{DBIOError, RainDBError};
 use crate::key::InternalKey;
 use crate::table_cache::TableCache;
 use crate::versioning::errors::WriteError;
@@ -287,10 +287,10 @@ impl CompactionWorker {
 pub(crate) type CompactionWorkerResult<T> = Result<T, CompactionWorkerError>;
 
 /// Errors that occur during compaction worker operations.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum CompactionWorkerError {
     /// Variant for IO errors encountered during worker operations.
-    IO(io::Error),
+    IO(DBIOError),
 
     /// Variant for issues that occur when writing a table file.
     WriteTable(Box<RainDBError>),
@@ -317,7 +317,7 @@ impl fmt::Display for CompactionWorkerError {
 
 impl From<io::Error> for CompactionWorkerError {
     fn from(err: io::Error) -> Self {
-        CompactionWorkerError::IO(err)
+        CompactionWorkerError::IO(err.into())
     }
 }
 

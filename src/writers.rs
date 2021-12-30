@@ -127,19 +127,19 @@ impl Writer {
     This will attempt to get a lock on the inner fields.
     */
     pub fn set_operation_completed(&self, is_complete: bool) -> bool {
-        let mutex_guard = self.inner.lock();
+        let mut mutex_guard = self.inner.lock();
         mutex_guard.operation_completed = is_complete;
 
         mutex_guard.operation_completed
     }
 
     /**
-    Get the result of the write operation.
+    Get a copy of the result of the write operation.
 
     This will attempt to get a lock on the inner fields.
     */
     pub fn get_operation_result(&self) -> Option<RainDBResult<()>> {
-        self.inner.lock().operation_result
+        self.inner.lock().operation_result.clone()
     }
 
     /**
@@ -147,13 +147,10 @@ impl Writer {
 
     This will attempt to get a lock on the inner fields.
     */
-    pub fn set_operation_result(
-        &self,
-        operation_result: Option<RainDBResult<()>>,
-    ) -> Option<RainDBResult<()>> {
-        let mutex_guard = self.inner.lock();
-        mutex_guard.operation_result = operation_result;
+    pub fn set_operation_result(&self, operation_result: RainDBResult<()>) -> RainDBResult<()> {
+        let mut mutex_guard = self.inner.lock();
+        mutex_guard.operation_result = Some(operation_result);
 
-        mutex_guard.operation_result
+        mutex_guard.operation_result.clone().unwrap()
     }
 }

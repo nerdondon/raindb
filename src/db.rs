@@ -328,22 +328,20 @@ impl DB {
             return writer.get_operation_result().unwrap();
         }
 
-        let force_compaction = maybe_batch.is_none();
-        let compaction_check_result =
-            self.make_room_for_write(&mut fields_mutex_guard, force_compaction);
+        let mut write_result = self.make_room_for_write(&mut fields_mutex_guard, force_compaction);
         let prev_sequence_number = fields_mutex_guard.version_set.get_prev_sequence_number();
         let mut last_writer = Arc::clone(&writer);
 
-        if compaction_check_result.is_ok() && !force_compaction {
+        if write_result.is_ok() && !force_compaction {
             // Attempt to create a group commit batch
-            let (write_batch, last_writer_in_batch) =
+            let (mut write_batch, last_writer_in_batch) =
                 self.build_group_commit_batch(&mut fields_mutex_guard)?;
             last_writer = last_writer_in_batch;
             write_batch.set_starting_seq_number(prev_sequence_number + 1);
             let sequence_number_after_write = prev_sequence_number + (write_batch.len() as u64);
 
             // Add to the write-ahead log and apply changes to the memtable
-            let write_result = parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+            write_result = parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
                 &mut fields_mutex_guard,
                 || -> RainDBResult<()> {
                     /*
@@ -356,7 +354,7 @@ impl DB {
                     self.wal.append(&Vec::<u8>::from(&write_batch))?;
 
                     // Write the changes to the memtable
-                    self.apply_batch_to_memtable(&write_batch)?;
+                    self.apply_batch_to_memtable(&write_batch);
 
                     Ok(())
                 },
@@ -369,7 +367,7 @@ impl DB {
                 DB::set_bad_database_state(
                     &self.generate_portable_state(),
                     &mut fields_mutex_guard,
-                    write_result.unwrap_err(),
+                    write_result.clone().unwrap_err().into(),
                 );
             }
 
@@ -450,7 +448,7 @@ impl DB {
 
             if mutex_guard.maybe_bad_database_state.is_some() {
                 // We encountered an issue with a background task. Return with the error.
-                let error = mutex_guard.maybe_bad_database_state.unwrap();
+                let error = mutex_guard.maybe_bad_database_state.clone().unwrap();
                 log::error!("Stopping compaction check because there may be a relevant background error. Error: {}", error);
 
                 return Err(error);
@@ -670,7 +668,7 @@ impl DB {
     }
 
     /// Apply the changes in the provided batch to the memtable.
-    fn apply_batch_to_memtable(&self, batch: &Batch) -> RainDBResult<()> {
+    fn apply_batch_to_memtable(&self, batch: &Batch) {
         let mut curr_sequence_num = batch.get_starting_seq_number().unwrap();
         for batch_element in batch.iter() {
             let internal_key = InternalKey::new(
@@ -683,8 +681,6 @@ impl DB {
 
             curr_sequence_num += 1;
         }
-
-        Ok(())
     }
 
     /**
