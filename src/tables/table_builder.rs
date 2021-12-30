@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::rc::Rc;
 
 use integer_encoding::FixedInt;
 use snap::write::FrameEncoder;
@@ -38,8 +39,15 @@ A table file has the following format:
 1. A metadata index block (referred to as metaindex block) that provide offsets to meta blocks
 1. An index block that provides offets to data blocks
 1. A fixed-length footer providing offests to the index blocks
+
+
+# Concurrency
+
+The table builder cannot currently be passed between threads because it uses primitives that do not
+implement [`Sync`] (e.g. [`Rc`]). This should not be a problem since a table builder is currently
+only constructed and used locally in a single thread.
 */
-pub(crate) struct TableBuilder<'t> {
+pub(crate) struct TableBuilder {
     /// Options for configuring the operation of the database.
     options: DbOptions,
 
@@ -59,10 +67,10 @@ pub(crate) struct TableBuilder<'t> {
     current_offset: u64,
 
     /// A block builder for data entries.
-    data_block_builder: BlockBuilder<'t, InternalKey>,
+    data_block_builder: BlockBuilder<InternalKey>,
 
     /// A block builder for index entries.
-    index_block_builder: BlockBuilder<'t, InternalKey>,
+    index_block_builder: BlockBuilder<InternalKey>,
 
     /// A builder for the table file's filter block.
     filter_block_builder: FilterBlockBuilder,
@@ -71,11 +79,11 @@ pub(crate) struct TableBuilder<'t> {
     num_entries: usize,
 
     /// The last key that was added to the table.
-    maybe_last_key_added: Option<InternalKey>,
+    maybe_last_key_added: Option<Rc<InternalKey>>,
 }
 
 /// Public methods
-impl<'t> TableBuilder<'t> {
+impl TableBuilder {
     /// Create a new instance of [`TableBuilder`].
     pub fn new(options: DbOptions, file_number: u64) -> TableBuildResult<Self> {
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
@@ -83,6 +91,7 @@ impl<'t> TableBuilder<'t> {
         let file = options
             .filesystem_provider()
             .create_file(&table_file_name)?;
+        let filter_block_builder = FilterBlockBuilder::new(options.filter_policy());
 
         Ok(Self {
             options,
@@ -93,7 +102,7 @@ impl<'t> TableBuilder<'t> {
             maybe_last_key_added: None,
             data_block_builder: BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL),
             index_block_builder: BlockBuilder::new(1),
-            filter_block_builder: FilterBlockBuilder::new(options.filter_policy()),
+            filter_block_builder,
             current_offset: 0,
         })
     }
@@ -121,13 +130,13 @@ impl<'t> TableBuilder<'t> {
     generall occurs from a pre-existing collection of data, there isn't much of a delay until the
     next entry is added or the entire table is finalized and flushed to disk.
     */
-    pub fn add_entry(&mut self, key: &'t InternalKey, value: &Vec<u8>) -> TableBuildResult<()> {
+    pub fn add_entry(&mut self, key: Rc<InternalKey>, value: &Vec<u8>) -> TableBuildResult<()> {
         // Panic if our invariants are not maintained. This is a bug.
         assert!(!self.file_closed, "{}", BuilderError::AlreadyClosed);
         assert!(
             self.maybe_last_key_added
                 .as_ref()
-                .map_or(true, |last_key| last_key < key),
+                .map_or(true, |last_key| last_key < &key),
             "{}",
             BuilderError::OutOfOrder
         );
@@ -138,17 +147,17 @@ impl<'t> TableBuilder<'t> {
             if let Some(block_handle) = maybe_block_handle {
                 // Insert an index entry if a block was written
                 let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
-                let key_separator = BinarySeparable::find_shortest_separator(last_key_added, key);
-                self.index_block_builder.add_entry(
-                    &InternalKey::try_from(key_separator).unwrap(),
-                    &Vec::from(&block_handle),
-                );
+                let key_separator =
+                    BinarySeparable::find_shortest_separator(last_key_added.as_ref(), key.as_ref());
+                let serialized_separator = Rc::new(InternalKey::try_from(key_separator).unwrap());
+                self.index_block_builder
+                    .add_entry(Rc::clone(&serialized_separator), &Vec::from(&block_handle));
             }
         }
 
         self.maybe_last_key_added = Some(key.clone());
         self.num_entries += 1;
-        self.data_block_builder.add_entry(key, value);
+        self.data_block_builder.add_entry(key.clone(), value);
 
         // Add entry to the filter block
         self.filter_block_builder.add_key(key.as_bytes());
@@ -171,11 +180,10 @@ impl<'t> TableBuilder<'t> {
         if let Some(block_handle) = maybe_block_handle {
             // Insert an index entry if a block was written
             let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
-            let key_separator = BinarySeparable::find_shortest_successor(last_key_added);
-            self.index_block_builder.add_entry(
-                &InternalKey::try_from(key_separator).unwrap(),
-                &Vec::from(&block_handle),
-            );
+            let key_separator = BinarySeparable::find_shortest_successor(last_key_added.as_ref());
+            let serialized_separator = Rc::new(InternalKey::try_from(key_separator).unwrap());
+            self.index_block_builder
+                .add_entry(Rc::clone(&serialized_separator), &Vec::from(&block_handle));
         }
 
         self.file_closed = true;
@@ -188,16 +196,20 @@ impl<'t> TableBuilder<'t> {
             BlockHandle::new(filter_block_offset, filter_block_contents.len() as u64);
 
         // Write the metaindex block
-        let metaindex_builder: BlockBuilder<'_, MetaIndexKey> =
+        let mut metaindex_builder: BlockBuilder<MetaIndexKey> =
             BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
         let filter_block_key = MetaIndexKey::new(filter_policy::get_filter_block_name(
             self.options.filter_policy(),
         ));
-        metaindex_builder.add_entry(&filter_block_key, &Vec::from(&filter_block_handle));
-        let metaindex_handle = self.write_block(&mut metaindex_builder)?;
+        metaindex_builder.add_entry(Rc::new(filter_block_key), &Vec::from(&filter_block_handle));
+        let metaindex_contents = metaindex_builder.finalize();
+        let metaindex_handle = self.write_block(&metaindex_contents)?;
+        metaindex_builder.reset();
 
         // Write the index block
-        let index_block_handle = self.write_block(&mut self.index_block_builder)?;
+        let index_contents = self.index_block_builder.finalize();
+        let index_block_handle = self.write_block(&index_contents)?;
+        self.index_block_builder.reset();
 
         // Write the footer
         let footer = Footer::new(metaindex_handle, index_block_handle);
@@ -230,14 +242,16 @@ impl<'t> TableBuilder<'t> {
 }
 
 /// Private methods
-impl TableBuilder<'_> {
+impl TableBuilder {
     /// Write a data block to disk.
     fn flush_data_block(&mut self) -> TableBuildResult<Option<BlockHandle>> {
         if self.data_block_builder.is_empty() {
             return Ok(None);
         }
 
-        let block_handle = self.write_block(&mut self.data_block_builder)?;
+        let block_contents = self.data_block_builder.finalize();
+        let block_handle = self.write_block(&block_contents)?;
+        self.data_block_builder.reset();
         self.file.flush()?;
 
         // Signal filter block builder that a new block was written
@@ -252,24 +266,16 @@ impl TableBuilder<'_> {
 
     Returns the a [`BlockHandle`] to the newly written block.
     */
-    fn write_block<K>(
-        &mut self,
-        block_builder: &mut BlockBuilder<'_, K>,
-    ) -> TableBuildResult<BlockHandle>
-    where
-        K: RainDbKeyType,
-    {
+    fn write_block(&mut self, block_contents: &[u8]) -> TableBuildResult<BlockHandle> {
         let start_offset = self.current_offset;
-
-        // Finalize data block
-        let block_contents = block_builder.finalize();
 
         // For now, compression is always on and always uses Snappy
         // TODO: Support turning compression on and off and also more compression algorithms
-        let compressed_block: Vec<u8> = vec![];
-        let snappy_encoder = FrameEncoder::new(compressed_block);
+        let mut compressed_block: Vec<u8> = vec![];
+        let mut snappy_encoder = FrameEncoder::new(compressed_block);
         snappy_encoder.write_all(block_contents)?;
         snappy_encoder.flush()?;
+        compressed_block = snappy_encoder.into_inner().unwrap();
 
         // Emit the raw block if the compression ratio is less than 12.5% (1/8)
         if compressed_block.len() < (block_contents.len() - (block_contents.len() / 8)) {
@@ -280,8 +286,6 @@ impl TableBuilder<'_> {
                 TableFileCompressionType::Snappy,
             )?;
         }
-
-        block_builder.reset();
 
         Ok(BlockHandle::new(start_offset, block_contents.len() as u64))
     }
@@ -296,7 +300,7 @@ impl TableBuilder<'_> {
         self.file.write_all(block_contents)?;
 
         // Get the checksum of the data and the compression type
-        let digest = CRC_CALCULATOR.digest();
+        let mut digest = CRC_CALCULATOR.digest();
         digest.update(block_contents);
         digest.update(&[compression_type as u8]);
         let checksum = digest.finalize();

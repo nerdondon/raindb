@@ -710,14 +710,15 @@ impl DB {
             metadata.set_smallest_key(Some(iterator.current().unwrap().0.clone()));
 
             // Iterate the memtable and add the entries to a table
-            let mut larget_key_seen: &InternalKey;
+            let mut larget_key_seen: Option<&InternalKey> = None;
             while let Some((key, value)) = iterator.current() {
-                larget_key_seen = key;
-                table_builder.add_entry(key, value);
+                larget_key_seen = Some(key);
+                table_builder.add_entry(Rc::new(key.clone()), value);
                 iterator.next();
             }
 
-            metadata.set_largest_key(Some(larget_key_seen.clone()));
+            // The iterator is valid so we should just be able to unwrap
+            metadata.set_largest_key(Some(larget_key_seen.unwrap().clone()));
             table_builder.finalize()?;
             metadata.set_file_size(table_builder.file_size());
 

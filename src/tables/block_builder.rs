@@ -1,4 +1,5 @@
 use std::cmp;
+use std::rc::Rc;
 
 use integer_encoding::{FixedInt, VarInt};
 
@@ -26,7 +27,7 @@ See the RainDB docs for a more in-depth discussion of the block format.
 
 [LevelDB's `BlockBuilder` docs]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/table/block_builder.cc#L5-L27
 */
-pub(crate) struct BlockBuilder<'k, K>
+pub(crate) struct BlockBuilder<K>
 where
     K: RainDbKeyType,
 {
@@ -46,11 +47,11 @@ where
     block_finalized: bool,
 
     /// The last key that was added to the block.
-    maybe_last_key_added: Option<&'k K>,
+    maybe_last_key_added: Option<Rc<K>>,
 }
 
 /// Crate-only methods
-impl<'b, K> BlockBuilder<'b, K>
+impl<K> BlockBuilder<K>
 where
     K: RainDbKeyType,
 {
@@ -64,7 +65,7 @@ where
     pub(crate) fn new(prefix_compression_restart_interval: usize) -> Self {
         assert!(prefix_compression_restart_interval > 0, "Attempted to create a block builder with a prefix compression restart interval of 0. Only values > 1 are accepted.");
 
-        let restart_points = vec![];
+        let mut restart_points = vec![];
         // The first restart point is at offset 0 i.e. the first key is not compressed
         restart_points.push(0);
 
@@ -93,7 +94,7 @@ where
 
     This method was just called `Add` in LevelDB.
     */
-    pub(crate) fn add_entry(&mut self, key: &'b K, value: &Vec<u8>) {
+    pub(crate) fn add_entry(&mut self, key: Rc<K>, value: &Vec<u8>) {
         let key_bytes = key.as_bytes();
 
         // Panic if our invariants are not maintained. This is a bug.
@@ -102,7 +103,7 @@ where
             "Attempted to add a key-value pair to a finalized block."
         );
         assert!(
-            self.buffer.is_empty() || self.maybe_last_key_added.as_deref().unwrap() < key,
+            self.buffer.is_empty() || self.maybe_last_key_added.as_ref().unwrap() < &key,
             "{}",
             BuilderError::OutOfOrder
         );
@@ -113,7 +114,7 @@ where
 
         let mut shared_prefix_size: usize = 0;
         if self.curr_compressed_count < self.prefix_compression_restart_interval {
-            if let Some(last_key_added) = self.maybe_last_key_added {
+            if let Some(last_key_added) = self.maybe_last_key_added.as_ref() {
                 // Compare to the previously added key to see how much the current key can be compressed
                 let last_key_added_bytes = last_key_added.as_bytes();
                 let min_prefix_length = cmp::min(last_key_added_bytes.len(), key_bytes.len());
@@ -181,7 +182,7 @@ where
 
     This was called `BlockBuilder::Finish` in LevelDB.
     */
-    pub(crate) fn finalize(&mut self) -> &[u8] {
+    pub(crate) fn finalize(&mut self) -> Vec<u8> {
         // Append the restart points
         for point in self.restart_points.iter() {
             self.buffer.extend(u32::encode_fixed_vec(*point));
@@ -193,7 +194,8 @@ where
 
         self.block_finalized = true;
 
-        &self.buffer[..]
+        // TODO: Make this a consuming a method so that we can avoid cloning. Would also remove the need for `block_finalized` field.
+        self.buffer.clone()
     }
 
     /**
