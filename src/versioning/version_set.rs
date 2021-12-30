@@ -109,7 +109,7 @@ impl VersionSet {
             prev_wal_number: None,
             versions,
             current_version: None,
-            compaction_pointers: [None; MAX_NUM_LEVELS],
+            compaction_pointers: Default::default(),
             maybe_manifest_file: None,
         }
     }
@@ -123,7 +123,7 @@ impl VersionSet {
     }
 
     // Returns a new file number.
-    pub fn get_new_file_number(&self) -> u64 {
+    pub fn get_new_file_number(&mut self) -> u64 {
         self.curr_file_number += 1;
         self.curr_file_number
     }
@@ -136,7 +136,7 @@ impl VersionSet {
 
     **NOTE** The number being reused must have been obtained via [`VersionSet::get_new_file_number`].
     */
-    pub fn reuse_file_number(&self, file_number: u64) {
+    pub fn reuse_file_number(&mut self, file_number: u64) {
         // If the provided file number is the same as the current file number in the version set,
         // then we know that the counter was just incremented and we can perform the reverse
         // operation.
@@ -227,7 +227,7 @@ impl VersionSet {
     */
     pub fn log_and_apply(
         &mut self,
-        change_manifest: VersionChangeManifest,
+        mut change_manifest: VersionChangeManifest,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
     ) -> WriteResult<()> {
         if change_manifest.wal_file_number.is_some() {
@@ -254,9 +254,9 @@ impl VersionSet {
         change_manifest.curr_file_number = Some(self.curr_file_number);
         change_manifest.prev_sequence_number = Some(self.prev_sequence_number);
         let current_version = self.get_current_version();
-        let version_builder = VersionBuilder::new(current_version);
+        let mut version_builder = VersionBuilder::new(current_version);
         version_builder.accumulate_changes(&change_manifest);
-        let new_version = version_builder.apply_changes(&mut self.compaction_pointers);
+        let mut new_version = version_builder.apply_changes(&mut self.compaction_pointers);
         new_version.finalize();
 
         let created_new_manifest_file: bool = self.maybe_manifest_file.is_none();
@@ -273,11 +273,10 @@ impl VersionSet {
                 version set state.",
                 &manifest_path
             );
-            self.maybe_manifest_file = Some(LogWriter::new(
-                self.options.filesystem_provider(),
-                manifest_path,
-            )?);
-            self.write_snapshot(self.maybe_manifest_file.as_mut().unwrap());
+            let mut manifest_file =
+                LogWriter::new(self.options.filesystem_provider(), manifest_path.clone())?;
+            self.write_snapshot(&mut manifest_file);
+            self.maybe_manifest_file = Some(manifest_file);
 
             log::info!(
                 "Manifest file created at {:?} with a snapshot of the current version set state.",
@@ -298,7 +297,7 @@ impl VersionSet {
                 );
                 let serialized_manifest: Vec<u8> = Vec::from(&change_manifest);
                 self.maybe_manifest_file
-                    .as_ref()
+                    .as_mut()
                     .unwrap()
                     .append(&serialized_manifest)?;
 
@@ -367,7 +366,7 @@ impl VersionSet {
 impl VersionSet {
     /// Write a snapshot of the version set to the provided log file.
     fn write_snapshot(&mut self, manifest_file: &mut LogWriter) {
-        let change_manifest = VersionChangeManifest::default();
+        let mut change_manifest = VersionChangeManifest::default();
 
         // Save compaction pointers
         for level in 0..MAX_NUM_LEVELS {
