@@ -89,7 +89,7 @@ impl TryFrom<&Vec<u8>> for Footer {
         }
 
         let (metaindex_handle, bytes_read) = BlockHandle::deserialize(value)?;
-        let (index_handle, bytes_read) = BlockHandle::deserialize(&value[bytes_read..])?;
+        let (index_handle, _bytes_read) = BlockHandle::deserialize(&value[bytes_read..])?;
 
         Ok(Footer::new(metaindex_handle, index_handle))
     }
