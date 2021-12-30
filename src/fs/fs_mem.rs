@@ -150,7 +150,7 @@ struct InMemoryFile {
 }
 
 impl InMemoryFile {
-    /// Create an instance of [`InMemoryFile`](self::InMemoryFile)
+    /// Create an instance of [`InMemoryFile`](self::InMemoryFile).
     fn new() -> Self {
         Self {
             contents: vec![],
