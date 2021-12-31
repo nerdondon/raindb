@@ -22,7 +22,7 @@ use super::filter_block::FilterBlockReader;
 use super::footer::{Footer, SIZE_OF_FOOTER_BYTES};
 
 /// Type alias for block cache entries.
-type DataBlockCacheEntry = Box<dyn CacheEntry<DataBlockReader>>;
+type DataBlockCacheEntry<'e> = Box<dyn CacheEntry<'e, DataBlockReader>>;
 
 /**
 An immutable, sorted map of strings to strings.
@@ -131,7 +131,7 @@ impl Table {
     ) -> TableResult<Option<Vec<u8>>> {
         // Search the index block for the offset of a block that may or may not contain the key we
         // are looking for
-        let index_block_iter = self.index_block.iter();
+        let mut index_block_iter = self.index_block.iter();
         index_block_iter.seek(key)?;
         let maybe_raw_handle = index_block_iter.current();
         if maybe_raw_handle.is_none() {
@@ -159,7 +159,7 @@ impl Table {
         let block_reader = self.get_block_reader(&read_options, &block_handle)?;
 
         // We have the block reader, now use the iterator to try to find the value for the key.
-        let block_reader_iter = block_reader.iter();
+        let mut block_reader_iter = block_reader.iter();
         block_reader_iter.seek(key);
         match block_reader_iter.current() {
             Some((key, value)) => {
@@ -209,12 +209,12 @@ impl Table {
         let block_data_size: usize = block_handle.get_size() as usize;
         // The total block size is the size on disk plus the descriptor size
         let total_block_size: usize = block_data_size + BLOCK_DESCRIPTOR_SIZE_BYTES;
-        let raw_block_data: Vec<u8> = vec![0; total_block_size];
+        let mut raw_block_data: Vec<u8> = vec![0; total_block_size];
         let bytes_read = file.read_from(&mut raw_block_data, block_handle.get_offset() as usize)?;
         if bytes_read != total_block_size {
-            return Err(ReadError::IO(io::Error::new(
+            return Err(ReadError::IO(DBIOError::new(
                 io::ErrorKind::UnexpectedEof,
-                "Could not read the entire block into the buffer.".to_string(),
+                "Could not read the entire block into the buffer.",
             )));
         }
 
@@ -238,9 +238,9 @@ impl Table {
         let compression_type: TableFileCompressionType;
         match maybe_compression_type {
             Err(error) => {
-                return Err(ReadError::BlockDecompression(io::Error::new(
+                return Err(ReadError::BlockDecompression(DBIOError::new(
                     io::ErrorKind::InvalidData,
-                    error,
+                    &error.to_string(),
                 )));
             }
             Ok(encoded_compression_type) => compression_type = encoded_compression_type,
@@ -250,12 +250,12 @@ impl Table {
             TableFileCompressionType::None => {
                 return Ok(raw_block_data[0..compression_type_offset].to_vec());
             }
-            Snappy => {
+            TableFileCompressionType::Snappy => {
                 /*
                 TODO: I would love to not allocate a Vec here from the range but I'm not sure how
                 to get a slice. I need something that implements the `Read` trait
                 */
-                let snappy_reader = FrameDecoder::new(
+                let mut snappy_reader = FrameDecoder::new(
                     raw_block_data[0..compression_type_offset]
                         .to_vec()
                         .as_slice(),
@@ -264,7 +264,7 @@ impl Table {
 
                 match snappy_reader.read_exact(&mut decompressed_data) {
                     Err(error) => {
-                        return Err(ReadError::BlockDecompression(error));
+                        return Err(ReadError::BlockDecompression(error.into()));
                     }
                     Ok(_) => {
                         return Ok(decompressed_data);
@@ -281,7 +281,7 @@ impl Table {
         metaindex_block: &MetaIndexBlockReader,
     ) -> TableResult<Option<FilterBlockReader>> {
         let filter_block_name = filter_policy::get_filter_block_name(options.filter_policy());
-        let metaindex_block_iter = metaindex_block.iter();
+        let mut metaindex_block_iter = metaindex_block.iter();
         // Seek to the filter meta block
         match metaindex_block_iter.seek(&MetaIndexKey::new(filter_block_name)) {
             Err(error) => return Err(ReadError::FilterBlock(format!("{}", error))),
@@ -476,7 +476,7 @@ impl<'t> TwoLevelIterator<'t> {
     /// Move the index iterator and data iterator forward until we find a non-empty block.
     fn skip_empty_data_blocks_forward(&'t mut self) -> TableResult<()> {
         while self.maybe_data_block_iter.is_none()
-            || !self.maybe_data_block_iter.as_ref().unwrap().is_valid()
+            || !self.maybe_data_block_iter.as_mut().unwrap().is_valid()
         {
             if !self.index_block_iter.is_valid() {
                 // We've reached the end of the index block so there are no more data blocks
