@@ -167,25 +167,23 @@ impl From<TryFromIntError> for LogIOError {
     }
 }
 
-/// Wrapper for [`std::io::Error`] that implements [`Copy`].
+/// Wrapper for [`std::io::Error`] that implements [`Clone`].
 #[derive(Clone, Debug)]
 pub struct DBIOError {
     error_kind: io::ErrorKind,
 
-    custom_message: &'static str,
+    custom_message: String,
 }
 
 /// Crate-only methods
 impl DBIOError {
-    pub(crate) fn new(error_kind: io::ErrorKind, custom_message: &'static str) -> Self {
+    pub(crate) fn new(error_kind: io::ErrorKind, custom_message: String) -> Self {
         Self {
             error_kind,
             custom_message,
         }
     }
 }
-
-impl Copy for DBIOError {}
 
 impl std::error::Error for DBIOError {}
 
@@ -205,7 +203,7 @@ impl From<io::Error> for DBIOError {
     fn from(io_err: io::Error) -> Self {
         DBIOError {
             error_kind: io_err.kind(),
-            custom_message: format!("{}", io_err).as_str(),
+            custom_message: io_err.to_string(),
         }
     }
 }

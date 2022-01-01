@@ -214,7 +214,7 @@ impl Table {
         if bytes_read != total_block_size {
             return Err(ReadError::IO(DBIOError::new(
                 io::ErrorKind::UnexpectedEof,
-                "Could not read the entire block into the buffer.",
+                "Could not read the entire block into the buffer.".to_string(),
             )));
         }
 
@@ -240,7 +240,7 @@ impl Table {
             Err(error) => {
                 return Err(ReadError::BlockDecompression(DBIOError::new(
                     io::ErrorKind::InvalidData,
-                    &error.to_string(),
+                    error.to_string(),
                 )));
             }
             Ok(encoded_compression_type) => compression_type = encoded_compression_type,

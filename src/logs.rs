@@ -409,8 +409,7 @@ impl LogReader {
             return Err(LogIOError::IO(DBIOError::new(
                 ErrorKind::UnexpectedEof,
                 "Unexpectedly reached the end of the file while attempting to read a header."
-                    .to_string()
-                    .as_str(),
+                    .to_string(),
             )));
         }
 
@@ -426,8 +425,7 @@ impl LogReader {
             return Err(LogIOError::IO(DBIOError::new(
                 ErrorKind::UnexpectedEof,
                 "Unexpectedly reached the end of the file while attempting to read the data chunk."
-                    .to_string()
-                    .as_str(),
+                    .to_string(),
             )));
         }
 
