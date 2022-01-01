@@ -86,13 +86,13 @@ impl FilterBlockBuilder {
         }
 
         // Flatten the filters and get an array of serialized per-filter offsets
-        let results: Vec<u8> = vec![];
-        let serialized_offsets: Vec<u8> =
+        let mut results: Vec<u8> = vec![];
+        let mut serialized_offsets: Vec<u8> =
             Vec::with_capacity(self.filters.len() * SIZE_OF_U32_BYTES);
-        let curr_filter_offset = 0;
-        for filter in self.filters {
+        let mut curr_filter_offset = 0;
+        for filter in &self.filters {
             serialized_offsets.append(&mut u32::encode_fixed_vec(curr_filter_offset));
-            results.append(&mut filter);
+            results.extend_from_slice(filter);
 
             curr_filter_offset += filter.len() as u32;
         }
@@ -122,7 +122,7 @@ impl FilterBlockBuilder {
             return;
         }
 
-        let filter = self.filter_policy.create_filter(self.keys);
+        let filter = self.filter_policy.create_filter(&self.keys);
         self.filters.push(filter);
 
         self.keys.clear();

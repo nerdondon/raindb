@@ -41,7 +41,7 @@ impl FilterBlockReader {
     /// Create a new instance of a [`FilterBlockReader`].
     pub fn new(
         filter_policy: Arc<Box<dyn FilterPolicy>>,
-        filter_data: Vec<u8>,
+        mut filter_data: Vec<u8>,
     ) -> TableResult<Self> {
         if filter_data.len() < 5 {
             // There should be at least a 1 byte for the range size exponent and 4 bytes for the
@@ -63,11 +63,7 @@ impl FilterBlockReader {
         // Split up the filters according to the deserialized offets for more straight-forward
         // checking later
         let raw_filters = &filter_data[..&filter_data.len() - 4].to_vec();
-        let filters = FilterBlockReader::split_filters_with_offset(
-            encoded_range_size_exponent as u32,
-            &offsets,
-            raw_filters,
-        );
+        let filters = FilterBlockReader::split_filters_with_offset(&offsets, raw_filters);
 
         Ok(Self {
             filter_policy: Arc::clone(&filter_policy),
@@ -97,7 +93,7 @@ impl FilterBlockReader {
             // encountered
             log::warn!("The provided block offset ({}) could not be used to index the filter array. Ignoring the error and returning true so that a disk seek is done.", block_offset);
         } else {
-            match (*self.filter_policy).key_may_match(key, self.filters[filter_index]) {
+            match (*self.filter_policy).key_may_match(key, &self.filters[filter_index]) {
                 Err(error) => {
                     log::warn!("There was an error checking the filter for a match. Ignoring the error and forcing a disk seek. Original error: {}", error);
                 }
@@ -119,6 +115,7 @@ impl FilterBlockReader {
             ));
         }
 
+        // Offsets are u32 values stored in a fixed-length encoding (4 bytes).
         let offsets = raw_offsets
             .chunks(4)
             .map(|chunk| u32::decode_fixed(chunk))
@@ -133,13 +130,8 @@ impl FilterBlockReader {
     Filters are stored end to end in the byte buffer. This method uses the provided offsets to
     find the ranges representing individual filters and splits the filters up accordingly.
     */
-    fn split_filters_with_offset(
-        range_size_exponent: u32,
-        offsets: &[u32],
-        raw_filters: &[u8],
-    ) -> Vec<Vec<u8>> {
-        let range_size: u64 = 1 << range_size_exponent;
-        let filters: Vec<Vec<u8>> = vec![];
+    fn split_filters_with_offset(offsets: &[u32], raw_filters: &[u8]) -> Vec<Vec<u8>> {
+        let mut filters: Vec<Vec<u8>> = vec![];
 
         for offset_index in 0..(offsets.len() - 1) {
             let next_offset_index = offset_index + 1;
