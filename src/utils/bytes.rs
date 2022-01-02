@@ -28,7 +28,7 @@ pub(crate) trait BinarySeparable: Ord + Into<Vec<u8>> {
 impl BinarySeparable for &[u8] {
     fn find_shortest_separator(smaller: Self, greater: Self) -> Vec<u8> {
         let min_prefix_length = cmp::min(smaller.len(), greater.len());
-        let diff_idx: usize = 0;
+        let mut diff_idx: usize = 0;
         while diff_idx < min_prefix_length && smaller[diff_idx] == greater[diff_idx] {
             diff_idx += 1;
         }
@@ -41,11 +41,11 @@ impl BinarySeparable for &[u8] {
         // Check if there is a byte that we can increment to generate a separator from the prefix
         let diff_byte = smaller[diff_idx];
         if diff_byte < u8::MAX && diff_byte + 1 < greater[diff_idx] {
-            let mut separator = &smaller[..diff_idx];
+            let mut separator = smaller[..diff_idx].to_vec();
             separator[diff_idx] += 1;
-            assert!(separator < greater);
+            assert!(separator.as_slice() < greater);
 
-            return separator.to_vec();
+            return separator;
         }
 
         return smaller.clone().to_vec();
