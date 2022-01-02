@@ -5,6 +5,9 @@ type Link<T> = Option<SharedNode<T>>;
 
 type WeakLink<T> = Option<Weak<RwLock<Node<T>>>>;
 
+/// A [`Node`] wrapped in concurrency primitives.
+pub type SharedNode<T> = Arc<RwLock<Node<T>>>;
+
 /// A node in the linked list.
 #[derive(Debug)]
 pub struct Node<T> {
@@ -23,9 +26,7 @@ pub struct Node<T> {
 
     This should not be changed except through the linked list itself.
     */
-
-    /// Returns true if the node is part of a weak list. Otherwise, false.
-    is_weak: bool,
+    prev: WeakLink<T>,
 }
 
 impl<T> Node<T> {
@@ -35,64 +36,6 @@ impl<T> Node<T> {
             element,
             next: None,
             prev: None,
-            is_weak,
-        }
-    }
-}
-
-/// A [`Node`] wrapped in concurrency primitives.
-#[derive(Debug)]
-pub struct SharedNode<T>(Arc<RwLock<Node<T>>>);
-
-impl<T> Clone for SharedNode<T> {
-    /// Returns a clone of the underlying [`Arc`] pointer.
-    fn clone(&self) -> Self {
-        Self(Arc::clone(&self.0))
-    }
-}
-
-impl<T> Deref for SharedNode<T> {
-    type Target = Arc<RwLock<Node<T>>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> Drop for SharedNode<T> {
-    fn drop(&mut self) {
-        if self.read().is_weak && Arc::strong_count(&self.0) == 1 {
-            // If the strong count of the node is 1, that means that the list is the only one
-            // holding a reference. We should unlink the node.
-            let mut node_write_guard = self.write();
-            let maybe_next_node = node_write_guard.next.map(|node| node.write());
-            let maybe_previous_node = match node_write_guard.prev {
-                None => None,
-                Some(weak_prev) => Weak::upgrade(&weak_prev).map(|prev_node| prev_node.write()),
-            };
-
-            // Fix the links of the previous and next nodes so that they point at each other instead of
-            // the node we are removing
-            if maybe_previous_node.is_some() {
-                let previous_node = maybe_previous_node.unwrap();
-                previous_node.next = node_write_guard.next;
-            } else {
-                // Only head nodes have no previous link
-                self.head = node_write_guard.next;
-            }
-
-            if maybe_next_node.is_some() {
-                let next_node = maybe_next_node.unwrap();
-                next_node.prev = node_write_guard.prev;
-            } else {
-                // Only tail nodes have no next link
-                self.tail = match node_write_guard.prev {
-                    Some(prev_node) => {
-                        Weak::upgrade(&prev_node).map(|upgraded| SharedNode(upgraded))
-                    }
-                    None => None,
-                };
-            }
         }
     }
 }
@@ -107,14 +50,6 @@ pub struct LinkedList<T> {
     head: Link<T>,
     tail: Link<T>,
     length: usize,
-
-    /**
-    Indicates if this is a weak linked list or not.
-
-    A weak linked list will automatically unlink nodes that no longer have any external references
-    (i.e. references held outside of the linked list itself).
-    */
-    is_weak: bool,
 }
 
 impl<T> LinkedList<T> {
@@ -124,22 +59,6 @@ impl<T> LinkedList<T> {
             head: None,
             tail: None,
             length: 0,
-            is_weak: false,
-        }
-    }
-
-    /**
-    Create a weak [`LinkedList`].
-
-    A weak linked list will automatically unlink nodes that no longer have any external references
-    (i.e. references held outside of the linked list itself).
-    */
-    pub fn new_weak() -> Self {
-        Self {
-            head: None,
-            tail: None,
-            length: 0,
-            is_weak: true,
         }
     }
 
@@ -454,45 +373,6 @@ mod tests {
         list.remove_node(pushed);
 
         assert_eq!(list.len(), 2);
-        assert_eq!(list.pop_front(), Some(1));
-    }
-
-    #[test]
-    fn weak_linked_list_keeps_node_if_there_are_multiple_external_references() {
-        let mut list = LinkedList::<u64>::new_weak();
-        list.push(1);
-        let node2 = list.push(2);
-        let node3 = list.push(3);
-
-        {
-            let _ = node2.clone();
-            assert_eq!(list.len(), 3);
-        }
-        assert_eq!(list.len(), 3);
-
-        list.remove_node(node3);
-        assert_eq!(list.len(), 2);
-        assert_eq!(list.pop(), Some(2));
-    }
-
-    #[test]
-    fn weak_linked_list_keeps_node_if_there_are_no_external_references() {
-        let mut list = LinkedList::<u64>::new_weak();
-        list.push(1);
-        let node2 = list.push(2);
-        let node3 = list.push(3);
-
-        {
-            let _ = node2.clone();
-            assert_eq!(list.len(), 3);
-        }
-        assert_eq!(list.len(), 3);
-
-        list.remove_node(node3);
-        assert_eq!(list.len(), 2);
-
-        drop(node2);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list.pop(), Some(1));
+        assert_eq!(list.pop_front().unwrap().read().element, 1);
     }
 }
