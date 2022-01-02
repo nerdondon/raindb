@@ -19,7 +19,7 @@ pub struct Node<T> {
 
     This should not be changed except through the linked list itself.
     */
-    pub next: Link<T>,
+    next: Link<T>,
 
     /**
     A link to the previous node.
@@ -29,9 +29,10 @@ pub struct Node<T> {
     prev: WeakLink<T>,
 }
 
+/// Public methods
 impl<T> Node<T> {
     /// Create a new [`Node`] that with empty next and previous links.
-    pub fn new(element: T, is_weak: bool) -> Self {
+    pub fn new(element: T) -> Self {
         Self {
             element,
             next: None,
@@ -44,14 +45,26 @@ impl<T> Node<T> {
 A doubly-linked linked list that exposes it's structural nodes.
 
 The structural nodes are exposed to enable things like O(1) insertion and removal.
+
+# Concurrency
+
+This linked list is not safe for use without external synchronization. A [`RwLock`] is used on the
+nodes purely for interior mutability purposes. This could be made obvious with
+[`std::cell::UnsafeCell`] but [`RwLock`] was used so that the code didn't get even more verbose.
 */
 #[derive(Debug)]
 pub struct LinkedList<T> {
+    /// The head of the list.
     head: Link<T>,
+
+    /// The tail of the list.
     tail: Link<T>,
+
+    /// The length of the list.
     length: usize,
 }
 
+/// Public methods
 impl<T> LinkedList<T> {
     /// Create a new instance of [`LinkedList`]
     pub fn new() -> Self {
@@ -63,15 +76,14 @@ impl<T> LinkedList<T> {
     }
 
     /// Remove an element from the tail of the list.
-    pub fn pop(&mut self) -> Option<T> {
-        self.tail.take().map(|tail_node| {
-            let old_tail_node = tail_node.write();
-            self.tail = match old_tail_node.prev {
+    pub fn pop(&mut self) -> Option<SharedNode<T>> {
+        self.tail.take().map(|old_tail_node| {
+            self.tail = match old_tail_node.write().prev.take() {
                 None => None,
-                Some(prev_node) => Weak::upgrade(&prev_node),
+                Some(prev_node) => Weak::upgrade(&prev_node).map(|upgraded| upgraded),
             };
 
-            match self.tail {
+            match &mut self.tail {
                 None => {
                     // There is no new tail node so the list must be empty
                     self.head = None;
@@ -85,17 +97,16 @@ impl<T> LinkedList<T> {
 
             self.length -= 1;
 
-            old_tail_node.element
+            old_tail_node
         })
     }
 
     /// Remove an element from the front of the list.
-    pub fn pop_front(&mut self) -> Option<T> {
-        self.head.take().map(|head_node| {
-            let old_head_node = head_node.write();
-            self.head = old_head_node.next;
+    pub fn pop_front(&mut self) -> Option<SharedNode<T>> {
+        self.head.take().map(|old_head_node| {
+            self.head = (*old_head_node).write().next.clone();
 
-            match self.head {
+            match &self.head {
                 None => {
                     // There is no new head node so the list must be empty
                     self.tail = None;
@@ -109,13 +120,13 @@ impl<T> LinkedList<T> {
 
             self.length -= 1;
 
-            old_head_node.element
+            old_head_node
         })
     }
 
     /// Push an element onto the back of the list.
     pub fn push(&mut self, element: T) -> SharedNode<T> {
-        let mut new_node = Arc::new(RwLock::new(Node::new(element)));
+        let new_node = Arc::new(RwLock::new(Node::new(element)));
         self.push_node(Arc::clone(&new_node));
 
         new_node
@@ -123,16 +134,16 @@ impl<T> LinkedList<T> {
 
     /// Push a node onto the back of the list.
     pub fn push_node(&mut self, node: SharedNode<T>) {
-        node.write().prev = self.tail.map(|tail| Arc::downgrade(&tail));
+        node.write().prev = self.tail.as_ref().map(|tail| Arc::downgrade(tail));
         node.write().next = None;
-        let maybe_tail_node = self.tail.map(|tail_node| tail_node.write());
 
+        let maybe_tail_node = self.tail.clone();
         match maybe_tail_node {
             Some(tail_node) => {
                 // Fix existing links
-                tail_node.next = Some(node)
+                tail_node.write().next = Some(Arc::clone(&node))
             }
-            None => self.head = Some(node),
+            None => self.head = Some(Arc::clone(&node)),
         }
 
         self.tail = Some(node);
@@ -141,8 +152,8 @@ impl<T> LinkedList<T> {
 
     /// Push an element onto the front of the list.
     pub fn push_front(&mut self, element: T) -> SharedNode<T> {
-        let mut new_node = Arc::new(RwLock::new(Node::new(element)));
-        self.push_node_front(Arc::clone(&new_node));
+        let new_node = Arc::new(RwLock::new(Node::new(element)));
+        self.push_node_front(new_node.clone());
 
         new_node
     }
@@ -150,49 +161,48 @@ impl<T> LinkedList<T> {
     /// Push a node onto the front of the list.
     pub fn push_node_front(&mut self, node: SharedNode<T>) {
         node.write().prev = None;
-        node.write().next = self.head;
-        let maybe_head_node = self.head.map(|head_node| head_node.write());
 
-        match maybe_head_node {
+        match self.head.as_ref() {
             Some(head_node) => {
                 // Fix existing links
-                head_node.prev = Some(Arc::downgrade(&node))
+                head_node.write().prev = Some(Arc::downgrade(&node))
             }
-            None => self.head = Some(node),
+            None => self.head = Some(Arc::clone(&node)),
         }
 
+        node.write().next = self.head.clone();
         self.head = Some(node);
         self.length += 1;
     }
 
     /// Remove the given node from the linked list.
-    pub fn remove_node(&mut self, mutable_node: SharedNode<T>) {
-        let mutable_node = mutable_node.write();
-        let maybe_next_node = mutable_node.next.map(|node| node.write());
-        let maybe_previous_node = match mutable_node.prev {
+    pub fn remove_node(&mut self, target_node: SharedNode<T>) {
+        let mutable_target = target_node.write();
+        let maybe_previous_node = match mutable_target.prev.as_ref() {
             None => None,
-            Some(weak_prev) => Weak::upgrade(&weak_prev).map(|prev_node| prev_node.write()),
+            Some(weak_prev) => Weak::upgrade(weak_prev),
         };
 
         // Fix the links of the previous and next nodes so that they point at each other instead of
         // the node we are removing
-        if maybe_previous_node.is_some() {
-            let previous_node = maybe_previous_node.unwrap();
-            previous_node.next = mutable_node.next;
-        } else {
-            // Only head nodes have no previous link
-            self.head = mutable_node.next;
+        match maybe_previous_node.clone() {
+            Some(previous_node) => {
+                previous_node.write().next = mutable_target.next.clone();
+            }
+            None => {
+                // Only head nodes have no previous link
+                self.head = mutable_target.next.clone();
+            }
         }
 
-        if maybe_next_node.is_some() {
-            let next_node = maybe_next_node.unwrap();
-            next_node.prev = mutable_node.prev;
-        } else {
-            // Only tail nodes have no next link
-            self.tail = match mutable_node.prev {
-                Some(prev_node) => Weak::upgrade(&prev_node),
-                None => None,
-            };
+        match mutable_target.next.as_ref() {
+            Some(next_node) => {
+                next_node.write().prev = mutable_target.prev.clone();
+            }
+            None => {
+                // Only tail nodes have no next link
+                self.tail = maybe_previous_node;
+            }
         }
 
         self.length -= 1;
@@ -208,23 +218,16 @@ impl<T> LinkedList<T> {
         self.length <= 0
     }
 
-    /**
-    Return an iterator over the nodes of the linked list.
-
-    Due to the complete exposure of the node and the node's internal fields with interior
-    mutability, care should be taken to not change the links.
-
-    TODO: Lock this down somehow
-    */
+    /// Return an iterator over the nodes of the linked list.
     pub fn iter(&self) -> NodeIter<T> {
         NodeIter {
-            next: self.head.as_ref().map(|node| Arc::clone(node)),
+            next: self.head.as_ref().map(|node| node.clone()),
         }
     }
 
     /// Get a reference to the last node of the linked list.
     pub fn tail(&self) -> Link<T> {
-        self.tail.as_ref().map(|node| Arc::clone(node))
+        self.tail.as_ref().map(|node| node.clone())
     }
 }
 
@@ -234,9 +237,11 @@ impl<T> Drop for LinkedList<T> {
     }
 }
 
-/// An iterator adapter to keep state for iterating the linked list.
-///
-/// Created by calling [`LinkedList::iter`].
+/**
+An iterator adapter to keep state for iterating the linked list.
+
+Created by calling [`LinkedList::iter`].
+*/
 struct NodeIter<T> {
     /// The next value of the iterator.
     next: Option<SharedNode<T>>,
@@ -246,12 +251,13 @@ impl<T> Iterator for NodeIter<T> {
     type Item = SharedNode<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.next.map(|current_node| {
+        self.next.take().map(|current_node| {
             self.next = current_node
                 .read()
                 .next
                 .as_ref()
                 .map(|node| Arc::clone(node));
+
             current_node
         })
     }
@@ -270,7 +276,7 @@ mod tests {
 
     #[test]
     fn single_threaded_can_push_elements() {
-        let list = LinkedList::<u64>::new();
+        let mut list = LinkedList::<u64>::new();
 
         let mut pushed = list.push(1);
         assert_eq!(pushed.read().element, 1);
@@ -287,27 +293,27 @@ mod tests {
 
     #[test]
     fn single_threaded_can_pop_elements() {
-        let list = LinkedList::<u64>::new();
+        let mut list = LinkedList::<u64>::new();
         list.push(1);
         list.push(2);
         list.push(3);
         assert_eq!(list.len(), 3);
 
-        assert_eq!(list.pop(), Some(3));
+        assert_eq!(list.pop().unwrap().read().element, 3);
         assert_eq!(list.len(), 2);
 
-        assert_eq!(list.pop(), Some(2));
+        assert_eq!(list.pop().unwrap().read().element, 2);
         assert_eq!(list.len(), 1);
 
-        assert_eq!(list.pop(), Some(1));
+        assert_eq!(list.pop().unwrap().read().element, 1);
         assert_eq!(list.len(), 0);
 
-        assert_eq!(list.pop(), None);
+        assert!(list.pop().is_none());
     }
 
     #[test]
     fn single_threaded_can_push_elements_to_the_front() {
-        let list = LinkedList::<u64>::new();
+        let mut list = LinkedList::<u64>::new();
 
         list.push_front(1);
         assert_eq!(list.len(), 1);
@@ -319,55 +325,55 @@ mod tests {
 
     #[test]
     fn single_threaded_can_pop_elements_from_the_front() {
-        let list = LinkedList::<u64>::new();
+        let mut list = LinkedList::<u64>::new();
         list.push(1);
         list.push(2);
         list.push(3);
         assert_eq!(list.len(), 3);
 
-        assert_eq!(list.pop_front(), Some(1));
+        assert_eq!(list.pop_front().unwrap().read().element, 1);
         assert_eq!(list.len(), 2);
 
-        assert_eq!(list.pop_front(), Some(2));
+        assert_eq!(list.pop_front().unwrap().read().element, 2);
         assert_eq!(list.len(), 1);
 
-        assert_eq!(list.pop_front(), Some(3));
+        assert_eq!(list.pop_front().unwrap().read().element, 3);
         assert_eq!(list.len(), 0);
 
-        assert_eq!(list.pop_front(), None);
+        assert!(list.pop_front().is_none());
     }
 
     #[test]
     fn single_threaded_list_can_unlink_head() {
-        let list = LinkedList::<u64>::new();
-        let mut pushed = list.push(1);
+        let mut list = LinkedList::<u64>::new();
+        let pushed = list.push(1);
         list.push(2);
         list.push(3);
 
         list.remove_node(pushed);
 
         assert_eq!(list.len(), 2);
-        assert_eq!(list.pop_front(), Some(2));
+        assert_eq!(list.pop_front().unwrap().read().element, 2);
     }
 
     #[test]
     fn single_threaded_list_can_unlink_tail() {
-        let list = LinkedList::<u64>::new();
+        let mut list = LinkedList::<u64>::new();
         list.push(1);
         list.push(2);
-        let mut pushed = list.push(3);
+        let pushed = list.push(3);
 
         list.remove_node(pushed);
 
         assert_eq!(list.len(), 2);
-        assert_eq!(list.pop(), Some(2));
+        assert_eq!(list.pop().unwrap().read().element, 2);
     }
 
     #[test]
     fn single_threaded_list_can_unlink_node_from_middle() {
-        let list = LinkedList::<u64>::new();
+        let mut list = LinkedList::<u64>::new();
         list.push(1);
-        let mut pushed = list.push(2);
+        let pushed = list.push(2);
         list.push(3);
 
         list.remove_node(pushed);
