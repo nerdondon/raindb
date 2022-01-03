@@ -116,7 +116,9 @@ impl VersionSet {
 
     /// Return the number of table files at the specified level in the current version.
     pub fn num_files_at_level(&self, level: usize) -> usize {
-        let current_version = self.get_current_version();
+        // We have a shared reference to `self` so the `current_version` field cannot have been
+        // uninstalled or released.
+        let current_version = self.current_version.as_ref().unwrap();
         let num_files = current_version.read().element.num_files_at_level(level);
 
         num_files
@@ -167,7 +169,10 @@ impl VersionSet {
 
     /// Returns true if a level on the current version needs compaction.
     pub fn needs_compaction(&self) -> bool {
-        let curr_version = &self.get_current_version().read().element;
+        // We have a shared reference to `self` so the `current_version` field cannot have been
+        // uninstalled or released.
+        let curr_version_handle = self.current_version.as_ref().unwrap();
+        let curr_version = &curr_version_handle.read().element;
         if curr_version.get_size_compaction_metadata().is_some()
             && curr_version
                 .get_size_compaction_metadata()
@@ -331,7 +336,8 @@ impl VersionSet {
                     self.prev_sequence_number
                 );
 
-                self.versions.push(new_version);
+                let version_handle = self.versions.push(new_version);
+                self.current_version = Some(version_handle);
                 self.curr_wal_number = change_manifest.wal_file_number.clone().unwrap();
                 self.prev_wal_number = change_manifest.prev_wal_file_number.clone();
             }
@@ -360,6 +366,34 @@ impl VersionSet {
 
         Ok(())
     }
+
+    /**
+    Releases a version reference and completely removes it from the version set if
+    there are no other references to it.
+
+    **This method must be called so that the version is also released from the linked list.**
+
+    # Legacy
+
+    LevelDB keeps the next/prev pointers internal to a version while RainDB uses an external linked
+    list that lives within the version set. This makes it difficult to just use the [`Drop`] trait
+    to clean up the version from the linked list. We could wrap the linked list in
+    [`Arc`]/[`Mutex`] but this would be extra. This wrapper is extra since we want to maintain the
+    invariant that access to the version set is exclusive and managed by the top-level RainDB mutex.
+    This might be too strong of an invariant but is most like LevelDB so we keep it this way for
+    now.
+
+    [`Mutex`]: parking_lot::Mutex
+    */
+    pub fn release_version(&mut self, version: SharedNode<Version>) {
+        if Arc::strong_count(&version) == 2 {
+            // Remove if this is the last external reference.
+            // 1 external reference + 1 internal (linked list) reference = 2.
+            self.versions.remove_node(version);
+        } else {
+            drop(version);
+        }
+    }
 }
 
 /// Private methods
@@ -379,8 +413,9 @@ impl VersionSet {
         }
 
         // Save files
+        let current_version = self.get_current_version();
         for level in 0..MAX_NUM_LEVELS {
-            let files = &self.get_current_version().read().element.files[level];
+            let files = &current_version.read().element.files[level];
             for file in files {
                 change_manifest.add_file(
                     level,
@@ -390,6 +425,7 @@ impl VersionSet {
                 )
             }
         }
+        self.release_version(current_version);
 
         let serialized_manifest: Vec<u8> = Vec::from(&change_manifest);
         manifest_file.append(&serialized_manifest);
