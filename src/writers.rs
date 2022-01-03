@@ -99,8 +99,8 @@ impl Writer {
     }
 
     /// Parks the thread while it waits for its turn to perform its operation.
-    pub fn wait_for_turn(&self, database_mutex_guard: MutexGuard<GuardedDbFields>) {
-        self.thread_signaller.wait(&mut database_mutex_guard)
+    pub fn wait_for_turn(&self, database_mutex_guard: &mut MutexGuard<GuardedDbFields>) {
+        self.thread_signaller.wait(database_mutex_guard)
     }
 
     /**

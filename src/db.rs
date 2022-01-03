@@ -6,10 +6,11 @@ use arc_swap::ArcSwap;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::{self, Instant};
+use std::{io, thread};
 
 use crate::batch::Batch;
 use crate::compaction::{CompactionWorker, LevelCompactionStats, ManualCompaction, TaskKind};
@@ -20,6 +21,7 @@ use crate::config::{
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::FileNameHandler;
 use crate::file_names::{DATA_DIR, WAL_DIR};
+use crate::fs::FileSystem;
 use crate::key::InternalKey;
 use crate::logs::LogWriter;
 use crate::memtable::{MemTable, SkipListMemTable};
@@ -112,7 +114,7 @@ pub(crate) struct GuardedDbFields {
     writer_queue: VecDeque<Arc<Writer>>,
 
     /// Holds the immutable table i.e. the memtable currently undergoing compaction.
-    pub(crate) maybe_immutable_memtable: Option<Box<dyn MemTable>>,
+    pub(crate) maybe_immutable_memtable: Option<Arc<Box<dyn MemTable>>>,
 
     /**
     The set of versions currently representing the database.
@@ -336,8 +338,9 @@ impl DB {
     ) -> RainDBResult<()> {
         // Create a new writer to represent this thread and push it into the back of the writer
         // queue
+        let force_compaction = maybe_batch.is_none();
         let writer = Arc::new(Writer::new(maybe_batch, write_options.synchronous));
-        let fields_mutex_guard = self.guarded_fields.lock();
+        let mut fields_mutex_guard = self.guarded_fields.lock();
         fields_mutex_guard
             .writer_queue
             .push_back(Arc::clone(&writer));
@@ -345,7 +348,7 @@ impl DB {
         let is_first_writer = self.is_first_writer(&mut fields_mutex_guard, &writer);
         // Wait until it is the current writer's turn to write
         while !writer.is_operation_complete() && !is_first_writer {
-            writer.wait_for_turn(fields_mutex_guard);
+            writer.wait_for_turn(&mut fields_mutex_guard);
         }
 
         // Check if the work for this thread was already completed as part of a group commit and
@@ -415,6 +418,7 @@ impl DB {
                 done.
                 */
                 first_writer.set_operation_completed(true);
+                first_writer.set_operation_result(write_result.clone());
                 first_writer.notify_writer();
             }
 
@@ -462,15 +466,12 @@ impl DB {
     fn make_room_for_write(
         &self,
         mutex_guard: &mut MutexGuard<GuardedDbFields>,
-        force_compaction: bool,
+        mut force_compaction: bool,
     ) -> RainDBResult<()> {
-        let allow_write_delay = !force_compaction;
+        let mut allow_write_delay = !force_compaction;
 
         loop {
-            let num_level_zero_files = match mutex_guard.version_set.num_files_at_level(0) {
-                Ok(num_files) => num_files,
-                Err(error) => return Err(RainDBError::VersionRead(error)),
-            };
+            let num_level_zero_files = mutex_guard.version_set.num_files_at_level(0);
 
             if mutex_guard.maybe_bad_database_state.is_some() {
                 // We encountered an issue with a background task. Return with the error.
@@ -507,13 +508,13 @@ impl DB {
                     "Current memtable is full but the previous memtable is still compacting. \
                     Waiting before attempting to compact current memtable."
                 );
-                self.background_work_finished_signal.wait(&mut mutex_guard);
+                self.background_work_finished_signal.wait(mutex_guard);
             } else if num_level_zero_files >= L0_STOP_WRITES_TRIGGER {
                 log::info!(
                     "Too many level 0 files. Waiting for compaction before proceeding with write \
                     operations."
                 );
-                self.background_work_finished_signal.wait(&mut mutex_guard);
+                self.background_work_finished_signal.wait(mutex_guard);
             } else {
                 if mutex_guard.version_set.maybe_prev_wal_number().is_some() {
                     let error_msg =
@@ -569,7 +570,7 @@ impl DB {
                 force_compaction = false;
 
                 log::info!("Attempt to schedule a compaction of the immutable memtable");
-                self.maybe_schedule_compaction(&mut mutex_guard);
+                self.maybe_schedule_compaction(mutex_guard);
             }
         }
     }
@@ -608,7 +609,7 @@ impl DB {
 
         if mutex_guard.maybe_immutable_memtable.is_none()
             && mutex_guard.maybe_manual_compaction.is_none()
-            && !mutex_guard.version_set.needs_compaction().unwrap()
+            && !mutex_guard.version_set.needs_compaction()
         {
             log::info!("No compaction work detected.");
             return;
@@ -661,11 +662,11 @@ impl DB {
             MAX_GROUP_COMMIT_SIZE_BYTES
         };
 
-        let group_commit_batch = Batch::new();
+        let mut group_commit_batch = Batch::new();
         group_commit_batch.append_batch(first_writer.maybe_batch().unwrap());
 
-        let last_writer = first_writer;
-        let writer_iter = mutex_guard.writer_queue.iter();
+        let mut last_writer = first_writer;
+        let mut writer_iter = mutex_guard.writer_queue.iter();
         // Skip the first writer since we used it to bootstrap the group commit.
         writer_iter.next();
         for writer in writer_iter {
