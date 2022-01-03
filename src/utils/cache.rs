@@ -3,12 +3,12 @@ This module provides a `Cache` trait for clients to provide their own cache impl
 implementing a least-recently-used (LRU) eviction policy is provided.
 */
 
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard};
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::{collections::HashMap, hash::Hash};
 
-use super::linked_list::{LinkedList, SharedNode};
+use super::linked_list::{LinkedList, Node, SharedNode};
 
 /// Represents an entry in the cache.
 pub trait CacheEntry<V> {
@@ -173,7 +173,9 @@ where
             writable_inner.cache_entries.remove(evicted_key);
         }
 
-        Box::new(Arc::clone(writable_inner.cache_entries.get(&key).unwrap()))
+        Box::new(SharedNodeCacheHandle::new(
+            Arc::clone(writable_inner.cache_entries.get(&key).unwrap()).read(),
+        ))
     }
 
     fn get(&self, key: &K) -> Option<Box<dyn CacheEntry<V>>> {
@@ -188,7 +190,7 @@ where
             writable_inner.lru_list.remove_node(Arc::clone(&node));
             writable_inner.lru_list.push_node_front(Arc::clone(&node));
 
-                return Some(Box::new(Arc::clone(node)));
+            return Some(Box::new(SharedNodeCacheHandle::new(node)));
         }
 
         None
@@ -210,8 +212,29 @@ where
     }
 }
 
-impl<K, V> CacheEntry<V> for SharedNode<(K, V)> {
+/**
+A struture to hold open the guard for the read-write lock so that the cached value can be
+retrieved and used more transparently
+
+TODO: Hold the guard just in time with UnsafeCell.
+*/
+struct SharedNodeCacheHandle<'h, K, V> {
+    /// Keep a live reference to the node's read guard to gain access to inner values.
+    guard_holder: RwLockReadGuard<'h, Node<(K, V)>>,
+}
+
+/// Private methods
+impl<'h, K, V> SharedNodeCacheHandle<'h, K, V> {
+    /// Create a new instance of [`SharedNodeCacheHandle`].
+    fn new(guard: RwLockReadGuard<'h, Node<(K, V)>>) -> Self {
+        Self {
+            guard_holder: guard,
+        }
+    }
+}
+
+impl<'h, K, V> CacheEntry<V> for SharedNodeCacheHandle<'h, K, V> {
     fn get_value(&self) -> &V {
-        &self.read().element.1
+        &self.guard_holder.element.1
     }
 }
