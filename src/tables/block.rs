@@ -302,7 +302,7 @@ where
     K: RainDbKeyType,
 {
     /// Update iterator adapter state to point at the entry at the specified restart point.
-    fn seek_to_restart_point(&self, restart_point_index: usize) {
+    fn seek_to_restart_point(&mut self, restart_point_index: usize) {
         self.current_index = restart_point_index;
     }
 }
@@ -404,7 +404,7 @@ where
             return None;
         }
 
-        let current_entry = self.block_entries[self.current_index];
+        let current_entry = &self.block_entries[self.current_index];
         Some((&current_entry.key, &current_entry.value))
     }
 }
