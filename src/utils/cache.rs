@@ -139,53 +139,63 @@ where
 
 impl<K, V> Cache<K, V> for LRUCache<K, V>
 where
-    K: Hash + Eq + Debug + Send + Sync + 'static,
+    K: Clone + Hash + Eq + Debug + Send + Sync + 'static,
     V: Debug + Send + Sync + 'static,
 {
     fn insert(&mut self, key: K, value: V) -> Box<dyn CacheEntry<V>> {
-        let writable_inner = self.inner.write();
-        let maybe_existing_entry = writable_inner.cache_entries.get(&key);
-        if maybe_existing_entry.is_none() {
-            // This is new entry
-            let shared_node = writable_inner.lru_list.push_front((key, value));
-            writable_inner.cache_entries.insert(key, shared_node);
-        } else {
-            // This key is already in the cache. Do not update the value but update the LRU list to
-            // indicate an access.
-            let existing_node = maybe_existing_entry.unwrap();
-            writable_inner
-                .lru_list
-                .remove_node(Arc::clone(existing_node));
-            writable_inner
-                .lru_list
-                .push_node_front(Arc::clone(existing_node));
+        let mut writable_inner = self.inner.write();
+        match writable_inner
+            .cache_entries
+            .get(&key)
+            .map(|node_ref| Arc::clone(node_ref))
+        {
+            None => {
+                // This is new entry
+                let shared_node = writable_inner.lru_list.push_front((key.clone(), value));
+                writable_inner
+                    .cache_entries
+                    .insert(key.clone(), shared_node);
+            }
+            Some(existing_node) => {
+                // This key is already in the cache. Do not update the value but update the LRU list to
+                // indicate an access.
+                writable_inner.lru_list.remove_node(existing_node.clone());
+                writable_inner
+                    .lru_list
+                    .push_node_front(existing_node.clone());
+            }
         }
 
         if writable_inner.cache_entries.len() > self.capacity {
             // Evict least recently used
-            let (evicted_key, _) = writable_inner.lru_list.pop().unwrap();
-            writable_inner.cache_entries.remove(&evicted_key);
+            let lru_node = writable_inner.lru_list.pop().unwrap();
+            let (evicted_key, _) = &lru_node.read().element;
+            writable_inner.cache_entries.remove(evicted_key);
         }
 
         Box::new(Arc::clone(writable_inner.cache_entries.get(&key).unwrap()))
     }
 
     fn get(&self, key: &K) -> Option<Box<dyn CacheEntry<V>>> {
-        let writable_inner = self.inner.write();
-        match writable_inner.cache_entries.get(key) {
-            None => return None,
-            Some(node) => {
-                // Update LRU list
-                writable_inner.lru_list.remove_node(Arc::clone(node));
-                writable_inner.lru_list.push_node_front(Arc::clone(node));
+        let mut writable_inner = self.inner.write();
+        let maybe_node = writable_inner
+            .cache_entries
+            .get(key)
+            .map(|entry| Arc::clone(entry));
+
+        if let Some(node) = maybe_node {
+            // Update LRU list
+            writable_inner.lru_list.remove_node(Arc::clone(&node));
+            writable_inner.lru_list.push_node_front(Arc::clone(&node));
 
                 return Some(Box::new(Arc::clone(node)));
-            }
         }
+
+        None
     }
 
     fn remove(&mut self, key: &K) {
-        let writable_inner = self.inner.write();
+        let mut writable_inner = self.inner.write();
         let maybe_removed_node = writable_inner.cache_entries.remove(key);
         match maybe_removed_node {
             None => return,
@@ -194,7 +204,7 @@ where
     }
 
     fn new_id(&self) -> u64 {
-        let inner = self.inner.write();
+        let mut inner = self.inner.write();
         inner.last_id_given += 1;
         return inner.last_id_given;
     }

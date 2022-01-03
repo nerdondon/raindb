@@ -22,7 +22,7 @@ use super::filter_block::FilterBlockReader;
 use super::footer::{Footer, SIZE_OF_FOOTER_BYTES};
 
 /// Type alias for block cache entries.
-type DataBlockCacheEntry<'e> = Box<dyn CacheEntry<'e, DataBlockReader>>;
+type DataBlockCacheEntry<'e> = Box<dyn CacheEntry<DataBlockReader>>;
 
 /**
 An immutable, sorted map of strings to strings.
@@ -251,15 +251,8 @@ impl Table {
                 return Ok(raw_block_data[0..compression_type_offset].to_vec());
             }
             TableFileCompressionType::Snappy => {
-                /*
-                TODO: I would love to not allocate a Vec here from the range but I'm not sure how
-                to get a slice. I need something that implements the `Read` trait
-                */
-                let mut snappy_reader = FrameDecoder::new(
-                    raw_block_data[0..compression_type_offset]
-                        .to_vec()
-                        .as_slice(),
-                );
+                let mut snappy_reader =
+                    FrameDecoder::new(&raw_block_data[0..compression_type_offset]);
                 let mut decompressed_data: Vec<u8> = vec![];
 
                 match snappy_reader.read_exact(&mut decompressed_data) {
@@ -389,7 +382,7 @@ The key is serialized as a 16 byte value with the cache partition ID in the firs
 block offset in the second byte.
 */
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct BlockCacheKey {
     /// The cache partition ID that the parent table is using for storage.
     cache_partition_id: u64,
@@ -412,7 +405,7 @@ impl BlockCacheKey {
 impl From<&BlockCacheKey> for Vec<u8> {
     fn from(value: &BlockCacheKey) -> Self {
         // We should only need 8 bytes for the partition id + 8 bytes for the offset = 16 bytes.
-        let serialized_value = Vec::with_capacity(8 + 8);
+        let mut serialized_value = Vec::with_capacity(8 + 8);
         serialized_value.append(&mut u64::encode_fixed_vec(value.cache_partition_id));
         serialized_value.append(&mut u64::encode_fixed_vec(value.block_offset));
 
