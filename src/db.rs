@@ -2,6 +2,7 @@
 The database module contains the primary API for interacting with the key-value store.
 */
 
+use arc_swap::ArcSwap;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -145,11 +146,19 @@ pub struct DB {
     An in-memory table of key-value pairs to support quick access to recently changed values.
 
     All operations (reads and writes) go through this in-memory representation first.
+
+    # Concurrency
+
+    We use [`ArcSwap`] because we need a combination of an [`AtomicPtr`] and an [`Arc`]. Putting an
+    `Arc` into an `AtomicPtr` doesn't work because storing/loading through the `AtomicPtr` does not
+    change the `Arc`'s reference counts.
+
+    [`AtomicPtr`]: std::sync::atomic::AtomicPtr
     */
-    memtable: Box<dyn MemTable>,
+    memtable_ptr: ArcSwap<Box<dyn MemTable>>,
 
     /// The writer for the current write-ahead log file.
-    wal: LogWriter,
+    wal: AtomicPtr<LogWriter>,
 
     /// A cache of table files.
     table_cache: Arc<TableCache>,
@@ -264,6 +273,23 @@ impl DB {
 
 /// Private methods
 impl DB {
+    /**
+    Get a mutable reference to the write-ahead log.
+
+    # Safety
+
+    RainDB guarantees that there is only one thread that accesses the WAL log writer so giving out
+    a mutable reference is fine.
+    */
+    fn wal_mut(&self) -> &mut LogWriter {
+        unsafe { &mut *self.wal.load(Ordering::Acquire) }
+    }
+
+    /// Get a shared reference to the memtable.
+    fn memtable(&self) -> Arc<Box<dyn MemTable>> {
+        self.memtable_ptr.load_full()
+    }
+
     /// Generate portable database state.
     fn generate_portable_state(&self) -> PortableDatabaseState {
         PortableDatabaseState {
@@ -351,7 +377,7 @@ impl DB {
                     */
 
                     // Write the changes to the write-ahead log first
-                    self.wal.append(&Vec::<u8>::from(&write_batch))?;
+                    self.wal_mut().append(&Vec::<u8>::from(&write_batch))?;
 
                     // Write the changes to the memtable
                     self.apply_batch_to_memtable(&write_batch);
@@ -468,7 +494,7 @@ impl DB {
                     allow_write_delay = false;
                 });
             } else if !force_compaction
-                && (self.memtable.approximate_memory_usage() <= self.options.max_memtable_size())
+                && (self.memtable().approximate_memory_usage() <= self.options.max_memtable_size())
             {
                 log::info!("There is room in the memtable for writes. Proceeding with write.");
                 return Ok(());
@@ -525,16 +551,19 @@ impl DB {
                 }
 
                 // Replace old WAL state fields with new WAL values
-                let wal_writer = maybe_wal_writer.unwrap();
-                self.wal = wal_writer;
+                let mut wal_writer = maybe_wal_writer.unwrap();
+                self.wal.store(&mut wal_writer as *mut _, Ordering::Release);
                 mutex_guard.curr_wal_file_number = new_wal_number;
 
+                log::info!("Create a new memtable and make it active.");
+                let new_memtable: Arc<Box<dyn MemTable>> =
+                    Arc::new(Box::new(SkipListMemTable::new()));
+                // RainDB enforces that only one thread can trigger a memtable compaction at a time
+                // so we just `swap` instead of `compare_and_swap`
+                let old_memtable = self.memtable_ptr.swap(new_memtable);
                 log::info!("Move the current memtable to the immutable memtable field.");
-                mutex_guard.maybe_immutable_memtable = Some(self.memtable);
+                mutex_guard.maybe_immutable_memtable = Some(Arc::clone(&old_memtable));
                 self.has_immutable_memtable.store(true, Ordering::Release);
-
-                log::info!("Create the new memtable.");
-                self.memtable = Box::new(SkipListMemTable::new());
 
                 // Do not force another compaction since we have room
                 force_compaction = false;
@@ -677,7 +706,7 @@ impl DB {
                 batch_element.get_operation(),
             );
             let value = batch_element.get_value().map_or(vec![], |val| val.to_vec());
-            self.memtable.insert(internal_key, value);
+            self.memtable().insert(internal_key, value);
 
             curr_sequence_num += 1;
         }

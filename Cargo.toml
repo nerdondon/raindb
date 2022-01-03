@@ -11,6 +11,7 @@ license = "MIT"
 rustdoc-args = ["--document-private-items"]
 
 [dependencies]
+arc-swap = "1.5.0"
 crc = "2.1.0"
 fs2 = "0.4.3"
 integer-encoding = "3.0.0"
