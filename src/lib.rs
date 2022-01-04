@@ -11,6 +11,8 @@ database.
 [RainDB repo]: https://github.com/nerdondon/raindb
 */
 
+#![warn(missing_debug_implementations, missing_docs)]
+
 pub mod db;
 pub use db::DB;
 
