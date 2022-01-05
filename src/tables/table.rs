@@ -24,6 +24,39 @@ use super::footer::{Footer, SIZE_OF_FOOTER_BYTES};
 /// Type alias for block cache entries.
 type DataBlockCacheEntry<'e> = Box<dyn CacheEntry<DataBlockReader>>;
 
+//TODO: Block cache just store arc of compressed data? that wat leveldb does
+
+/**
+Delegates accesses to either a cache entry or an owned data block.
+
+# Context
+
+It got fucking crazy trying to build an abstraction that competely hid cache entries with dynamic
+dispatch. Among other things, I tried abusing [`std::ops::Deref`] to [`fake polymorphism`]. I'm not
+sure if there is a better Rust idiom, but trying to keep the internal cache API abstracted away any
+other way did not work and the exploration was fucking painful beyond belief. If you see this,
+thanks for reading and if you have some solid ideas on how to make this better please start a
+conversation via an issue :).
+
+[`fake polymorphism`]: https://rust-unofficial.github.io/patterns/anti_patterns/deref.html
+*/
+pub(crate) struct DataBlockReaderDelegate {
+    cache_entry: Option<Box<dyn CacheEntry<DataBlockReader>>>,
+    owned_reader: Option<DataBlockReader>,
+}
+
+/// Crate-only methods
+impl DataBlockReaderDelegate {
+    /// Get a [`crate::iterator::RainDbIterator`] to the block entries.
+    pub(crate) fn iter<'s>(&'s self) -> BlockIter<'s, InternalKey> {
+        if self.cache_entry.is_some() {
+            return self.cache_entry.as_ref().unwrap().get_value().iter();
+        }
+
+        self.owned_reader.as_ref().unwrap().iter()
+    }
+}
+
 /**
 An immutable, sorted map of strings to strings.
 
@@ -303,34 +336,33 @@ impl Table {
         &self,
         read_options: &ReadOptions,
         block_handle: &BlockHandle,
-    ) -> TableResult<&DataBlockReader> {
+    ) -> TableResult<DataBlockReaderDelegate> {
         // Search the block itself for the key by first checking the cache for the block
-        let maybe_cached_block_entry = self.get_block_reader_from_cache(&block_handle);
-
-        /*
-        This is a kind of roundabout but the cache only returns `CacheEntry` objects which returns
-        references to block readers (i.e. `&DataBlockReader`) while getting a fresh block reader
-        returns the whole instance (i.e. `DataBlockReader`).
-        */
-        let maybe_new_block_reader: Option<DataBlockReader> = if maybe_cached_block_entry.is_none()
-        {
-            let reader: DataBlockReader =
-                Table::get_data_block_reader_from_disk(&self.file, &block_handle)?;
-            if read_options.fill_cache {
-                self.cache_block_reader(reader, &block_handle);
+        match self.get_block_reader_from_cache(&block_handle) {
+            Some(cache_entry) => {
+                return Ok(DataBlockReaderDelegate {
+                    cache_entry: Some(cache_entry),
+                    owned_reader: None,
+                });
             }
+            None => {
+                let reader: DataBlockReader =
+                    Table::get_data_block_reader_from_disk(&self.file, &block_handle)?;
+                if read_options.fill_cache {
+                    let cache_entry = self.cache_block_reader(reader, &block_handle);
 
-            Some(reader)
-        } else {
-            None
-        };
+                    return Ok(DataBlockReaderDelegate {
+                        cache_entry: Some(cache_entry),
+                        owned_reader: None,
+                    });
+                }
 
-        let block_reader: &DataBlockReader = match maybe_cached_block_entry.as_ref() {
-            Some(cache_entry) => cache_entry.get_value(),
-            None => maybe_new_block_reader.as_ref().unwrap(),
-        };
-
-        Ok(block_reader)
+                return Ok(DataBlockReaderDelegate {
+                    cache_entry: None,
+                    owned_reader: Some(reader),
+                });
+            }
+        }
     }
 
     /**
