@@ -3,6 +3,7 @@ use snap::read::FrameDecoder;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::io::{self, Read};
+use std::sync::Arc;
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
 use crate::errors::{DBIOError, RainDBResult};
@@ -22,40 +23,7 @@ use super::filter_block::FilterBlockReader;
 use super::footer::{Footer, SIZE_OF_FOOTER_BYTES};
 
 /// Type alias for block cache entries.
-type DataBlockCacheEntry<'e> = Box<dyn CacheEntry<DataBlockReader>>;
-
-//TODO: Block cache just store arc of compressed data? that wat leveldb does
-
-/**
-Delegates accesses to either a cache entry or an owned data block.
-
-# Context
-
-It got really crazy trying to build an abstraction that competely hid cache entries with dynamic
-dispatch. Among other things, I tried abusing [`std::ops::Deref`] to [`fake polymorphism`]. I'm not
-sure if there is a better Rust idiom, but trying to keep the internal cache API abstracted away any
-other way did not work and the exploration was painful beyond belief. If you see this, thanks for
-reading and if you have some solid ideas on how to make this better please start a conversation
-via an issue :).
-
-[`fake polymorphism`]: https://rust-unofficial.github.io/patterns/anti_patterns/deref.html
-*/
-pub(crate) struct DataBlockReaderDelegate {
-    cache_entry: Option<Box<dyn CacheEntry<DataBlockReader>>>,
-    owned_reader: Option<DataBlockReader>,
-}
-
-/// Crate-only methods
-impl DataBlockReaderDelegate {
-    /// Get a [`crate::iterator::RainDbIterator`] to the block entries.
-    pub(crate) fn iter<'s>(&'s self) -> BlockIter<'s, InternalKey> {
-        if self.cache_entry.is_some() {
-            return self.cache_entry.as_ref().unwrap().get_value().iter();
-        }
-
-        self.owned_reader.as_ref().unwrap().iter()
-    }
-}
+type DataBlockCacheEntry = Box<dyn CacheEntry<Arc<DataBlockReader>>>;
 
 /**
 An immutable, sorted map of strings to strings.
@@ -213,7 +181,7 @@ impl Table {
             read_options,
             index_block_iter: self.index_block.iter(),
             maybe_data_block_iter: None,
-            data_block_handle_bytes: None,
+            data_block_handle: None,
         }
     }
 }
@@ -336,31 +304,19 @@ impl Table {
         &self,
         read_options: &ReadOptions,
         block_handle: &BlockHandle,
-    ) -> TableResult<DataBlockReaderDelegate> {
+    ) -> TableResult<Arc<DataBlockReader>> {
         // Search the block itself for the key by first checking the cache for the block
         match self.get_block_reader_from_cache(&block_handle) {
-            Some(cache_entry) => {
-                return Ok(DataBlockReaderDelegate {
-                    cache_entry: Some(cache_entry),
-                    owned_reader: None,
-                });
-            }
+            Some(cache_entry) => Ok(Arc::clone(&cache_entry.get_value())),
             None => {
                 let reader: DataBlockReader =
                     Table::get_data_block_reader_from_disk(&self.file, &block_handle)?;
                 if read_options.fill_cache {
                     let cache_entry = self.cache_block_reader(reader, &block_handle);
-
-                    return Ok(DataBlockReaderDelegate {
-                        cache_entry: Some(cache_entry),
-                        owned_reader: None,
-                    });
+                    return Ok(Arc::clone(&cache_entry.get_value()));
                 }
 
-                return Ok(DataBlockReaderDelegate {
-                    cache_entry: None,
-                    owned_reader: Some(reader),
-                });
+                return Ok(Arc::new(reader));
             }
         }
     }
@@ -392,7 +348,7 @@ impl Table {
         let block_cache_key =
             BlockCacheKey::new(self.cache_partition_id, block_handle.get_offset());
 
-        block_cache.insert(block_cache_key, block_reader)
+        block_cache.insert(block_cache_key, Arc::new(block_reader))
     }
 }
 
@@ -606,12 +562,12 @@ impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
         }
 
         let maybe_entry = self.maybe_data_block_iter.as_ref().unwrap().next();
-        match self.skip_empty_data_blocks_forward() {
-            Err(error) => {
-                log::error!("There was an error skipping forward in a two-level iterator. Original error: {}", error);
-                return None;
-            }
-            _ => {}
+            match self.skip_empty_data_blocks_forward() {
+                Err(error) => {
+                    log::error!("There was an error skipping forward in a two-level iterator. Original error: {}", error);
+                    return None;
+                }
+                _ => {}
         }
 
         match maybe_entry {
@@ -633,12 +589,12 @@ impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
         }
 
         let maybe_entry = self.maybe_data_block_iter.as_ref().unwrap().prev();
-        match self.skip_empty_data_blocks_backward() {
-            Err(error) => {
-                log::error!("There was an error skipping backward in a two-level iterator. Original error: {}", error);
-                return None;
-            }
-            _ => {}
+            match self.skip_empty_data_blocks_backward() {
+                Err(error) => {
+                    log::error!("There was an error skipping backward in a two-level iterator. Original error: {}", error);
+                    return None;
+                }
+                _ => {}
         }
 
         match maybe_entry {
