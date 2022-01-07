@@ -416,38 +416,36 @@ struct TwoLevelIterator<'t> {
     read_options: ReadOptions,
 
     /// Iterator for the index block.
-    index_block_iter: BlockIter<'t, InternalKey>,
+    index_block_iter: BlockIter<InternalKey>,
 
     /// Iterator for a data block.
-    maybe_data_block_iter: Option<BlockIter<'t, InternalKey>>,
+    maybe_data_block_iter: Option<BlockIter<InternalKey>>,
 
-    /**
-    The serialized block handle used to get the data block in the [`TwoLevelIterator::data_block`]
-    field.
-    */
-    data_block_handle_bytes: Option<&'t Vec<u8>>,
+    /// The block handle used to get the data block in the [`TwoLevelIterator::data_block`] field.
+    data_block_handle: Option<BlockHandle>,
 }
 
 /// Private methods
 impl<'t> TwoLevelIterator<'t> {
-    fn init_data_block(&'t mut self) -> TableResult<()> {
+    fn init_data_block(&mut self) -> TableResult<()> {
         if !self.index_block_iter.is_valid() {
             self.maybe_data_block_iter = None;
-            self.data_block_handle_bytes = None;
+            self.data_block_handle = None;
         } else {
             let data_block_handle_bytes = self.index_block_iter.current().unwrap().1;
-            if self.data_block_handle_bytes.is_some()
-                && self.data_block_handle_bytes.as_deref().unwrap() == data_block_handle_bytes
+            let block_handle = BlockHandle::try_from(data_block_handle_bytes)?;
+
+            if self.data_block_handle.is_some()
+                && self.data_block_handle.as_ref().unwrap() == &block_handle
             {
                 // Don't need to do anything since the data block is already stored
             } else {
-                let block_handle = BlockHandle::try_from(data_block_handle_bytes).unwrap();
                 let data_block = self
                     .table
                     .get_block_reader(&self.read_options, &block_handle)?;
 
                 self.maybe_data_block_iter = Some(data_block.iter());
-                self.data_block_handle_bytes = Some(data_block_handle_bytes);
+                self.data_block_handle = Some(block_handle);
             }
         }
 
@@ -455,14 +453,14 @@ impl<'t> TwoLevelIterator<'t> {
     }
 
     /// Move the index iterator and data iterator forward until we find a non-empty block.
-    fn skip_empty_data_blocks_forward(&'t mut self) -> TableResult<()> {
+    fn skip_empty_data_blocks_forward(&mut self) -> TableResult<()> {
         while self.maybe_data_block_iter.is_none()
             || !self.maybe_data_block_iter.as_mut().unwrap().is_valid()
         {
             if !self.index_block_iter.is_valid() {
                 // We've reached the end of the index block so there are no more data blocks
                 self.maybe_data_block_iter = None;
-                self.data_block_handle_bytes = None;
+                self.data_block_handle = None;
                 return Ok(());
             }
 
@@ -484,14 +482,14 @@ impl<'t> TwoLevelIterator<'t> {
     If a data block is found, this will set the data block iterator to the last entry of the
     data block.
     */
-    fn skip_empty_data_blocks_backward(&'t mut self) -> TableResult<()> {
+    fn skip_empty_data_blocks_backward(&mut self) -> TableResult<()> {
         while self.maybe_data_block_iter.is_none()
             || !self.maybe_data_block_iter.as_ref().unwrap().is_valid()
         {
             if !self.index_block_iter.is_valid() {
                 // We've reached the end of the index block so there are no more data blocks
                 self.maybe_data_block_iter = None;
-                self.data_block_handle_bytes = None;
+                self.data_block_handle = None;
                 return Ok(());
             }
 
@@ -517,7 +515,7 @@ impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
             && self.maybe_data_block_iter.as_ref().unwrap().is_valid()
     }
 
-    fn seek(&'t mut self, target: &Self::Key) -> Result<(), Self::Error> {
+    fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error> {
         self.index_block_iter.seek(target);
         self.init_data_block()?;
 
@@ -543,7 +541,7 @@ impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
         Ok(())
     }
 
-    fn seek_to_last(&'t mut self) -> Result<(), Self::Error> {
+    fn seek_to_last(&mut self) -> Result<(), Self::Error> {
         self.index_block_iter.seek_to_last();
         self.init_data_block()?;
 
@@ -556,58 +554,52 @@ impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
         Ok(())
     }
 
-    fn next(&'t mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+    fn next(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
         if !self.is_valid() {
             return None;
         }
 
-        let maybe_entry = self.maybe_data_block_iter.as_ref().unwrap().next();
+        if self
+            .maybe_data_block_iter
+            .as_mut()
+            .unwrap()
+            .next()
+            .is_none()
+        {
             match self.skip_empty_data_blocks_forward() {
                 Err(error) => {
                     log::error!("There was an error skipping forward in a two-level iterator. Original error: {}", error);
                     return None;
                 }
                 _ => {}
+            }
         }
 
-        match maybe_entry {
-            Some(entry) => {
-                // Return the entry we found initially if it exists.
-                Some(entry)
-            }
-            None => {
-                // We did not find an entry initially so return the current entry after moving the
-                // iterator forward.
-                self.current()
-            }
-        }
+        self.maybe_data_block_iter.as_mut().unwrap().current()
     }
 
-    fn prev(&'t mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+    fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
         if !self.is_valid() {
             return None;
         }
 
-        let maybe_entry = self.maybe_data_block_iter.as_ref().unwrap().prev();
+        if self
+            .maybe_data_block_iter
+            .as_mut()
+            .unwrap()
+            .prev()
+            .is_none()
+        {
             match self.skip_empty_data_blocks_backward() {
                 Err(error) => {
                     log::error!("There was an error skipping backward in a two-level iterator. Original error: {}", error);
                     return None;
                 }
                 _ => {}
+            }
         }
 
-        match maybe_entry {
-            Some(entry) => {
-                // Return the entry we found initially if it exists.
-                Some(entry)
-            }
-            None => {
-                // We did not find an entry initially so return the current entry after moving the
-                // iterator backward.
-                self.current()
-            }
-        }
+        self.maybe_data_block_iter.as_ref().unwrap().current()
     }
 
     fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
