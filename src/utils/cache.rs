@@ -5,11 +5,10 @@ implementing a least-recently-used (LRU) eviction policy is provided.
 
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use std::fmt::Debug;
-use std::ops::Deref;
 use std::sync::Arc;
 use std::{collections::HashMap, hash::Hash};
 
-use super::linked_list::{LinkedList, Node, SharedNode};
+use super::linked_list::{LinkedList, SharedNode};
 
 /// Represents an entry in the cache.
 pub trait CacheEntry<V> {
