@@ -1,6 +1,7 @@
 use integer_encoding::{FixedInt, VarInt};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::sync::Arc;
 
 use crate::config::SIZE_OF_U32_BYTES;
 use crate::iterator::RainDbIterator;
@@ -62,8 +63,13 @@ where
     /// The offset within the raw data where the restart points are listed.
     restart_offset: usize,
 
-    /// The deserialized entries within a block.
-    block_entries: Vec<BlockEntry<K>>,
+    /**
+    The deserialized entries within a block.
+
+    The entries are wrapped in an [`Arc`] so that a cheap reference can be given to iterators
+    without tying the lifetime of the iterator to the block reader.
+    */
+    block_entries: Arc<Vec<BlockEntry<K>>>,
 
     /// The indexes within `block_entries` that contain restart points.
     restart_point_indexes: Vec<usize>,
@@ -101,7 +107,7 @@ where
             raw_data,
             num_restart_points,
             restart_offset,
-            block_entries,
+            block_entries: Arc::new(block_entries),
             restart_point_indexes,
         })
     }
@@ -112,10 +118,10 @@ where
     }
 
     /// Get a [`crate::iterator::RainDbIterator`] to the block entries.
-    pub fn iter(&self) -> BlockIter<'_, K> {
+    pub fn iter(&self) -> BlockIter<K> {
         BlockIter {
             current_index: 0,
-            block_entries: &self.block_entries,
+            block_entries: Arc::clone(&self.block_entries),
         }
     }
 }
@@ -285,7 +291,7 @@ where
 }
 
 /// Iterator adapter used to maintain iteration state.
-pub(crate) struct BlockIter<'a, K>
+pub(crate) struct BlockIter<K>
 where
     K: RainDbKeyType,
 {
@@ -293,11 +299,11 @@ where
     current_index: usize,
 
     /// The deserialized entries within a block.
-    block_entries: &'a [BlockEntry<K>],
+    block_entries: Arc<Vec<BlockEntry<K>>>,
 }
 
 /// Private methods
-impl<'a, K> BlockIter<'a, K>
+impl<K> BlockIter<K>
 where
     K: RainDbKeyType,
 {
@@ -307,7 +313,7 @@ where
     }
 }
 
-impl<'a, K> RainDbIterator<'_> for BlockIter<'a, K>
+impl<K> RainDbIterator<'_> for BlockIter<K>
 where
     K: RainDbKeyType,
 {
