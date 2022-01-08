@@ -58,7 +58,7 @@ impl MemTable for SkipListMemTable {
         self.store.get(&key)
     }
 
-    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_> {
+    fn iter(&self) -> Box<dyn RainDbIterator<'_, Key = InternalKey, Error = RainDBError> + '_> {
         Box::new(SkipListMemTableIter {
             store: Arc::clone(&self.store),
             current_node: self.store.first_node(),
@@ -75,10 +75,7 @@ struct SkipListMemTableIter<'a> {
     current_node: Option<&'a SkipNode<InternalKey, Vec<u8>>>,
 }
 
-impl<'a, 'i> RainDbIterator<'i> for SkipListMemTableIter<'a>
-where
-    'i: 'a,
-{
+impl<'a> RainDbIterator<'a> for SkipListMemTableIter<'a> {
     type Key = InternalKey;
     type Error = RainDBError;
 
