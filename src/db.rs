@@ -816,14 +816,14 @@ impl DB {
     pub(crate) fn write_level0_table(
         db_state: &PortableDatabaseState,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
-        memtable: &'static Box<dyn MemTable>,
-        base_version: SharedNode<Version>,
+        memtable: Arc<Box<dyn MemTable>>,
+        base_version: &SharedNode<Version>,
         change_manifest: &mut VersionChangeManifest,
     ) -> RainDBResult<()> {
         // Actual work starts here so get a timer for metric gathering purposes
         let compaction_instant = Instant::now();
         let file_number = db_fields_guard.version_set.get_new_file_number();
-        let file_metadata = FileMetadata::new(file_number);
+        let mut file_metadata = FileMetadata::new(file_number);
         db_fields_guard.tables_in_use.insert(file_number);
 
         log::info!(
@@ -831,7 +831,7 @@ impl DB {
             file_number
         );
         parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
-            &mut db_fields_guard,
+            db_fields_guard,
             || -> RainDBResult<()> {
                 DB::build_table_from_iterator(
                     &db_state.options,

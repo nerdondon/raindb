@@ -121,14 +121,14 @@ impl CompactionWorker {
 
     It re-checks some compaction pre-conditions and does some clean-up work at the end.
     */
-    fn compaction_task(db_state: &'static PortableDatabaseState) {
+    fn compaction_task(db_state: &PortableDatabaseState) {
         let PortableDatabaseState {
             guarded_db_fields,
             is_shutting_down,
             background_work_finished_signal,
             ..
         } = db_state;
-        let db_fields_guard = guarded_db_fields.lock();
+        let mut db_fields_guard = guarded_db_fields.lock();
 
         if is_shutting_down.load(Ordering::Acquire) {
             log::info!(
@@ -161,7 +161,7 @@ impl CompactionWorker {
     */
     fn coordinate_compaction(
         db_state: &PortableDatabaseState,
-        db_fields_guard: &'static mut MutexGuard<GuardedDbFields>,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
     ) {
         if db_fields_guard.maybe_immutable_memtable.is_some() {
             // There is an immutable memtable. Compact that.
@@ -179,20 +179,22 @@ impl CompactionWorker {
     */
     fn compact_memtable(
         db_state: &PortableDatabaseState,
-        db_fields_guard: &'static mut MutexGuard<GuardedDbFields>,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
     ) {
         assert!(db_fields_guard.maybe_immutable_memtable.is_some());
 
         log::info!("Compacting the immutable memtable to a table file.");
-        let change_manifest = VersionChangeManifest::default();
+        let mut change_manifest = VersionChangeManifest::default();
         let base_version = db_fields_guard.version_set.get_current_version();
+        let immutable_memtable = db_fields_guard.maybe_immutable_memtable.clone().unwrap();
         let write_table_result = DB::write_level0_table(
             db_state,
             db_fields_guard,
-            db_fields_guard.maybe_immutable_memtable.as_ref().unwrap(),
-            base_version,
+            Arc::clone(&immutable_memtable),
+            &base_version,
             &mut change_manifest,
         );
+        db_fields_guard.version_set.release_version(base_version);
 
         if let Err(write_table_error) = write_table_result {
             DB::set_bad_database_state(
