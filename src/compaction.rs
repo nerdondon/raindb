@@ -3,9 +3,9 @@ This module contains abstractions used in compaction operations. Core to this is
 [`CompactionWorker`] worker thread.
 */
 
-use parking_lot::{Condvar, Mutex, MutexGuard};
+use parking_lot::MutexGuard;
 use std::ops::AddAssign;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -14,10 +14,9 @@ use std::{fmt, io};
 use crate::db::{GuardedDbFields, PortableDatabaseState};
 use crate::errors::{DBIOError, RainDBError};
 use crate::key::InternalKey;
-use crate::table_cache::TableCache;
 use crate::versioning::errors::WriteError;
-use crate::versioning::VersionChangeManifest;
-use crate::{DbOptions, DB};
+use crate::versioning::{VersionChangeManifest, VersionSet};
+use crate::DB;
 
 /**
 Name of the compaction thread.
@@ -62,37 +61,8 @@ pub(crate) struct CompactionWorker {
 
 /// Public methods
 impl CompactionWorker {
-    /**
-    Create a new instance of [`CompactionWorker`].
-
-    * `options` - Options for configuring the operation of the database.
-    * `table_cache` - A cache of table files.
-    * `guarded_db_fields` - Database state that require a lock to be held before being read or written to.
-    * `is_shutting_down` - Indicator for if the database is shutting down.
-    * `has_immutable_memtable` - Indicator for if there is an immutable memtable.
-    * `background_work_finished_signal` - Signal the completion of background work
-
-    Most of the parameters are put into the [`PortableDatabaseState`] struct and passed to the actual
-    compaction thread for convenience. Expanded documentation of these params can be found in said
-    struct.
-    */
-    pub fn new(
-        options: DbOptions,
-        table_cache: Arc<TableCache>,
-        guarded_db_fields: Arc<Mutex<GuardedDbFields>>,
-        is_shutting_down: Arc<AtomicBool>,
-        has_immutable_memtable: Arc<AtomicBool>,
-        background_work_finished_signal: Arc<Condvar>,
-    ) -> CompactionWorkerResult<Self> {
-        let db_state = PortableDatabaseState {
-            options,
-            table_cache,
-            guarded_db_fields,
-            is_shutting_down,
-            has_immutable_memtable,
-            background_work_finished_signal,
-        };
-
+    /// Create a new instance of [`CompactionWorker`].
+    pub fn new(db_state: PortableDatabaseState) -> CompactionWorkerResult<Self> {
         // Create a channel for sending tasks
         let (task_sender, receiver) = mpsc::channel();
 
