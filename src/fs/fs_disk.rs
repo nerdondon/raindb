@@ -2,6 +2,7 @@
 This module contains file system wrappers for disk-based file systems.
 */
 
+use parking_lot::Mutex;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -131,12 +132,14 @@ Really only directory creation is backed by `tempfiles` to take advantage of the
 mechanism. File creation is not used so that control over file naming is retained.
 */
 pub struct TmpFileSystem {
-    temp_dirs: Vec<TempDir>,
+    temp_dirs: Mutex<Vec<TempDir>>,
 }
 
 impl TmpFileSystem {
     pub fn new() -> Self {
-        TmpFileSystem { temp_dirs: vec![] }
+        TmpFileSystem {
+            temp_dirs: Mutex::new(vec![]),
+        }
     }
 }
 
@@ -160,7 +163,7 @@ impl FileSystem for TmpFileSystem {
     }
 
     fn create_dir(&self, path: &Path) -> io::Result<()> {
-        self.temp_dirs.push(TempDir::new_in(path)?);
+        self.temp_dirs.lock().push(TempDir::new_in(path)?);
 
         Ok(())
     }
@@ -214,7 +217,7 @@ mod tests {
 
     #[test]
     fn create_dir_creates_an_empty_directory() {
-        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let file_system: OsFileSystem = OsFileSystem::new();
         let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_dir";
         fs::create_dir(BASE_TESTING_DIR_NAME).ok();
 
@@ -228,7 +231,7 @@ mod tests {
     #[test]
     fn create_dir_all_creates_paths_recursively() {
         fs::create_dir(BASE_TESTING_DIR_NAME).ok();
-        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let file_system: OsFileSystem = OsFileSystem::new();
         let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_dir_all";
 
         let mut full_path = PathBuf::new();
@@ -259,7 +262,7 @@ mod tests {
     #[test]
     fn create_file_creates_a_file_we_can_write_to() {
         fs::create_dir(BASE_TESTING_DIR_NAME).ok();
-        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let file_system: OsFileSystem = OsFileSystem::new();
         let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_file";
         file_system.create_dir(Path::new(&test_dir)).unwrap();
         let mut file_path = PathBuf::new();
@@ -280,7 +283,7 @@ mod tests {
     #[test]
     fn remove_file_removes_a_file() {
         fs::create_dir(BASE_TESTING_DIR_NAME).ok();
-        let mut file_system: OsFileSystem = OsFileSystem::new();
+        let file_system: OsFileSystem = OsFileSystem::new();
         let test_dir = BASE_TESTING_DIR_NAME.to_string() + "remove_file";
         file_system.create_dir(Path::new(&test_dir)).unwrap();
         let mut file_path = PathBuf::new();
