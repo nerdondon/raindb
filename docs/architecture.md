@@ -88,7 +88,7 @@ writer thread will do the following:
 
 1. Create a new write-ahead log to replace the current one backing the memtable to be compacted
 1. Create a new memtable and make the current memtable immutable (i.e. move to another field)
-1. Schedule a compaction
+1. Schedule a compaction with a worker thread dedicated to performing compactions
 1. Pause the writing thread until the the compaction is finished
 1. On waking back up, the writer will attempt to create a group commit batch up to a certain size
    limit in terms of bytes that will be written.
