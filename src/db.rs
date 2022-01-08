@@ -729,18 +729,19 @@ impl DB {
 
     [`RainDbIterator`]: crate::RainDbIterator
     */
-    fn build_table_from_iterator(
+    fn build_table_from_iterator<'m>(
         options: &DbOptions,
         metadata: &mut FileMetadata,
-        iterator: Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>,
+        mut iterator: Box<dyn RainDbIterator<'m, Key = InternalKey, Error = RainDBError> + 'm>,
         table_cache: &Arc<TableCache>,
     ) -> RainDBResult<()> {
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
         let table_file_name = file_name_handler.get_table_file_name(metadata.file_number());
         iterator.seek_to_first()?;
 
-        if iterator.is_valid() {
-            let table_builder = TableBuilder::new(options.clone(), metadata.file_number())?;
+        let is_iter_valid = iterator.is_valid();
+        if is_iter_valid {
+            let mut table_builder = TableBuilder::new(options.clone(), metadata.file_number())?;
             metadata.set_smallest_key(Some(iterator.current().unwrap().0.clone()));
 
             // Iterate the memtable and add the entries to a table
