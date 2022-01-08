@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use parking_lot::MutexGuard;
+use parking_lot::{Mutex, MutexGuard};
 
 use crate::config::MAX_NUM_LEVELS;
 use crate::db::GuardedDbFields;
@@ -27,7 +27,7 @@ pub(crate) struct VersionSet {
     filesystem_provider: Arc<Box<dyn FileSystem>>,
 
     /// Handler for file names used by the database.
-    file_name_handler: FileNameHandler,
+    file_name_handler: Arc<FileNameHandler>,
 
     /**
     A cache for accessing table files.
@@ -81,11 +81,14 @@ pub(crate) struct VersionSet {
     /**
     The manifest file to persist version mutations to.
 
+    The underlying [`LogWriter`] is wrapped in an [`Arc`]/[`Mutex`] combo to provide access to the
+    manifest file.
+
     # Legacy
 
     This field corresponds to the `VersionSet::descriptor_log_` field.
     */
-    maybe_manifest_file: Option<LogWriter>,
+    maybe_manifest_file: Option<Arc<Mutex<LogWriter>>>,
 }
 
 /// Public methods
@@ -94,7 +97,7 @@ impl VersionSet {
     pub fn new(options: DbOptions, table_cache: TableCache) -> Self {
         let filesystem_provider = options.filesystem_provider();
         let versions = LinkedList::<Version>::new();
-        let file_name_handler = FileNameHandler::new(options.db_path().to_string());
+        let file_name_handler = Arc::new(FileNameHandler::new(options.db_path().to_string()));
 
         Self {
             options,
@@ -231,115 +234,31 @@ impl VersionSet {
     File numbers can be re-used but otherwise they must be increasing.
     */
     pub fn log_and_apply(
-        &mut self,
-        mut change_manifest: VersionChangeManifest,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        mut change_manifest: VersionChangeManifest,
     ) -> WriteResult<()> {
-        if change_manifest.wal_file_number.is_some() {
-            let wal_file_number = *change_manifest.wal_file_number.as_ref().unwrap();
-            assert!(wal_file_number >= self.curr_wal_number);
-            // The new WAL file number must have been one that was handed out by the version set
-            // via `VersionSet::get_new_file_number`
-            assert!(wal_file_number < self.curr_wal_number + 1);
-        } else {
-            // The WAL file number may not be set when performing a recovery operation
-            change_manifest.wal_file_number = Some(self.curr_wal_number);
-        }
+        let (new_version, created_new_manifest_file) =
+            VersionSet::get_new_version_from_current(db_fields_guard, &mut change_manifest)?;
 
-        if change_manifest.prev_wal_file_number.is_none() {
-            change_manifest.prev_wal_file_number = self.prev_wal_number.clone();
-        }
-
-        log::info!(
-            "Creating a new version from the change manifest with WAL file number {:?} and \
-            sequence number {}.",
-            change_manifest.wal_file_number.as_ref(),
-            self.prev_sequence_number
-        );
-        change_manifest.curr_file_number = Some(self.curr_file_number);
-        change_manifest.prev_sequence_number = Some(self.prev_sequence_number);
-        let current_version = self.get_current_version();
-        let mut version_builder = VersionBuilder::new(current_version);
-        version_builder.accumulate_changes(&change_manifest);
-        let mut new_version = version_builder.apply_changes(&mut self.compaction_pointers);
-        new_version.finalize();
-
-        let created_new_manifest_file: bool = self.maybe_manifest_file.is_none();
-        if self.maybe_manifest_file.is_none() {
-            // We do not need to release the lock here because this path is only hit on the first
-            // call of this method (e.g. on database opening) so no other work should be
-            // waiting.
-            let manifest_path = self
-                .file_name_handler
-                .get_manifest_file_name(self.manifest_file_number);
-
-            log::info!(
-                "Creating a new manifest file at {:?} with a snapshot of the current \
-                version set state.",
-                &manifest_path
-            );
-            let mut manifest_file =
-                LogWriter::new(self.options.filesystem_provider(), manifest_path.clone())?;
-            self.write_snapshot(&mut manifest_file);
-            self.maybe_manifest_file = Some(manifest_file);
-
-            log::info!(
-                "Manifest file created at {:?} with a snapshot of the current version set state.",
-                &manifest_path
-            );
-        }
-
-        let manifest_write_result = parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+        let manifest_write_result = VersionSet::persist_changes(
             db_fields_guard,
-            || -> WriteResult<()> {
-                // Release lock during actual write to the manifest because disk operations are
-                // relatively expensive. Let other work progress during these operations.
-                log::info!(
-                    "Persisting change manifest with WAL file number {:?} and sequence number {} \
-                    to the manifest file.",
-                    change_manifest.wal_file_number.as_ref(),
-                    self.prev_sequence_number
-                );
-                let serialized_manifest: Vec<u8> = Vec::from(&change_manifest);
-                self.maybe_manifest_file
-                    .as_mut()
-                    .unwrap()
-                    .append(&serialized_manifest)?;
-
-                if created_new_manifest_file {
-                    log::info!(
-                        "Installing manifest file {} as the CURRENT manifest.",
-                        self.manifest_file_number
-                    );
-
-                    if let Err(error) = DB::set_current_file(
-                        Arc::clone(&self.filesystem_provider),
-                        &self.file_name_handler,
-                        self.manifest_file_number,
-                    ) {
-                        return Err(WriteError::ManifestWrite(
-                            ManifestWriteErrorKind::SwapCurrentFile(error.into()),
-                        ));
-                    }
-                }
-
-                Ok(())
-            },
+            &change_manifest,
+            created_new_manifest_file,
         );
-
+        let version_set = &mut db_fields_guard.version_set;
         match manifest_write_result {
             Ok(_) => {
                 log::info!(
                     "Installing version with WAL file number {:?} and sequence number {:?} as the \
                     current version.",
                     change_manifest.wal_file_number.as_ref(),
-                    self.prev_sequence_number
+                    version_set.prev_sequence_number
                 );
 
-                let version_handle = self.versions.push(new_version);
-                self.current_version = Some(version_handle);
-                self.curr_wal_number = change_manifest.wal_file_number.clone().unwrap();
-                self.prev_wal_number = change_manifest.prev_wal_file_number.clone();
+                let version_handle = version_set.versions.push(new_version);
+                version_set.current_version = Some(version_handle);
+                version_set.curr_wal_number = change_manifest.wal_file_number.clone().unwrap();
+                version_set.prev_wal_number = change_manifest.prev_wal_file_number.clone();
             }
             Err(error) => {
                 log::error!(
@@ -349,11 +268,12 @@ impl VersionSet {
                 );
 
                 if created_new_manifest_file {
-                    let manifest_path = self
+                    let manifest_path = version_set
                         .file_name_handler
-                        .get_manifest_file_name(self.manifest_file_number);
-                    self.maybe_manifest_file = None;
-                    let remove_file_result = self.filesystem_provider.remove_file(&manifest_path);
+                        .get_manifest_file_name(version_set.manifest_file_number);
+                    version_set.maybe_manifest_file = None;
+                    let remove_file_result =
+                        version_set.filesystem_provider.remove_file(&manifest_path);
                     if let Err(remove_file_error) = remove_file_result {
                         log::error!("There was an error cleaning up the newly created manifest file after encountering a different error. Error: {}.", &remove_file_error);
                         return Err(WriteError::ManifestWrite(
@@ -398,8 +318,92 @@ impl VersionSet {
 
 /// Private methods
 impl VersionSet {
+    /**
+    Get a new version by applying the supplied changes to the current version.
+
+    This method will also bootstrap a manifest file if one has not already been created.
+
+    # Panics
+
+    Panics if the WAL file number in the change manifest is less than the current WAL file number.
+    File numbers can be re-used but otherwise they must be increasing.
+
+    # Legacy
+
+    This corresponds to the first part of LevelDB's `VersionSet::LogAndApply`. RainDB splits the
+    method to facilitate releasing the lock wrapping a version set during expensive disk writing
+    operations.
+
+    This method will return a tuple of the newly created [`Version`] and a boolean indicating
+    whether or not a new manifest file was created.
+    */
+    fn get_new_version_from_current(
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        change_manifest: &mut VersionChangeManifest,
+    ) -> WriteResult<(Version, bool)> {
+        let version_set = &mut db_fields_guard.version_set;
+
+        if change_manifest.wal_file_number.is_some() {
+            let wal_file_number = *change_manifest.wal_file_number.as_ref().unwrap();
+            assert!(wal_file_number >= version_set.curr_wal_number);
+            // The new WAL file number must have been one that was handed out by the version set
+            // via `VersionSet::get_new_file_number`
+            assert!(wal_file_number < version_set.curr_wal_number + 1);
+        } else {
+            // The WAL file number may not be set when performing a recovery operation
+            change_manifest.wal_file_number = Some(version_set.curr_wal_number);
+        }
+
+        if change_manifest.prev_wal_file_number.is_none() {
+            change_manifest.prev_wal_file_number = version_set.prev_wal_number.clone();
+        }
+
+        log::info!(
+            "Creating a new version from the change manifest with WAL file number {:?} and \
+            sequence number {}.",
+            change_manifest.wal_file_number.as_ref(),
+            version_set.prev_sequence_number
+        );
+        change_manifest.curr_file_number = Some(version_set.curr_file_number);
+        change_manifest.prev_sequence_number = Some(version_set.prev_sequence_number);
+        let current_version = version_set.get_current_version();
+        let mut version_builder = VersionBuilder::new(current_version);
+        version_builder.accumulate_changes(&change_manifest);
+        let mut new_version = version_builder.apply_changes(&mut version_set.compaction_pointers);
+        new_version.finalize();
+
+        let created_new_manifest_file: bool = version_set.maybe_manifest_file.is_none();
+        if version_set.maybe_manifest_file.is_none() {
+            // We do not need to release the lock here because this path is only hit on the first
+            // call of this method (e.g. on database opening) so no other work should be
+            // waiting.
+            let manifest_path = version_set
+                .file_name_handler
+                .get_manifest_file_name(version_set.manifest_file_number);
+
+            log::info!(
+                "Creating a new manifest file at {:?} with a snapshot of the current \
+                version set state.",
+                &manifest_path
+            );
+            let mut manifest_file = LogWriter::new(
+                version_set.options.filesystem_provider(),
+                manifest_path.clone(),
+            )?;
+            version_set.write_snapshot(&mut manifest_file)?;
+            version_set.maybe_manifest_file = Some(Arc::new(Mutex::new(manifest_file)));
+
+            log::info!(
+                "Manifest file created at {:?} with a snapshot of the current version set state.",
+                &manifest_path
+            );
+        }
+
+        Ok((new_version, created_new_manifest_file))
+    }
+
     /// Write a snapshot of the version set to the provided log file.
-    fn write_snapshot(&mut self, manifest_file: &mut LogWriter) {
+    fn write_snapshot(&mut self, manifest_file: &mut LogWriter) -> WriteResult<()> {
         let mut change_manifest = VersionChangeManifest::default();
 
         // Save compaction pointers
@@ -428,6 +432,61 @@ impl VersionSet {
         self.release_version(current_version);
 
         let serialized_manifest: Vec<u8> = Vec::from(&change_manifest);
-        manifest_file.append(&serialized_manifest);
+        manifest_file.append(&serialized_manifest)?;
+
+        Ok(())
+    }
+
+    fn persist_changes(
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        change_manifest: &VersionChangeManifest,
+        is_new_manifest_file: bool,
+    ) -> WriteResult<()> {
+        let prev_sequence_num = db_fields_guard.version_set.prev_sequence_number;
+        let filesystem_provider = Arc::clone(&db_fields_guard.version_set.filesystem_provider);
+        let file_name_handler = Arc::clone(&db_fields_guard.version_set.file_name_handler);
+        let manifest_file_number = db_fields_guard.version_set.manifest_file_number;
+        let manifest_file = Arc::clone(
+            db_fields_guard
+                .version_set
+                .maybe_manifest_file
+                .as_ref()
+                .unwrap(),
+        );
+
+        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+            db_fields_guard,
+            || -> WriteResult<()> {
+                // Release lock during actual write to the manifest because disk operations are
+                // relatively expensive. Let other work progress during these operations.
+                log::info!(
+                    "Persisting change manifest with WAL file number {:?} and sequence number {} \
+                    to the manifest file.",
+                    change_manifest.wal_file_number.as_ref(),
+                    prev_sequence_num
+                );
+                let serialized_manifest: Vec<u8> = Vec::from(change_manifest);
+                manifest_file.lock().append(&serialized_manifest)?;
+
+                if is_new_manifest_file {
+                    log::info!(
+                        "Installing manifest file {} as the CURRENT manifest.",
+                        manifest_file_number
+                    );
+
+                    if let Err(error) = DB::set_current_file(
+                        filesystem_provider,
+                        file_name_handler.as_ref(),
+                        manifest_file_number,
+                    ) {
+                        return Err(WriteError::ManifestWrite(
+                            ManifestWriteErrorKind::SwapCurrentFile(error.into()),
+                        ));
+                    }
+                }
+
+                Ok(())
+            },
+        )
     }
 }

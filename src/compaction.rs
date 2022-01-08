@@ -264,9 +264,7 @@ impl CompactionWorker {
             version."
         );
 
-        let apply_result = db_fields_guard
-            .version_set
-            .log_and_apply(change_manifest, db_fields_guard);
+        let apply_result = VersionSet::log_and_apply(db_fields_guard, change_manifest);
         if let Err(apply_error) = apply_result {
             log::error!(
                 "There was an error logging and applying the change manifest. Error: {}",
