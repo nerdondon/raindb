@@ -50,6 +50,9 @@ pub(crate) struct PortableDatabaseState {
     */
     pub(crate) options: DbOptions,
 
+    /// Handler for file names used by the database.
+    file_name_handler: Arc<FileNameHandler>,
+
     /**
     Database state that require a lock to be held before being read or written to.
 
@@ -169,7 +172,7 @@ pub struct DB {
     guarded_fields: Arc<Mutex<GuardedDbFields>>,
 
     /// Handler for file names used by the database.
-    file_name_handler: FileNameHandler,
+    file_name_handler: Arc<FileNameHandler>,
 
     /// Field indicating if the database is shutting down.
     is_shutting_down: Arc<AtomicBool>,
@@ -296,6 +299,7 @@ impl DB {
     fn generate_portable_state(&self) -> PortableDatabaseState {
         PortableDatabaseState {
             options: self.options.clone(),
+            file_name_handler: Arc::clone(&self.file_name_handler),
             table_cache: Arc::clone(&self.table_cache),
             guarded_db_fields: Arc::clone(&self.guarded_fields),
             is_shutting_down: Arc::clone(&self.is_shutting_down),
