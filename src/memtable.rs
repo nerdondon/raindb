@@ -55,12 +55,12 @@ impl MemTable for SkipListMemTable {
     }
 
     fn get(&self, key: &InternalKey) -> Option<&Vec<u8>> {
-        self.store.get(&key)
+        self.store.get(key)
     }
 
-    fn iter(&self) -> Box<dyn RainDbIterator<'_, Key = InternalKey, Error = RainDBError> + '_> {
+    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_> {
         Box::new(SkipListMemTableIter {
-            store: Arc::clone(&self.store),
+            store: &self.store,
             current_node: self.store.first_node(),
         })
     }
@@ -69,13 +69,13 @@ impl MemTable for SkipListMemTable {
 /// Holds iterator state for the skip list memtable.
 struct SkipListMemTableIter<'a> {
     /// A reference to the skip list backing the memtable.
-    store: Arc<ConcurrentSkipList<InternalKey, Vec<u8>>>,
+    store: &'a ConcurrentSkipList<InternalKey, Vec<u8>>,
 
     /// The key-value pair that was found last.
     current_node: Option<&'a SkipNode<InternalKey, Vec<u8>>>,
 }
 
-impl<'a> RainDbIterator<'a> for SkipListMemTableIter<'a> {
+impl<'a> RainDbIterator for SkipListMemTableIter<'a> {
     type Key = InternalKey;
     type Error = RainDBError;
 
@@ -83,19 +83,19 @@ impl<'a> RainDbIterator<'a> for SkipListMemTableIter<'a> {
         self.current_node.is_some()
     }
 
-    fn seek(&'a mut self, target: &Self::Key) -> Result<(), Self::Error> {
+    fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error> {
         self.current_node = self.store.find_greater_or_equal_node(target);
 
         Ok(())
     }
 
-    fn seek_to_first(&'a mut self) -> Result<(), Self::Error> {
+    fn seek_to_first(&mut self) -> Result<(), Self::Error> {
         self.current_node = self.store.first_node();
 
         Ok(())
     }
 
-    fn seek_to_last(&'a mut self) -> Result<(), Self::Error> {
+    fn seek_to_last(&mut self) -> Result<(), Self::Error> {
         self.current_node = self.store.last_node();
 
         Ok(())
@@ -119,7 +119,7 @@ impl<'a> RainDbIterator<'a> for SkipListMemTableIter<'a> {
     Returns a tuple (&Self::Key, &V) at the position moved to. If the cursor was on the first
     element, `None` is returned.
     */
-    fn prev(&'a mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+    fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
         if !self.is_valid() {
             return None;
         }
@@ -130,6 +130,6 @@ impl<'a> RainDbIterator<'a> for SkipListMemTableIter<'a> {
     }
 
     fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
-        self.current_node.clone().map(|node| node.get_entry())
+        self.current_node.map(|node| node.get_entry())
     }
 }

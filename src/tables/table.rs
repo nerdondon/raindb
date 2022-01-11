@@ -506,7 +506,7 @@ impl<'t> TwoLevelIterator<'t> {
     }
 }
 
-impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
+impl<'t> RainDbIterator for TwoLevelIterator<'t> {
     type Key = InternalKey;
     type Error = ReadError;
 
@@ -528,8 +528,8 @@ impl<'t> RainDbIterator<'t> for TwoLevelIterator<'t> {
         Ok(())
     }
 
-    fn seek_to_first(&'t mut self) -> Result<(), Self::Error> {
-        self.index_block_iter.seek_to_first();
+    fn seek_to_first(&mut self) -> Result<(), Self::Error> {
+        self.index_block_iter.seek_to_first()?;
         self.init_data_block()?;
 
         if self.maybe_data_block_iter.is_some() {
