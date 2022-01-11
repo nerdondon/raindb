@@ -23,7 +23,7 @@ pub struct FilterBlockReader {
     filters: Vec<Vec<u8>>,
 
     /// The filter policy used by the database.
-    filter_policy: Arc<Box<dyn FilterPolicy>>,
+    filter_policy: Arc<dyn FilterPolicy>,
 
     /// Offsets of actual data blocks for keys within the filter.
     offsets: Vec<u32>,
@@ -40,7 +40,7 @@ pub struct FilterBlockReader {
 impl FilterBlockReader {
     /// Create a new instance of a [`FilterBlockReader`].
     pub fn new(
-        filter_policy: Arc<Box<dyn FilterPolicy>>,
+        filter_policy: Arc<dyn FilterPolicy>,
         mut filter_data: Vec<u8>,
     ) -> TableResult<Self> {
         if filter_data.len() < 5 {
@@ -75,7 +75,7 @@ impl FilterBlockReader {
 
     /// Returns true if the `key` is in the filter.
     pub fn key_may_match(&self, block_offset: u64, key: &[u8]) -> bool {
-        if self.filters.len() < 1 {
+        if self.filters.is_empty() {
             // There are no filters so just return false
             return false;
         }
@@ -88,7 +88,7 @@ impl FilterBlockReader {
         */
         let range_size: u64 = 1 << self.encoded_range_size_exponent;
         let filter_index = (block_offset / range_size) as usize;
-        if filter_index < 0 || filter_index >= self.filters.len() {
+        if filter_index >= self.filters.len() {
             // Like LevelDB we ignore a filter matching error and force a disk seek when one is
             // encountered
             log::warn!("The provided block offset ({}) could not be used to index the filter array. Ignoring the error and returning true so that a disk seek is done.", block_offset);
