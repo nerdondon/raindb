@@ -195,6 +195,17 @@ impl Batch {
     pub fn len(&self) -> usize {
         self.operations.len()
     }
+
+    /// Returns true if the batch does not have any operations. Otherwise, returns false.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Default for Batch {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Crate-only methods
@@ -229,9 +240,7 @@ impl From<&Batch> for Vec<u8> {
     /// Serialize a [`Batch`] to bytes.
     fn from(batch: &Batch) -> Vec<u8> {
         let mut buf = Vec::with_capacity(batch.get_approximate_size());
-        buf.extend(u64::encode_fixed_vec(
-            batch.starting_seq_number.clone().unwrap(),
-        ));
+        buf.extend(u64::encode_fixed_vec(batch.starting_seq_number.unwrap()));
         buf.extend(u32::encode_var_vec(batch.operations.len() as u32));
 
         for element in batch.operations.iter() {
