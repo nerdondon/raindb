@@ -729,31 +729,30 @@ impl DB {
 
     [`RainDbIterator`]: crate::RainDbIterator
     */
-    fn build_table_from_iterator<'m>(
+    fn build_table_from_iterator(
         options: &DbOptions,
         metadata: &mut FileMetadata,
-        mut iterator: Box<dyn RainDbIterator<'m, Key = InternalKey, Error = RainDBError> + 'm>,
+        mut iterator: Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + 'm>,
         table_cache: &Arc<TableCache>,
     ) -> RainDBResult<()> {
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
         let table_file_name = file_name_handler.get_table_file_name(metadata.file_number());
         iterator.seek_to_first()?;
 
-        let is_iter_valid = iterator.is_valid();
-        if is_iter_valid {
+        if iterator.is_valid() {
             let mut table_builder = TableBuilder::new(options.clone(), metadata.file_number())?;
             metadata.set_smallest_key(Some(iterator.current().unwrap().0.clone()));
 
             // Iterate the memtable and add the entries to a table
-            let mut larget_key_seen: Option<&InternalKey> = None;
+            let mut larget_key_seen: Option<InternalKey> = None;
             while let Some((key, value)) = iterator.current() {
-                larget_key_seen = Some(key);
-                table_builder.add_entry(Rc::new(key.clone()), value);
+                larget_key_seen = Some(key.clone());
+                table_builder.add_entry(Rc::new(key.clone()), value)?;
                 iterator.next();
             }
 
             // The iterator is valid so we should just be able to unwrap
-            metadata.set_largest_key(Some(larget_key_seen.unwrap().clone()));
+            metadata.set_largest_key(Some(larget_key_seen.unwrap()));
             table_builder.finalize()?;
             metadata.set_file_size(table_builder.file_size());
 

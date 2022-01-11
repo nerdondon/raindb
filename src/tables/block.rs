@@ -313,7 +313,7 @@ where
     }
 }
 
-impl<K> RainDbIterator<'_> for BlockIter<K>
+impl<K> RainDbIterator for BlockIter<K>
 where
     K: RainDbKeyType,
 {
@@ -321,7 +321,7 @@ where
     type Error = ReadError;
 
     fn is_valid(&self) -> bool {
-        self.current_index >= 0 && self.current_index < self.block_entries.len()
+        self.current_index < self.block_entries.len()
     }
 
     fn seek(&mut self, target: &K) -> Result<(), Self::Error> {
