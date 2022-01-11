@@ -64,7 +64,7 @@ pub struct DbOptions {
 
     **This defaults to [`BloomFilterPolicy`](crate::filter_policy::BloomFilterPolicy).**
     */
-    filter_policy: Arc<Box<dyn FilterPolicy>>,
+    filter_policy: Arc<dyn FilterPolicy>,
 
     /**
     Cache used to store blocks read from disk in-memory to save on disk reads.
@@ -100,7 +100,7 @@ impl DbOptions {
     }
 
     /// Get a strong reference to the filter policy.
-    pub fn filter_policy(&self) -> Arc<Box<dyn FilterPolicy>> {
+    pub fn filter_policy(&self) -> Arc<dyn FilterPolicy> {
         Arc::clone(&self.filter_policy)
     }
 
@@ -120,10 +120,7 @@ impl Default for DbOptions {
                 .to_owned(),
             max_memtable_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
-            filesystem_provider: Arc::new(Box::new(OsFileSystem::new())),
-            filter_policy: Arc::new(Box::new(BloomFilterPolicy::new(10))),
-            block_cache: Arc::new(Box::new(
-                LRUCache::<BlockCacheKey, Arc<DataBlockReader>>::new(8 * 1024 * 1024),
+            filter_policy: Arc::new(BloomFilterPolicy::new(10)),
             )),
         }
     }

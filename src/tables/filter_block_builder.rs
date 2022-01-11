@@ -34,7 +34,7 @@ In regex, the pattern would look like: `(notify_new_data_block add_key*)* finali
 */
 pub(crate) struct FilterBlockBuilder {
     /// The filter policy to use when generating the filter blocks.
-    filter_policy: Arc<Box<dyn FilterPolicy>>,
+    filter_policy: Arc<dyn FilterPolicy>,
 
     /// The keys (as bytes) to turn into a filter.
     keys: Vec<Vec<u8>>,
@@ -46,7 +46,7 @@ pub(crate) struct FilterBlockBuilder {
 /// Crate-only methods
 impl FilterBlockBuilder {
     /// Create a new instance of [`FilterBlockBuilder`].
-    pub(crate) fn new(filter_policy: Arc<Box<dyn FilterPolicy>>) -> Self {
+    pub(crate) fn new(filter_policy: Arc<dyn FilterPolicy>) -> Self {
         Self {
             filter_policy,
             keys: vec![],
