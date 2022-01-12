@@ -312,13 +312,13 @@ pub struct ManualCompaction {
 /// Carries compaction metrics for a level.
 pub(crate) struct LevelCompactionStats {
     /// The time it took for a compaction to complete.
-    compaction_duration: Duration,
+    pub(crate) compaction_duration: Duration,
 
     /// The number of bytes read during the compaction.
-    bytes_read: u64,
+    pub(crate) bytes_read: u64,
 
     /// The number of bytes written during the compaction.
-    bytes_written: u64,
+    pub(crate) bytes_written: u64,
 }
 
 /// Private methods
