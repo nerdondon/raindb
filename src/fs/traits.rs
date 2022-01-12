@@ -19,6 +19,11 @@ pub trait ReadonlyRandomAccessFile: Read + Seek + Send + Sync {
 
     /// Get the length of the file.
     fn len(&self) -> Result<u64>;
+
+    /// Return true if the file is empty. Otherwise, false.
+    fn is_empty(&self) -> Result<bool> {
+        Ok(self.len()? == 0)
+    }
 }
 
 /**
@@ -30,6 +35,7 @@ pub trait RandomAccessFile: ReadonlyRandomAccessFile + Write {
     fn append(&mut self, buf: &[u8]) -> Result<usize>;
 }
 
+/// An interface for common file system operations.
 pub trait FileSystem: Send + Sync {
     /// Return the name of file system wrapper being used.
     fn get_name(&self) -> String;
@@ -40,7 +46,7 @@ pub trait FileSystem: Send + Sync {
     /// Recursively create a directory and all of its parent components if they are missing.
     fn create_dir_all(&self, path: &Path) -> Result<()>;
 
-    // List the contents of the given `path`.
+    /// List the contents of the given `path`.
     fn list_dir(&self, path: &Path) -> Result<Vec<PathBuf>>;
 
     /// Open a file in read-only mode.
