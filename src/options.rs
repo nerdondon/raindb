@@ -74,7 +74,7 @@ pub struct DbOptions {
 
     **This defaults to an 8 MiB internal cache if not set.**
     */
-    block_cache: Arc<Box<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>>>,
+    block_cache: Arc<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>>,
 }
 
 /// Public methods
@@ -105,7 +105,7 @@ impl DbOptions {
     }
 
     /// Get a strong reference to the block cache.
-    pub fn block_cache(&self) -> Arc<Box<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>>> {
+    pub fn block_cache(&self) -> Arc<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>> {
         Arc::clone(&self.block_cache)
     }
 }
@@ -122,6 +122,8 @@ impl Default for DbOptions {
             max_file_size: 2 * 1024 * 1024,
             filesystem_provider: Arc::new(OsFileSystem::new()),
             filter_policy: Arc::new(BloomFilterPolicy::new(10)),
+            block_cache: Arc::new(LRUCache::<BlockCacheKey, Arc<DataBlockReader>>::new(
+                8 * 1024 * 1024,
             )),
         }
     }
