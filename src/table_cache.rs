@@ -28,7 +28,7 @@ pub(crate) struct TableCache {
     file_name_handler: FileNameHandler,
 
     /// A reference to the file system provider in use by the database.
-    filesystem_provider: Arc<Box<dyn FileSystem>>,
+    filesystem_provider: Arc<dyn FileSystem>,
 }
 
 /// Public methods
@@ -69,8 +69,8 @@ impl TableCache {
     pub fn find_table(&self, file_number: u64) -> RainDBResult<Box<dyn CacheEntry<Table>>> {
         // Check the cache for if there is already a reader and return that if there is
         let maybe_cached_table = self.cache.get(&file_number);
-        if maybe_cached_table.is_some() {
-            return Ok(maybe_cached_table.unwrap());
+        if let Some(table) = maybe_cached_table {
+            return Ok(table);
         }
 
         // Table file was not found in the cache so read from disk

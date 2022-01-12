@@ -57,7 +57,7 @@ pub struct DbOptions {
 
     **This defaults to [`OsFileSystem`](crate::fs::OsFileSystem).**
     */
-    filesystem_provider: Arc<Box<dyn FileSystem>>,
+    filesystem_provider: Arc<dyn FileSystem>,
 
     /**
     The filter policy to use for filtering requests to table files to reduce disk seeks.
@@ -95,7 +95,7 @@ impl DbOptions {
     }
 
     /// Get a strong reference to the file system provider.
-    pub fn filesystem_provider(&self) -> Arc<Box<dyn FileSystem>> {
+    pub fn filesystem_provider(&self) -> Arc<dyn FileSystem> {
         Arc::clone(&self.filesystem_provider)
     }
 
@@ -120,6 +120,7 @@ impl Default for DbOptions {
                 .to_owned(),
             max_memtable_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
+            filesystem_provider: Arc::new(OsFileSystem::new()),
             filter_policy: Arc::new(BloomFilterPolicy::new(10)),
             )),
         }
