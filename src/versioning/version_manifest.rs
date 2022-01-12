@@ -12,10 +12,10 @@ use super::file_metadata::FileMetadata;
 #[derive(Hash)]
 pub(crate) struct DeletedFile {
     /// The level to delete the file from.
-    level: usize,
+    pub(crate) level: usize,
 
     /// The file number of the file to delete.
-    file_number: u64,
+    pub(crate) file_number: u64,
 }
 
 /// Crate-only methods
