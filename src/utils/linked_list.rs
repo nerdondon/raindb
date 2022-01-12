@@ -215,19 +215,19 @@ impl<T> LinkedList<T> {
 
     /// Returns true if the list is empty, otherwise false.
     pub fn is_empty(&self) -> bool {
-        self.length <= 0
+        self.length == 0
     }
 
     /// Return an iterator over the nodes of the linked list.
     pub fn iter(&self) -> NodeIter<T> {
         NodeIter {
-            next: self.head.as_ref().map(|node| node.clone()),
+            next: self.head.as_ref().cloned(),
         }
     }
 
     /// Get a reference to the last node of the linked list.
     pub fn tail(&self) -> Link<T> {
-        self.tail.as_ref().map(|node| node.clone())
+        self.tail.as_ref().cloned()
     }
 }
 
@@ -242,7 +242,7 @@ An iterator adapter to keep state for iterating the linked list.
 
 Created by calling [`LinkedList::iter`].
 */
-struct NodeIter<T> {
+pub struct NodeIter<T> {
     /// The next value of the iterator.
     next: Option<SharedNode<T>>,
 }
