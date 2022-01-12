@@ -155,7 +155,7 @@ impl TryFrom<&Vec<u8>> for BlockRecord {
 /** Handles all write activity to a log file. */
 pub(crate) struct LogWriter {
     /** A wrapper around a particular file system to use. */
-    fs: Arc<Box<dyn FileSystem>>,
+    fs: Arc<dyn FileSystem>,
 
     /// The path to the log file.
     log_file_path: PathBuf,
@@ -175,10 +175,7 @@ pub(crate) struct LogWriter {
 /// Public methods
 impl LogWriter {
     /// Construct a new [`LogWriter`].
-    pub fn new<P: AsRef<Path>>(
-        fs: Arc<Box<dyn FileSystem>>,
-        log_file_path: P,
-    ) -> LogIOResult<Self> {
+    pub fn new<P: AsRef<Path>>(fs: Arc<dyn FileSystem>, log_file_path: P) -> LogIOResult<Self> {
         log::info!(
             "Creating a log file at {}",
             log_file_path.as_ref().to_string_lossy()
@@ -287,7 +284,7 @@ impl fmt::Debug for LogWriter {
 /** Handles all read activity to a log file. */
 pub(crate) struct LogReader {
     /** A wrapper around a particular file system to use. */
-    fs: Arc<Box<dyn FileSystem>>,
+    fs: Arc<dyn FileSystem>,
 
     /** The underlying file representing the log. */
     log_file: Box<dyn ReadonlyRandomAccessFile>,
@@ -323,7 +320,7 @@ impl LogReader {
     * `initial_block_offset` - An initial offset to start reading the log file from.
     */
     pub fn new<P: AsRef<Path>>(
-        fs: Arc<Box<dyn FileSystem>>,
+        fs: Arc<dyn FileSystem>,
         log_file_path: P,
         initial_block_offset: usize,
     ) -> LogIOResult<Self> {

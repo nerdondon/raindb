@@ -24,7 +24,7 @@ pub(crate) struct VersionSet {
     options: DbOptions,
 
     /// A reference to the file system provider in use by the database.
-    filesystem_provider: Arc<Box<dyn FileSystem>>,
+    filesystem_provider: Arc<dyn FileSystem>,
 
     /// Handler for file names used by the database.
     file_name_handler: Arc<FileNameHandler>,

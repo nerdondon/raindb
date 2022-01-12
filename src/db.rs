@@ -885,7 +885,7 @@ impl DB {
 
     /// Set a new `CURRENT` file.
     pub(crate) fn set_current_file(
-        filesystem_provider: Arc<Box<dyn FileSystem>>,
+        filesystem_provider: Arc<dyn FileSystem>,
         file_name_handler: &FileNameHandler,
         manifest_file_number: u64,
     ) -> io::Result<()> {
