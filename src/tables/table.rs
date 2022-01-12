@@ -161,7 +161,7 @@ impl Table {
 
         // We have the block reader, now use the iterator to try to find the value for the key.
         let mut block_reader_iter = block_reader.iter();
-        block_reader_iter.seek(key);
+        block_reader_iter.seek(key)?;
         match block_reader_iter.current() {
             Some((key, value)) => {
                 if *key.get_operation() == Operation::Delete {
@@ -249,7 +249,7 @@ impl Table {
 
         match compression_type {
             TableFileCompressionType::None => {
-                return Ok(raw_block_data[0..compression_type_offset].to_vec());
+                Ok(raw_block_data[0..compression_type_offset].to_vec())
             }
             TableFileCompressionType::Snappy => {
                 let mut snappy_reader =
@@ -257,13 +257,9 @@ impl Table {
                 let mut decompressed_data: Vec<u8> = vec![];
 
                 match snappy_reader.read_exact(&mut decompressed_data) {
-                    Err(error) => {
-                        return Err(ReadError::BlockDecompression(error.into()));
-                    }
-                    Ok(_) => {
-                        return Ok(decompressed_data);
-                    }
-                };
+                    Err(error) => Err(ReadError::BlockDecompression(error.into())),
+                    Ok(_) => Ok(decompressed_data),
+                }
             }
         }
     }
@@ -277,9 +273,8 @@ impl Table {
         let filter_block_name = filter_policy::get_filter_block_name(options.filter_policy());
         let mut metaindex_block_iter = metaindex_block.iter();
         // Seek to the filter meta block
-        match metaindex_block_iter.seek(&MetaIndexKey::new(filter_block_name)) {
-            Err(error) => return Err(ReadError::FilterBlock(format!("{}", error))),
-            _ => {}
+        if let Err(error) = metaindex_block_iter.seek(&MetaIndexKey::new(filter_block_name)) {
+            return Err(ReadError::FilterBlock(format!("{}", error)));
         }
 
         match metaindex_block_iter.current() {
@@ -289,10 +284,10 @@ impl Table {
 
                 match FilterBlockReader::new(options.filter_policy(), raw_filter_block) {
                     Err(error) => return Err(ReadError::FilterBlock(format!("{}", error))),
-                    Ok(reader) => return Ok(Some(reader)),
+                    Ok(reader) => Ok(Some(reader)),
                 }
             }
-            None => return Ok(None),
+            None => Ok(None),
         }
     }
 
@@ -306,7 +301,7 @@ impl Table {
         block_handle: &BlockHandle,
     ) -> TableResult<Arc<DataBlockReader>> {
         // Search the block itself for the key by first checking the cache for the block
-        match self.get_block_reader_from_cache(&block_handle) {
+        match self.get_block_reader_from_cache(block_handle) {
             Some(cache_entry) => Ok(Arc::clone(&cache_entry.get_value())),
             None => {
                 let reader: DataBlockReader =
@@ -316,7 +311,7 @@ impl Table {
                     return Ok(Arc::clone(&cache_entry.get_value()));
                 }
 
-                return Ok(Arc::new(reader));
+                Ok(Arc::new(reader))
             }
         }
     }
@@ -333,9 +328,8 @@ impl Table {
         let block_cache = self.options.block_cache();
         let block_cache_key =
             BlockCacheKey::new(self.cache_partition_id, block_handle.get_offset());
-        let maybe_cache_entry = block_cache.get(&block_cache_key);
 
-        maybe_cache_entry
+        block_cache.get(&block_cache_key)
     }
 
     /// Cache the specified block reader in the block cache.
@@ -408,7 +402,7 @@ block.
 This iterator yields the concatenation of all key-value pairs in a sequence of blocks (e.g. in a
 table file).
 */
-struct TwoLevelIterator<'t> {
+pub struct TwoLevelIterator<'t> {
     /// The table the iterator is for.
     table: &'t Table,
 
@@ -469,7 +463,10 @@ impl<'t> TwoLevelIterator<'t> {
             self.init_data_block()?;
 
             if self.maybe_data_block_iter.is_some() {
-                self.maybe_data_block_iter.as_mut().unwrap().seek_to_first();
+                self.maybe_data_block_iter
+                    .as_mut()
+                    .unwrap()
+                    .seek_to_first()?;
             }
         }
 
@@ -498,7 +495,10 @@ impl<'t> TwoLevelIterator<'t> {
             self.init_data_block()?;
 
             if self.maybe_data_block_iter.is_some() {
-                self.maybe_data_block_iter.as_mut().unwrap().seek_to_last();
+                self.maybe_data_block_iter
+                    .as_mut()
+                    .unwrap()
+                    .seek_to_last()?;
             }
         }
 
@@ -516,11 +516,11 @@ impl<'t> RainDbIterator for TwoLevelIterator<'t> {
     }
 
     fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error> {
-        self.index_block_iter.seek(target);
+        self.index_block_iter.seek(target)?;
         self.init_data_block()?;
 
         if self.maybe_data_block_iter.is_some() {
-            self.maybe_data_block_iter.as_mut().unwrap().seek(target);
+            self.maybe_data_block_iter.as_mut().unwrap().seek(target)?;
         }
 
         self.skip_empty_data_blocks_forward()?;
@@ -533,7 +533,10 @@ impl<'t> RainDbIterator for TwoLevelIterator<'t> {
         self.init_data_block()?;
 
         if self.maybe_data_block_iter.is_some() {
-            self.maybe_data_block_iter.as_mut().unwrap().seek_to_first();
+            self.maybe_data_block_iter
+                .as_mut()
+                .unwrap()
+                .seek_to_first()?;
         }
 
         self.skip_empty_data_blocks_forward()?;
@@ -542,11 +545,14 @@ impl<'t> RainDbIterator for TwoLevelIterator<'t> {
     }
 
     fn seek_to_last(&mut self) -> Result<(), Self::Error> {
-        self.index_block_iter.seek_to_last();
+        self.index_block_iter.seek_to_last()?;
         self.init_data_block()?;
 
         if self.maybe_data_block_iter.is_some() {
-            self.maybe_data_block_iter.as_mut().unwrap().seek_to_last();
+            self.maybe_data_block_iter
+                .as_mut()
+                .unwrap()
+                .seek_to_last()?;
         }
 
         self.skip_empty_data_blocks_backward()?;
@@ -566,12 +572,13 @@ impl<'t> RainDbIterator for TwoLevelIterator<'t> {
             .next()
             .is_none()
         {
-            match self.skip_empty_data_blocks_forward() {
-                Err(error) => {
-                    log::error!("There was an error skipping forward in a two-level iterator. Original error: {}", error);
-                    return None;
-                }
-                _ => {}
+            if let Err(error) = self.skip_empty_data_blocks_forward() {
+                log::error!(
+                    "There was an error skipping forward in a two-level iterator. Original \
+                    error: {}",
+                    error
+                );
+                return None;
             }
         }
 
@@ -590,12 +597,13 @@ impl<'t> RainDbIterator for TwoLevelIterator<'t> {
             .prev()
             .is_none()
         {
-            match self.skip_empty_data_blocks_backward() {
-                Err(error) => {
-                    log::error!("There was an error skipping backward in a two-level iterator. Original error: {}", error);
-                    return None;
-                }
-                _ => {}
+            if let Err(error) = self.skip_empty_data_blocks_backward() {
+                log::error!(
+                    "There was an error skipping backward in a two-level iterator. Original \
+                    error: {}",
+                    error
+                );
+                return None;
             }
         }
 
