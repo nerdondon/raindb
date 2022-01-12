@@ -4,6 +4,7 @@ The database module contains the primary API for interacting with the key-value 
 
 use arc_swap::ArcSwap;
 use parking_lot::{Condvar, Mutex, MutexGuard};
+use std::cell::UnsafeCell;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -163,7 +164,7 @@ pub struct DB {
     memtable_ptr: ArcSwap<Box<dyn MemTable>>,
 
     /// The writer for the current write-ahead log file.
-    wal: AtomicPtr<LogWriter>,
+    wal: AtomicPtr<UnsafeCell<LogWriter>>,
 
     /// A cache of table files.
     table_cache: Arc<TableCache>,
@@ -227,7 +228,7 @@ impl DB {
 
         // Create WAL
         let wal_file_number = 0;
-        let wal_file_path = file_name_handler.get_wal_path(wal_file_number);
+        let wal_file_path = file_name_handler.get_wal_file_path(wal_file_number);
         let wal = LogWriter::new(Arc::clone(&fs), wal_file_path)?;
 
         // Create memtable
@@ -286,8 +287,8 @@ impl DB {
     RainDB guarantees that there is only one thread that accesses the WAL log writer so giving out
     a mutable reference is fine.
     */
-    fn wal_mut(&self) -> &mut LogWriter {
-        unsafe { &mut *self.wal.load(Ordering::Acquire) }
+    fn wal(&self) -> &UnsafeCell<LogWriter> {
+        unsafe { &*self.wal.load(Ordering::Acquire) }
     }
 
     /// Get a shared reference to the memtable.
@@ -384,7 +385,10 @@ impl DB {
                     */
 
                     // Write the changes to the write-ahead log first
-                    self.wal_mut().append(&Vec::<u8>::from(&write_batch))?;
+                    unsafe {
+                        // SAFETY: RainDB only allows one writer thread at a time.
+                        (*self.wal().get()).append(&Vec::<u8>::from(&write_batch))?;
+                    }
 
                     // Write the changes to the memtable
                     self.apply_batch_to_memtable(&write_batch);
@@ -556,8 +560,9 @@ impl DB {
                 }
 
                 // Replace old WAL state fields with new WAL values
-                let mut wal_writer = maybe_wal_writer.unwrap();
-                self.wal.store(&mut wal_writer as *mut _, Ordering::Release);
+                let mut new_wal_writer = UnsafeCell::new(maybe_wal_writer.unwrap());
+                self.wal
+                    .store(&mut new_wal_writer as *mut _, Ordering::Release);
                 mutex_guard.curr_wal_file_number = new_wal_number;
 
                 log::info!("Create a new memtable and make it active.");
