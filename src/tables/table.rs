@@ -85,15 +85,15 @@ impl Table {
 
         log::debug!("Reading and parsing the index block");
         let index_block: DataBlockReader =
-            Table::get_data_block_reader_from_disk(&file, footer.get_index_handle())?;
+            Table::get_data_block_reader_from_disk(&*file, footer.get_index_handle())?;
 
         log::debug!("Reading and parsing the metaindex block");
         let metaindex_block: MetaIndexBlockReader =
-            Table::get_data_block_reader_from_disk(&file, footer.get_metaindex_handle())?;
+            Table::get_data_block_reader_from_disk(&*file, footer.get_metaindex_handle())?;
 
         log::debug!("Reading and parsing the filter block");
         let maybe_filter_block: Option<FilterBlockReader> =
-            match Table::read_filter_meta_block(&options, &file, &metaindex_block) {
+            match Table::read_filter_meta_block(&options, &*file, &metaindex_block) {
                 Ok(filter_block) => filter_block,
                 Err(error) => {
                     /*
@@ -190,7 +190,7 @@ impl Table {
 impl Table {
     /// Return a reader from disk for the data block at the specified handle.
     fn get_data_block_reader_from_disk<K: RainDbKeyType>(
-        file: &Box<dyn ReadonlyRandomAccessFile>,
+        file: &dyn ReadonlyRandomAccessFile,
         block_handle: &BlockHandle,
     ) -> TableResult<BlockReader<K>> {
         let block_data = Table::read_block_from_disk(file, block_handle)?;
@@ -203,7 +203,7 @@ impl Table {
     block handle.
     */
     fn read_block_from_disk(
-        file: &Box<dyn ReadonlyRandomAccessFile>,
+        file: &dyn ReadonlyRandomAccessFile,
         block_handle: &BlockHandle,
     ) -> TableResult<Vec<u8>> {
         // Handy alias to the block size as a `usize`
@@ -271,7 +271,7 @@ impl Table {
     /// Return a reader for the filter meta block at the specified block handle.
     fn read_filter_meta_block(
         options: &DbOptions,
-        file: &Box<dyn ReadonlyRandomAccessFile>,
+        file: &dyn ReadonlyRandomAccessFile,
         metaindex_block: &MetaIndexBlockReader,
     ) -> TableResult<Option<FilterBlockReader>> {
         let filter_block_name = filter_policy::get_filter_block_name(options.filter_policy());
@@ -310,7 +310,7 @@ impl Table {
             Some(cache_entry) => Ok(Arc::clone(&cache_entry.get_value())),
             None => {
                 let reader: DataBlockReader =
-                    Table::get_data_block_reader_from_disk(&self.file, &block_handle)?;
+                    Table::get_data_block_reader_from_disk(&*self.file, block_handle)?;
                 if read_options.fill_cache {
                     let cache_entry = self.cache_block_reader(reader, &block_handle);
                     return Ok(Arc::clone(&cache_entry.get_value()));
