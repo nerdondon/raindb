@@ -13,7 +13,9 @@ Files (and their name formats) used by the database are as follows:
 - Temp files: `[0-9]+.dbtemp`
 */
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::errors::{RainDBError, RainDBResult};
 
 /// The name of the database lock file.
 pub(crate) const LOCK_FILE: &str = "LOCK";
@@ -39,6 +41,21 @@ pub(crate) const CURRENT_FILE_NAME: &str = "CURRENT";
 /// The temp file extension.
 pub(crate) const TEMP_FILE_EXT: &str = "dbtemp";
 
+/**
+Enum of file types used in RainDB.
+
+If appropriate, variants will hold the file number parsed from the file path.
+*/
+pub(crate) enum ParsedFileType {
+    WriteAheadLog(u64),
+    DBLockFile,
+    TableFile(u64),
+    /// Also known as a descriptor file in LevelDB.
+    ManifestFile(u64),
+    CurrentFile,
+    TempFile(u64),
+}
+
 /// Various utilities for managing file and folder names that RainDB uses.
 #[derive(Debug)]
 pub(crate) struct FileNameHandler {
@@ -52,12 +69,33 @@ impl FileNameHandler {
         FileNameHandler { db_path }
     }
 
+    /// Get the path to the database directory as a [`PathBuf`].
+    pub(crate) fn get_db_path(&self) -> PathBuf {
+        PathBuf::from(&self.db_path)
+    }
+
+    /// Resolve the path to the write-ahead log directory.
+    pub(crate) fn get_wal_dir(&self) -> PathBuf {
+        let mut buf = PathBuf::from(&self.db_path);
+        buf.push(WAL_DIR);
+
+        buf
+    }
+
     /// Resolve the path to the write-ahead log.
     pub(crate) fn get_wal_file_path(&self, wal_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
         buf.push(WAL_DIR);
         buf.set_file_name(format!("wal-{number}", number = wal_number));
         buf.set_extension(WAL_EXT);
+
+        buf
+    }
+
+    /// Resolve the path to the data file storage directory.
+    pub(crate) fn get_data_dir(&self) -> PathBuf {
+        let mut buf = PathBuf::from(&self.db_path);
+        buf.push(DATA_DIR);
 
         buf
     }
@@ -102,5 +140,91 @@ impl FileNameHandler {
         buf.set_extension(TEMP_FILE_EXT);
 
         buf
+    }
+
+    /**
+    Attempts to determine the RainDB file type and file number (if any) from the provided path.
+
+    # Panics
+
+    This method will panic if the provided path does not have a file name.
+    */
+    pub(crate) fn get_file_type_from_name(file_path: &Path) -> RainDBResult<ParsedFileType> {
+        if file_path.is_dir() {
+            return Err(RainDBError::PathResolution(format!(
+                "Error resolving path to file type. The path is a directory but a file was \
+                    expected. The provided path was {:?}.",
+                file_path
+            )));
+        }
+
+        let file_name = file_path.file_name().unwrap();
+        if file_name == CURRENT_FILE_NAME {
+            return Ok(ParsedFileType::CurrentFile);
+        }
+
+        if file_name == LOCK_FILE {
+            return Ok(ParsedFileType::DBLockFile);
+        }
+
+        if let Some(file_extension) = file_path.extension() {
+            let file_stem_err_msg = format!(
+                "The provided file stem is not a recognized RainDB file name pattern. Provided \
+                path: {:?}.",
+                file_path
+            );
+            let file_stem = match file_path.file_stem() {
+                Some(stem_os_str) => match stem_os_str.to_str() {
+                    Some(stem) => stem,
+                    None => return Err(RainDBError::PathResolution(file_stem_err_msg)),
+                },
+                None => return Err(RainDBError::PathResolution(file_stem_err_msg)),
+            };
+
+            if file_extension == MANIFEST_FILE_EXT {
+                let file_number: u64 = FileNameHandler::parse_file_number(file_stem, "MANIFEST-")?;
+                return Ok(ParsedFileType::ManifestFile(file_number));
+            }
+
+            if file_extension == WAL_EXT {
+                let file_number: u64 = FileNameHandler::parse_file_number(file_stem, "wal-")?;
+                return Ok(ParsedFileType::WriteAheadLog(file_number));
+            }
+
+            if file_extension == TABLE_EXT {
+                let file_number: u64 = FileNameHandler::parse_file_number(file_stem, "")?;
+                return Ok(ParsedFileType::TableFile(file_number));
+            }
+
+            if file_extension == TEMP_FILE_EXT {
+                let file_number: u64 = FileNameHandler::parse_file_number(file_stem, "")?;
+                return Ok(ParsedFileType::TempFile(file_number));
+            }
+        }
+
+        Err(RainDBError::PathResolution(format!(
+            "The provided file path is not a recognized RainDB file type. Provided path: {:?}.",
+            file_path
+        )))
+    }
+}
+
+/// Private methods
+impl FileNameHandler {
+    /// Attempts to parse a file number from the provided file name.
+    fn parse_file_number(file_name: &str, prefix: &str) -> RainDBResult<u64> {
+        let file_name_err_msg = format!(
+            "The provided file name is not a recognized RainDB file name pattern. Provided \
+            path: {:?}.",
+            file_name
+        );
+
+        match file_name.strip_prefix(prefix) {
+            Some(maybe_file_num) => match maybe_file_num.parse::<u64>() {
+                Ok(file_num) => Ok(file_num),
+                Err(_parse_err) => Err(RainDBError::PathResolution(file_name_err_msg)),
+            },
+            None => Err(RainDBError::PathResolution(file_name_err_msg)),
+        }
     }
 }
