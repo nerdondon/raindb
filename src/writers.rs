@@ -147,10 +147,8 @@ impl Writer {
 
     This will attempt to get a lock on the inner fields.
     */
-    pub fn set_operation_result(&self, operation_result: RainDBResult<()>) -> RainDBResult<()> {
+    pub fn set_operation_result(&self, operation_result: RainDBResult<()>) {
         let mut mutex_guard = self.inner.lock();
         mutex_guard.operation_result = Some(operation_result);
-
-        mutex_guard.operation_result.clone().unwrap()
     }
 }
