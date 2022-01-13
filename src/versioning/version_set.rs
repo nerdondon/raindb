@@ -270,7 +270,7 @@ impl VersionSet {
                 if created_new_manifest_file {
                     let manifest_path = version_set
                         .file_name_handler
-                        .get_manifest_file_name(version_set.manifest_file_number);
+                        .get_manifest_file_path(version_set.manifest_file_number);
                     version_set.maybe_manifest_file = None;
                     let remove_file_result =
                         version_set.filesystem_provider.remove_file(&manifest_path);
@@ -379,7 +379,7 @@ impl VersionSet {
             // waiting.
             let manifest_path = version_set
                 .file_name_handler
-                .get_manifest_file_name(version_set.manifest_file_number);
+                .get_manifest_file_path(version_set.manifest_file_number);
 
             log::info!(
                 "Creating a new manifest file at {:?} with a snapshot of the current \

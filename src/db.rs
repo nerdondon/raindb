@@ -537,7 +537,7 @@ impl DB {
 
                 // First create a new WAL file.
                 let new_wal_number = mutex_guard.version_set.get_new_file_number();
-                let wal_file_path = self.file_name_handler.get_wal_path(new_wal_number);
+                let wal_file_path = self.file_name_handler.get_wal_file_path(new_wal_number);
                 let maybe_wal_writer =
                     LogWriter::new(self.options.filesystem_provider(), wal_file_path);
 
@@ -734,14 +734,14 @@ impl DB {
 
     [`RainDbIterator`]: crate::RainDbIterator
     */
-    fn build_table_from_iterator(
+    fn build_table_from_iterator<'m>(
         options: &DbOptions,
         metadata: &mut FileMetadata,
         mut iterator: Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + 'm>,
         table_cache: &Arc<TableCache>,
     ) -> RainDBResult<()> {
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
-        let table_file_name = file_name_handler.get_table_file_name(metadata.file_number());
+        let table_file_name = file_name_handler.get_table_file_path(metadata.file_number());
         iterator.seek_to_first()?;
 
         if iterator.is_valid() {
@@ -894,9 +894,9 @@ impl DB {
         file_name_handler: &FileNameHandler,
         manifest_file_number: u64,
     ) -> io::Result<()> {
-        let manifest_file_path = file_name_handler.get_manifest_file_name(manifest_file_number);
+        let manifest_file_path = file_name_handler.get_manifest_file_path(manifest_file_number);
         let manifest_file_name = manifest_file_path.file_name().unwrap();
-        let temp_file_path = file_name_handler.get_temp_file_name(manifest_file_number);
+        let temp_file_path = file_name_handler.get_temp_file_path(manifest_file_number);
         let mut temp_file = filesystem_provider.create_file(&temp_file_path)?;
         let contents = [
             manifest_file_name.to_string_lossy().as_bytes(),
