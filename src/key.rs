@@ -17,6 +17,7 @@ The sequence number is used to denote which of the stored records is the most re
 
 use integer_encoding::FixedInt;
 use std::convert::{TryFrom, TryInto};
+use std::hash::{Hash, Hasher};
 
 use crate::errors::{RainDBError, RainDBResult};
 use crate::utils::bytes::BinarySeparable;
@@ -56,7 +57,7 @@ Unlike in LevelDB, we do not pack the sequence number and operation together int
 integer (forming an 8 byte trailer) where the sequence number takes up the first 56 bits and the
 operation takes up the last 8 bits.
 */
-#[derive(Clone, Debug, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct InternalKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -153,6 +154,14 @@ impl PartialEq for InternalKey {
         self.user_key.cmp(&other.user_key).is_eq()
             && self.sequence_number == other.sequence_number
             && self.operation == other.operation
+    }
+}
+
+impl Hash for InternalKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.user_key.hash(state);
+        self.sequence_number.hash(state);
+        self.operation.hash(state);
     }
 }
 
