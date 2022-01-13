@@ -53,6 +53,9 @@ pub enum RainDBError {
     /// Variant for internal key parsing errors.
     KeyParsing(String),
 
+    /// Variant used for path/file name resolution errors.
+    PathResolution(String),
+
     /// Variant used for one off situations. This should be used sparingly.
     Other(String),
 }
@@ -71,6 +74,7 @@ impl fmt::Display for RainDBError {
             RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
             RainDBError::Compaction(base_err) => write!(f, "{}", base_err),
             RainDBError::KeyParsing(base_err) => write!(f, "{}", base_err),
+            RainDBError::PathResolution(base_err) => write!(f, "{}", base_err),
             RainDBError::Other(base_err) => write!(f, "{}", base_err),
         }
     }

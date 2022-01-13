@@ -20,7 +20,7 @@ use crate::config::{
     MAX_GROUP_COMMIT_SIZE_BYTES, MAX_NUM_LEVELS, SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES,
 };
 use crate::errors::{RainDBError, RainDBResult};
-use crate::file_names::FileNameHandler;
+use crate::file_names::{FileNameHandler, ParsedFileType};
 use crate::file_names::{DATA_DIR, WAL_DIR};
 use crate::fs::FileSystem;
 use crate::key::InternalKey;
@@ -52,7 +52,7 @@ pub(crate) struct PortableDatabaseState {
     pub(crate) options: DbOptions,
 
     /// Handler for file names used by the database.
-    file_name_handler: Arc<FileNameHandler>,
+    pub(crate) file_name_handler: Arc<FileNameHandler>,
 
     /**
     Database state that require a lock to be held before being read or written to.
@@ -931,5 +931,199 @@ impl DB {
         }
 
         Ok(())
+    }
+
+    /// Remove files that are no longer in use.
+    pub(crate) fn remove_obsolete_files(
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        filesystem_provider: Arc<dyn FileSystem>,
+        file_name_handler: &FileNameHandler,
+        table_cache: &TableCache,
+    ) {
+        if db_fields_guard.maybe_bad_database_state.is_some() {
+            // After a background error, we don't know whether a new version may or may not have
+            // been committed so we cannot safely garbage collect.
+            log::warn!(
+                "Encountered a catastrophic background error while attempting to remove obsolete \
+                files. Aborting file removal."
+            );
+            return;
+        }
+
+        let mut live_files: HashSet<u64> = db_fields_guard.tables_in_use.clone();
+        for file in db_fields_guard.version_set.get_live_files() {
+            live_files.insert(file);
+        }
+        log::info!(
+            "Found {} live files. Proceeding with database path discovery and file pruning.",
+            live_files.len()
+        );
+
+        // While doing checks we ignore errors from `list_dir` since it may be transient and
+        // subsequent, successful runs will remove the stale files also
+        let mut files_to_delete: Vec<PathBuf> = vec![];
+
+        // Check WAL file directory for stale files
+        if let Ok(wal_files) = filesystem_provider.list_dir(&file_name_handler.get_wal_dir()) {
+            for file in wal_files {
+                if file.is_dir() {
+                    log::warn!(
+                        "Found an unexpected directory in the WAL folder. Skipping it. Path: {:?}",
+                        &file
+                    );
+                    continue;
+                }
+
+                match FileNameHandler::get_file_type_from_name(file.as_path()) {
+                    Ok(file_type) => {
+                        if let ParsedFileType::WriteAheadLog(wal_number) = file_type {
+                            // Delete the file if the WAL number is less than the currently live WAL
+                            // and it is not currently being compacted
+                            let is_live_wal: bool =
+                                wal_number >= db_fields_guard.version_set.get_curr_wal_number();
+                            let is_being_compacted: bool =
+                                match db_fields_guard.version_set.maybe_prev_wal_number() {
+                                    Some(prev_wal_number) => wal_number == prev_wal_number,
+                                    None => false,
+                                };
+
+                            if !is_live_wal && !is_being_compacted {
+                                log::debug!("Marking WAL file {:?} for deletion.", wal_number);
+                                files_to_delete.push(file);
+                            }
+                        } else {
+                            log::warn!(
+                                "Found an unexpected file in the WAL folder. Skipping it. \
+                                Path: {:?}",
+                                &file
+                            );
+                        }
+                    }
+                    Err(parse_err) => {
+                        log::warn!(
+                            "Encountered an error parsing a file path in the WAL folder. \
+                            Path: {:?}. Error: {}",
+                            &file,
+                            parse_err
+                        );
+                    }
+                }
+            }
+        }
+
+        // Check data directory for stale table files
+        if let Ok(data_files) = filesystem_provider.list_dir(&file_name_handler.get_data_dir()) {
+            for file in data_files {
+                if file.is_dir() {
+                    log::warn!(
+                        "Found an unexpected directory in the data folder. Skipping it. Path: {:?}",
+                        &file
+                    );
+                    continue;
+                }
+
+                match FileNameHandler::get_file_type_from_name(file.as_path()) {
+                    Ok(file_type) => {
+                        if let ParsedFileType::TableFile(table_number) = file_type {
+                            if !live_files.contains(&table_number) {
+                                log::debug!(
+                                    "Evicting table file from cache and marking for deletion. \
+                                    Table number: {:?}",
+                                    &table_number
+                                );
+
+                                table_cache.remove(table_number);
+                                files_to_delete.push(file);
+                            }
+                        } else {
+                            log::warn!(
+                                "Found an unexpected file in the data folder. Skipping it. \
+                                Path: {:?}",
+                                &file
+                            );
+                        }
+                    }
+                    Err(parse_err) => {
+                        log::warn!(
+                            "Encountered an error parsing a file path in the data folder. \
+                            Path: {:?}. Error: {}",
+                            &file,
+                            parse_err
+                        );
+                    }
+                }
+            }
+        }
+
+        // Check main directory for stale files
+        if let Ok(files) = filesystem_provider.list_dir(&file_name_handler.get_db_path()) {
+            for file in files {
+                if file.is_dir() {
+                    continue;
+                }
+
+                match FileNameHandler::get_file_type_from_name(file.as_path()) {
+                    Ok(file_type) => match file_type {
+                        ParsedFileType::ManifestFile(manifest_file_num) => {
+                            // Keep current manifest as well as any newer manifests (which can
+                            // happen if there is an undiscovered race condition)
+                            if manifest_file_num
+                                < db_fields_guard.version_set.get_manifest_file_number()
+                            {
+                                log::debug!(
+                                    "Marking manifest file {:?} for deletion.",
+                                    manifest_file_num
+                                );
+                                files_to_delete.push(file);
+                            }
+                        }
+                        ParsedFileType::TempFile(temp_file_num) => {
+                            if !live_files.contains(&temp_file_num) {
+                                log::debug!("Marking temp file {:?} for deletion.", &temp_file_num);
+                                files_to_delete.push(file);
+                            }
+                        }
+                        ParsedFileType::CurrentFile => {
+                            log::debug!("Keeping `CURRENT` file.");
+                        }
+                        ParsedFileType::DBLockFile => {
+                            log::debug!("Keeping `LOCK` file.");
+                        }
+                        _ => {
+                            log::warn!(
+                                "Found an unexpected file in the main database folder. Skipping \
+                                it. Path: {:?}",
+                                &file
+                            );
+                        }
+                    },
+                    Err(parse_err) => {
+                        log::warn!(
+                            "Encountered an error parsing a file path in the main database folder. \
+                            Path: {:?}. Error: {}",
+                            &file,
+                            parse_err
+                        );
+                    }
+                }
+            }
+        }
+
+        /*
+        Unblock other threads while deleting files. All of the files being deleted have unique
+        names that will not collide with newly created files so it is safe to release the lock.
+        */
+        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(db_fields_guard, move || {
+            for file in files_to_delete {
+                log::info!("Removing obsolete file: {:?}", &file);
+                if let Err(error) = filesystem_provider.remove_file(&file) {
+                    log::error!(
+                        "There was an error removing the obsolete file {:?}. Error: {}",
+                        &file,
+                        error
+                    );
+                }
+            }
+        });
     }
 }

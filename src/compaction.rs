@@ -164,7 +164,10 @@ impl CompactionWorker {
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
     ) {
         if db_fields_guard.maybe_immutable_memtable.is_some() {
-            // There is an immutable memtable. Compact that.
+            log::info!(
+                "Compaction thread found an immutable memtable to compact. Proceeding with \
+                memtable compaction."
+            );
             CompactionWorker::compact_memtable(db_state, db_fields_guard);
             return;
         }
@@ -250,6 +253,21 @@ impl CompactionWorker {
             );
             return;
         }
+
+        log::info!(
+            "Compaction thread committing to new database state. Removing immutable memtable and \
+            obsolete files."
+        );
+        db_fields_guard.maybe_immutable_memtable.take();
+        db_state
+            .has_immutable_memtable
+            .store(false, Ordering::Release);
+        DB::remove_obsolete_files(
+            db_fields_guard,
+            db_state.options.filesystem_provider(),
+            Arc::clone(&db_state.file_name_handler).as_ref(),
+            Arc::clone(&db_state.table_cache).as_ref(),
+        );
     }
 }
 

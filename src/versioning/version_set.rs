@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, MutexGuard};
@@ -170,6 +171,16 @@ impl VersionSet {
         self.prev_wal_number = prev_wal_number;
     }
 
+    /// Get the file number of the current write-ahead log.
+    pub fn get_curr_wal_number(&self) -> u64 {
+        self.curr_wal_number
+    }
+
+    /// Get the file number of the current manifest file.
+    pub fn get_manifest_file_number(&self) -> u64 {
+        self.manifest_file_number
+    }
+
     /// Returns true if a level on the current version needs compaction.
     pub fn needs_compaction(&self) -> bool {
         // We have a shared reference to `self` so the `current_version` field cannot have been
@@ -313,6 +324,20 @@ impl VersionSet {
         } else {
             drop(version);
         }
+
+    /// Return a set of file numbers for table files that are still in use in the version set.
+    pub fn get_live_files(&self) -> HashSet<u64> {
+        let mut live_files: HashSet<u64> = HashSet::new();
+        for version in self.versions.iter() {
+            for level in 0..MAX_NUM_LEVELS {
+                let files = &version.read().element.files[level];
+                for file in files.iter() {
+                    live_files.insert(file.file_number());
+                }
+            }
+        }
+
+        live_files
     }
 }
 
