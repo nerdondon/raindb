@@ -87,7 +87,7 @@ impl TableBuilder {
     /// Create a new instance of [`TableBuilder`].
     pub fn new(options: DbOptions, file_number: u64) -> TableBuildResult<Self> {
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
-        let table_file_name = file_name_handler.get_table_file_name(file_number);
+        let table_file_name = file_name_handler.get_table_file_path(file_number);
         let file = options
             .filesystem_provider()
             .create_file(&table_file_name)?;

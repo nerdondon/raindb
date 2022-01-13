@@ -74,7 +74,7 @@ impl TableCache {
         }
 
         // Table file was not found in the cache so read from disk
-        let table_file_name = self.file_name_handler.get_table_file_name(file_number);
+        let table_file_name = self.file_name_handler.get_table_file_path(file_number);
         let table_file = self.filesystem_provider.open_file(&table_file_name)?;
         let table_reader = Table::open(self.options.clone(), table_file)?;
         let cache_entry = self.cache.insert(file_number, table_reader);

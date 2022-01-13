@@ -45,14 +45,15 @@ pub(crate) struct FileNameHandler {
     db_path: String,
 }
 
+/// Crate-only methods
 impl FileNameHandler {
     /// Create a new instance of the [`FileNameHandler`].
-    pub fn new(db_path: String) -> Self {
+    pub(crate) fn new(db_path: String) -> Self {
         FileNameHandler { db_path }
     }
 
     /// Resolve the path to the write-ahead log.
-    pub fn get_wal_path(&self, wal_number: u64) -> PathBuf {
+    pub(crate) fn get_wal_file_path(&self, wal_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
         buf.push(WAL_DIR);
         buf.set_file_name(format!("wal-{number}", number = wal_number));
@@ -62,7 +63,7 @@ impl FileNameHandler {
     }
 
     /// Resolve the path to a specific table file.
-    pub fn get_table_file_name(&self, file_number: u64) -> PathBuf {
+    pub(crate) fn get_table_file_path(&self, file_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
         buf.push(DATA_DIR);
         buf.set_file_name(file_number.to_string());
@@ -78,7 +79,7 @@ impl FileNameHandler {
 
     This is synonomous to LevelDB's `leveldb::DescriptorFileName` method.
     */
-    pub fn get_manifest_file_name(&self, manifest_number: u64) -> PathBuf {
+    pub(crate) fn get_manifest_file_path(&self, manifest_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
         buf.set_file_name(format!("MANIFEST-{number}", number = manifest_number));
         buf.set_extension(MANIFEST_FILE_EXT);
@@ -86,14 +87,16 @@ impl FileNameHandler {
         buf
     }
 
-    pub fn get_current_file_path(&self) -> PathBuf {
+    /// Resolve the path to the `CURRENT` file.
+    pub(crate) fn get_current_file_path(&self) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
-        buf.set_file_name("CURRENT");
+        buf.set_file_name(CURRENT_FILE_NAME);
 
         buf
     }
 
-    pub fn get_temp_file_name(&self, file_number: u64) -> PathBuf {
+    /// Resolve the path to a temp file.
+    pub(crate) fn get_temp_file_path(&self, file_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
         buf.set_file_name(file_number.to_string());
         buf.set_extension(TEMP_FILE_EXT);
