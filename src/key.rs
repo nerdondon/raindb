@@ -245,7 +245,7 @@ format.
 */
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum Operation {
+pub enum Operation {
     /// This represents a tombstone. There should not be a value set for the operation.
     Delete = 0,
     /// Add a new key-value pair or updates an existing key-value pair.

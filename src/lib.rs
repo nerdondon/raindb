@@ -22,7 +22,6 @@ mod compaction;
 mod config;
 mod errors;
 mod file_names;
-mod key;
 mod logs;
 mod memtable;
 mod table_cache;
@@ -39,6 +38,9 @@ pub use filter_policy::{BloomFilterPolicy, FilterPolicy};
 
 mod iterator;
 pub use iterator::RainDbIterator;
+
+mod key;
+pub use key::Operation;
 
 pub mod options;
 pub use options::{DbOptions, ReadOptions, WriteOptions};
