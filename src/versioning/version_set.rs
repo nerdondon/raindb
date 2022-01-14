@@ -268,8 +268,8 @@ impl VersionSet {
 
                 let version_handle = version_set.versions.push(new_version);
                 version_set.current_version = Some(version_handle);
-                version_set.curr_wal_number = change_manifest.wal_file_number.clone().unwrap();
-                version_set.prev_wal_number = change_manifest.prev_wal_file_number.clone();
+                version_set.curr_wal_number = change_manifest.wal_file_number.unwrap();
+                version_set.prev_wal_number = change_manifest.prev_wal_file_number;
             }
             Err(error) => {
                 log::error!(
@@ -316,14 +316,21 @@ impl VersionSet {
 
     [`Mutex`]: parking_lot::Mutex
     */
-    pub fn release_version(&mut self, version: SharedNode<Version>) {
-        if Arc::strong_count(&version) == 2 {
+    pub fn release_version(&mut self, version_node: SharedNode<Version>) {
+        if Arc::strong_count(&version_node) == 2 {
             // Remove if this is the last external reference.
             // 1 external reference + 1 internal (linked list) reference = 2.
-            self.versions.remove_node(version);
+            log::info!(
+                "Unlinking version at last sequence number {} with WAL file number {}.",
+                &version_node.read().element.last_sequence_number(),
+                &version_node.read().element.wal_file_number()
+            );
+
+            self.versions.remove_node(version_node);
         } else {
-            drop(version);
+            drop(version_node);
         }
+    }
 
     /// Return a set of file numbers for table files that are still in use in the version set.
     pub fn get_live_files(&self) -> HashSet<u64> {
@@ -462,6 +469,7 @@ impl VersionSet {
         Ok(())
     }
 
+    /// Persist the specified change manifest to the manifest file on disk.
     fn persist_changes(
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
         change_manifest: &VersionChangeManifest,
