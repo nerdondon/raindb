@@ -75,13 +75,13 @@ where
     restart_point_indexes: Vec<usize>,
 }
 
-// Public methods
+// Crate-only methods
 impl<K> BlockReader<K>
 where
     K: RainDbKeyType,
 {
     /// Create a new instance of a [`BlockReader`].
-    pub fn new(raw_data: Vec<u8>) -> TableResult<Self> {
+    pub(crate) fn new(raw_data: Vec<u8>) -> TableResult<Self> {
         if raw_data.len() < SIZE_OF_U32_BYTES {
             return Err(ReadError::FailedToParse(
                 "Failed to parse restart points. The buffer is too small.".to_string(),
@@ -113,12 +113,12 @@ where
     }
 
     /// Get the size of the block.
-    pub fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.raw_data.len()
     }
 
     /// Get a [`crate::iterator::RainDbIterator`] to the block entries.
-    pub fn iter(&self) -> BlockIter<K> {
+    pub(crate) fn iter(&self) -> BlockIter<K> {
         BlockIter {
             current_index: 0,
             block_entries: Arc::clone(&self.block_entries),
@@ -274,7 +274,7 @@ where
             let restart_point =
                 u32::decode_fixed(&buf[current_offset..(current_offset + SIZE_OF_U32_BYTES)]);
             restart_points.push(restart_point);
-            current_offset += current_offset + SIZE_OF_U32_BYTES;
+            current_offset += SIZE_OF_U32_BYTES;
         }
 
         if restart_points.len() != (expected_num_restart_points as usize) {
@@ -386,7 +386,7 @@ where
             return self.current();
         }
 
-        return None;
+        None
     }
 
     fn prev(&mut self) -> Option<(&K, &Vec<u8>)> {
@@ -402,7 +402,7 @@ where
             return self.current();
         }
 
-        return None;
+        None
     }
 
     fn current(&self) -> Option<(&K, &Vec<u8>)> {
@@ -424,10 +424,10 @@ to the string value.
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct MetaIndexKey(String);
 
-/// Public methods
+/// Crate-only
 impl MetaIndexKey {
     /// Create a new instance of [`MetaIndexKey`].
-    pub fn new(key: String) -> Self {
+    pub(crate) fn new(key: String) -> Self {
         Self(key)
     }
 }
@@ -444,12 +444,10 @@ impl TryFrom<Vec<u8>> for MetaIndexKey {
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         let maybe_key = std::str::from_utf8(&value);
         match maybe_key {
-            Err(_base_err) => {
-                return Err(ReadError::FailedToParse(
-                    "Failed to parse the string for the metaindex key.".to_string(),
-                ));
-            }
-            Ok(key) => return Ok(MetaIndexKey(key.to_string())),
+            Err(_base_err) => Err(ReadError::FailedToParse(
+                "Failed to parse the string for the metaindex key.".to_string(),
+            )),
+            Ok(key) => Ok(MetaIndexKey(key.to_string())),
         }
     }
 }
