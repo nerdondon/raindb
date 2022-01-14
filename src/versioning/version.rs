@@ -113,11 +113,30 @@ pub(crate) struct Version {
     [`VersionSet::finalize`]: super::version_set::VersionSet::finalize
     */
     size_compaction_metadata: Option<SizeCompactionMetadata>,
+
+    /**
+    The sequence number that this version was created at.
+
+    This information is used primarily for debugging purposes.
+    */
+    last_sequence_number: u64,
+
+    /**
+    The file number of the write-ahead log in use at the time that this version was created.
+
+    This information is used primarily for debugging purposes.
+    */
+    wal_file_number: u64,
 }
 
 /// Public methods
 impl Version {
-    pub fn new(db_options: DbOptions, table_cache: &Arc<TableCache>) -> Self {
+    pub fn new(
+        db_options: DbOptions,
+        table_cache: &Arc<TableCache>,
+        last_sequence_number: u64,
+        wal_file_number: u64,
+    ) -> Self {
         let files = Default::default();
 
         Self {
@@ -126,6 +145,8 @@ impl Version {
             seek_compaction_metadata: None,
             size_compaction_metadata: None,
             files,
+            last_sequence_number,
+            wal_file_number,
         }
     }
 
@@ -182,6 +203,16 @@ impl Version {
         size_compaction_metadata: Option<SizeCompactionMetadata>,
     ) {
         self.size_compaction_metadata = size_compaction_metadata;
+    }
+
+    /// Get a reference to the version's last sequence number.
+    pub(crate) fn last_sequence_number(&self) -> u64 {
+        self.last_sequence_number
+    }
+
+    /// Get a reference to the WAL file number that the version was created at.
+    pub(crate) fn wal_file_number(&self) -> u64 {
+        self.wal_file_number
     }
 
     /// Clones the current version while resetting compaction metadata.
@@ -472,16 +503,16 @@ impl Version {
     }
 
     /**
-    Calculate the maximum number of bytes allowed for a level
+    Calculate the maximum number of bytes allowed for a level.
 
     Note that the level 0 result is not really used because the level 0 compaction threshold is
     based on the number of files in the level.
     */
     fn max_bytes_for_level(level: usize) -> f64 {
         // The threshold is calculated as 10x multiples of 1 MiB.
-        const STARTING_MULTIPLE_BYTES: f64 = 1. * 1024. * 1024.;
+        let starting_multiple_bytes: f64 = 1. * 1024. * 1024.;
         let mut level = level;
-        let mut result: f64 = 10. * STARTING_MULTIPLE_BYTES;
+        let mut result: f64 = 10. * starting_multiple_bytes;
         while level > 1 {
             result *= 10.;
             level -= 1;
