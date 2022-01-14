@@ -150,6 +150,55 @@ The read path is as follows:
 
 ### Compactions
 
+_Content in the compactions section is a paraphrase/reorganization and expansion of the
+[LevelDB docs](https://github.com/google/leveldb/blob/master/doc/impl.md#compactions)_
+
+When the size of some level **L** exceeds its limit, a compaction is scheduled for it on the
+compaction background thread. A level can exceed either a size limit or a seek-through limit. A
+seek-through is recorded if a file is read but does not contain the necessary information and an
+overlapping file in an older level must be read. The key for compactions is to reduce the number of
+reads to disk. The size limit for levels greater than zero is determined by the amount of bytes in
+the level and each higher level has a progressively larger limit. Level 0 is treated differently and
+has a file limit of 4. The reason for this is that level 0 compactions can be disk intensive (reads)
+in a couple cases:
+
+1. Files at level 0 may be larger if memtables are configured to be larger
+
+1. The files in level 0 have the potential to be merged on every database read operation, so we want
+   to minimize the number of individual files when the file size is small. File sizes can be small
+   if the memtable maximum size setting is low, if the compression ratios are high, or if there are
+   lots of rights or individual deletions.
+
+The compaction routine will pick a file from level **L** and all files that overlap the key range of
+the selected file in the next level (i.e. level **L+1**). Explicitly, the entire key range for the
+file at **L+1** does not need to overlap for the file to be included in compaction--partial overlaps
+will qualify the file. Usually only one file from level **L** will be selected, but level 0 is a
+special case because it can contain files with overlapping key ranges within the level. In the case
+where a file in level 0 is selected for compaction, all of the other level 0 files that overlap the
+selected file will also be read in for compaction.
+
+A compaction will merge the contents of the selected files and produce a sequence of **L+1** files.
+In terms of terminology, we say that the level **L** files are compacted to an older/parent level
+**L+1**. When producing new table files, there are a couple limits for when a new file will be
+started:
+
+1. When a maximum file size is reached (default is 2 MiB)
+
+1. When the key range of the current file has grown to overlap more than 10 level **L+2** files.
+   This is to ensure that later compactions of the **L+1** file will not get too expensive by
+   pulling in too many **L+2** files.
+
+The old files are deleted and new files are made available for serving.
+
+Compactions for a particular level **L** will rotate through the key space. Specifically, we record
+the ending key that was processed during the last compaction for that level. The next compaction for
+level **L** will pick the first file that starts after this key (wrapping around to the beginning of
+the key space if there is no such file).
+
+Compactions will drop overwritten values. They will also drop deletion markers (a.k.a. tombstones)
+if older levels (**L-n**) do not contain a file whose key range overlaps the key in the deletion
+marker.
+
 ## Data Formats
 
 ### Internal key format
