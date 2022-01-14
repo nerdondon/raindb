@@ -14,7 +14,9 @@ use std::time::{self, Instant};
 use std::{io, thread};
 
 use crate::batch::Batch;
-use crate::compaction::{CompactionWorker, LevelCompactionStats, ManualCompaction, TaskKind};
+use crate::compaction::{
+    CompactionWorker, LevelCompactionStats, ManualCompactionConfiguration, TaskKind,
+};
 use crate::config::{
     GROUP_COMMIT_SMALL_WRITE_THRESHOLD_BYTES, L0_SLOWDOWN_WRITES_TRIGGER, L0_STOP_WRITES_TRIGGER,
     MAX_GROUP_COMMIT_SIZE_BYTES, MAX_NUM_LEVELS, SMALL_WRITE_ADDITIONAL_GROUP_COMMIT_SIZE_BYTES,
@@ -112,7 +114,7 @@ pub(crate) struct GuardedDbFields {
     Stores state information for a manual compaction. `None` if there is no manual compaction in
     progress or if no manual compaction was requested.
     */
-    maybe_manual_compaction: Option<ManualCompaction>,
+    pub(crate) maybe_manual_compaction: Option<ManualCompactionConfiguration>,
 
     /// Queued threads waiting to perform write operations.
     writer_queue: VecDeque<Arc<Writer>>,

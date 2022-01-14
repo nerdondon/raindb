@@ -1,22 +1,15 @@
-/*!
-This module contains abstractions used in compaction operations. Core to this is the
-[`CompactionWorker`] worker thread.
-*/
-
 use parking_lot::MutexGuard;
-use std::ops::AddAssign;
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
-use std::{fmt, io};
 
+use crate::compaction::errors::CompactionWorkerError;
 use crate::db::{GuardedDbFields, PortableDatabaseState};
-use crate::errors::{DBIOError, RainDBError};
 use crate::key::InternalKey;
-use crate::versioning::errors::WriteError;
 use crate::versioning::{VersionChangeManifest, VersionSet};
 use crate::DB;
+
+use super::errors::CompactionWorkerResult;
 
 /**
 Name of the compaction thread.
@@ -32,7 +25,7 @@ const COMPACTION_THREAD_NAME: &str = "raindb-compact";
 
 /// The kinds of tasks that the compaction worker can schedule.
 #[derive(Debug)]
-pub enum TaskKind {
+pub(crate) enum TaskKind {
     /// Variant for scheduling a compaction job.
     Compaction,
 
@@ -110,7 +103,8 @@ impl CompactionWorker {
 
     /// Schedule a task in the background thread.
     pub fn schedule_task(&self, task_kind: TaskKind) {
-        self.task_sender.send(task_kind);
+        // TODO: restart the compaction thread on error
+        self.task_sender.send(task_kind).unwrap();
     }
 }
 
@@ -268,99 +262,5 @@ impl CompactionWorker {
             Arc::clone(&db_state.file_name_handler).as_ref(),
             Arc::clone(&db_state.table_cache).as_ref(),
         );
-    }
-}
-
-/// Type alias for [`Result`]'s with [`CompactionWorkerError`]'s.
-pub(crate) type CompactionWorkerResult<T> = Result<T, CompactionWorkerError>;
-
-/// Errors that occur during compaction worker operations.
-#[derive(Clone, Debug)]
-pub enum CompactionWorkerError {
-    /// Variant for IO errors encountered during worker operations.
-    IO(DBIOError),
-
-    /// Variant for issues that occur when writing a table file.
-    WriteTable(Box<RainDBError>),
-
-    /// Variant for issues that occur when persisting and applying a version change manifest.
-    VersionManifestError(WriteError),
-
-    /// Variant for halting compactions due to unexpected state.
-    UnexpectedState(String),
-}
-
-impl std::error::Error for CompactionWorkerError {}
-
-impl fmt::Display for CompactionWorkerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CompactionWorkerError::IO(base_err) => write!(f, "{}", base_err),
-            CompactionWorkerError::WriteTable(base_err) => write!(f, "{}", base_err),
-            CompactionWorkerError::VersionManifestError(base_err) => write!(f, "{}", base_err),
-            CompactionWorkerError::UnexpectedState(reason) => write!(f, "{}", reason),
-        }
-    }
-}
-
-impl From<io::Error> for CompactionWorkerError {
-    fn from(err: io::Error) -> Self {
-        CompactionWorkerError::IO(err.into())
-    }
-}
-
-impl From<WriteError> for CompactionWorkerError {
-    fn from(err: WriteError) -> Self {
-        CompactionWorkerError::VersionManifestError(err)
-    }
-}
-
-// Carries information for performing a manual compaction and it's completion state.
-pub struct ManualCompaction {
-    /// The level to compact.
-    pub level: u64,
-    /// True if the compaction is completed. Otherwise, false.
-    pub done: bool,
-    /// The key to start compaction from. `None` means the start of the key range.
-    pub begin: Option<InternalKey>,
-    /// The key to end compaction at. `None` means the end of the key range.
-    pub end: Option<InternalKey>,
-}
-
-/// Carries compaction metrics for a level.
-pub(crate) struct LevelCompactionStats {
-    /// The time it took for a compaction to complete.
-    pub(crate) compaction_duration: Duration,
-
-    /// The number of bytes read during the compaction.
-    pub(crate) bytes_read: u64,
-
-    /// The number of bytes written during the compaction.
-    pub(crate) bytes_written: u64,
-}
-
-/// Private methods
-impl LevelCompactionStats {
-    /// Add the statistic values in `other_stats` to the statistics in this object.
-    fn add_stats(&mut self, other_stats: &LevelCompactionStats) {
-        self.compaction_duration += other_stats.compaction_duration;
-        self.bytes_read += other_stats.bytes_read;
-        self.bytes_written += other_stats.bytes_written;
-    }
-}
-
-impl Default for LevelCompactionStats {
-    fn default() -> Self {
-        Self {
-            compaction_duration: Duration::new(0, 0),
-            bytes_read: 0,
-            bytes_written: 0,
-        }
-    }
-}
-
-impl AddAssign for LevelCompactionStats {
-    fn add_assign(&mut self, rhs: Self) {
-        self.add_stats(&rhs);
     }
 }
