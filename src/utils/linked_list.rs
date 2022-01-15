@@ -1,4 +1,5 @@
 use parking_lot::RwLock;
+use std::fmt::Debug;
 use std::sync::{Arc, Weak};
 
 type Link<T> = Option<SharedNode<T>>;
@@ -10,7 +11,10 @@ pub type SharedNode<T> = Arc<RwLock<Node<T>>>;
 
 /// A node in the linked list.
 #[derive(Debug)]
-pub struct Node<T> {
+pub struct Node<T>
+where
+    T: Debug,
+{
     /// The element that the node represents.
     pub element: T,
 
@@ -30,7 +34,10 @@ pub struct Node<T> {
 }
 
 /// Public methods
-impl<T> Node<T> {
+impl<T> Node<T>
+where
+    T: Debug,
+{
     /// Create a new [`Node`] that with empty next and previous links.
     pub fn new(element: T) -> Self {
         Self {
@@ -53,7 +60,10 @@ nodes purely for interior mutability purposes. This could be made obvious with
 [`std::cell::UnsafeCell`] but [`RwLock`] was used so that the code didn't get even more verbose.
 */
 #[derive(Debug)]
-pub struct LinkedList<T> {
+pub struct LinkedList<T>
+where
+    T: Debug,
+{
     /// The head of the list.
     head: Link<T>,
 
@@ -65,7 +75,10 @@ pub struct LinkedList<T> {
 }
 
 /// Public methods
-impl<T> LinkedList<T> {
+impl<T> LinkedList<T>
+where
+    T: Debug,
+{
     /// Create a new instance of [`LinkedList`]
     pub fn new() -> Self {
         Self {
@@ -104,14 +117,16 @@ impl<T> LinkedList<T> {
     /// Remove an element from the front of the list.
     pub fn pop_front(&mut self) -> Option<SharedNode<T>> {
         self.head.take().map(|old_head_node| {
+            println!("popping {:?}", old_head_node.read().element);
             self.head = old_head_node.write().next.clone();
 
-            match &self.head {
+            match self.head.as_ref() {
                 None => {
                     // There is no new head node so the list must be empty
                     self.tail = None;
                 }
                 Some(new_head_node) => {
+                    println!("new head {:?}", new_head_node.read().element);
                     // The new head's previous should now be `None` since it pointed at the old,
                     // removed head
                     new_head_node.write().prev = None;
@@ -230,7 +245,10 @@ impl<T> LinkedList<T> {
     }
 }
 
-impl<T> Drop for LinkedList<T> {
+impl<T> Drop for LinkedList<T>
+where
+    T: Debug,
+{
     fn drop(&mut self) {
         while self.pop_front().is_some() {}
     }
@@ -241,12 +259,18 @@ An iterator adapter to keep state for iterating the linked list.
 
 Created by calling [`LinkedList::iter`].
 */
-pub struct NodeIter<T> {
+pub struct NodeIter<T>
+where
+    T: Debug,
+{
     /// The next value of the iterator.
     next: Option<SharedNode<T>>,
 }
 
-impl<T> Iterator for NodeIter<T> {
+impl<T> Iterator for NodeIter<T>
+where
+    T: Debug,
+{
     type Item = SharedNode<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
