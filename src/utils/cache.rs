@@ -160,9 +160,7 @@ where
                 // This key is already in the cache. Do not update the value but update the LRU list to
                 // indicate an access.
                 writable_inner.lru_list.remove_node(existing_node.clone());
-                writable_inner
-                    .lru_list
-                    .push_node_front(existing_node.clone());
+                writable_inner.lru_list.push_node_front(existing_node);
             }
         }
 
@@ -198,7 +196,7 @@ where
         let mut writable_inner = self.inner.write();
         let maybe_removed_node = writable_inner.cache_entries.remove(key);
         match maybe_removed_node {
-            None => return,
+            None => {}
             Some(removed_node) => writable_inner.lru_list.remove_node(removed_node),
         }
     }
@@ -206,7 +204,7 @@ where
     fn new_id(&self) -> u64 {
         let mut inner = self.inner.write();
         inner.last_id_given += 1;
-        return inner.last_id_given;
+        inner.last_id_given
     }
 }
 
