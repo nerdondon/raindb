@@ -80,18 +80,18 @@ impl<T> LinkedList<T> {
         self.tail.take().map(|old_tail_node| {
             self.tail = match old_tail_node.write().prev.take() {
                 None => None,
-                Some(prev_node) => Weak::upgrade(&prev_node).map(|upgraded| upgraded),
+                Some(prev_node) => Weak::upgrade(&prev_node),
             };
 
-            match &mut self.tail {
+            match self.tail.as_mut() {
                 None => {
                     // There is no new tail node so the list must be empty
                     self.head = None;
                 }
                 Some(new_tail_node) => {
-                    // The new head's previous should now be `None` since it pointed at the old,
-                    // removed head
-                    new_tail_node.write().prev = None;
+                    // The new tail's next should now be `None` since it pointed at the old,
+                    // removed tail
+                    new_tail_node.write().next = None;
                 }
             }
 
@@ -104,7 +104,7 @@ impl<T> LinkedList<T> {
     /// Remove an element from the front of the list.
     pub fn pop_front(&mut self) -> Option<SharedNode<T>> {
         self.head.take().map(|old_head_node| {
-            self.head = (*old_head_node).write().next.clone();
+            self.head = old_head_node.write().next.clone();
 
             match &self.head {
                 None => {
@@ -137,8 +137,7 @@ impl<T> LinkedList<T> {
         node.write().prev = self.tail.as_ref().map(|tail| Arc::downgrade(tail));
         node.write().next = None;
 
-        let maybe_tail_node = self.tail.clone();
-        match maybe_tail_node {
+        match self.tail.as_ref() {
             Some(tail_node) => {
                 // Fix existing links
                 tail_node.write().next = Some(Arc::clone(&node))
@@ -153,7 +152,7 @@ impl<T> LinkedList<T> {
     /// Push an element onto the front of the list.
     pub fn push_front(&mut self, element: T) -> SharedNode<T> {
         let new_node = Arc::new(RwLock::new(Node::new(element)));
-        self.push_node_front(new_node.clone());
+        self.push_node_front(Arc::clone(&new_node));
 
         new_node
     }
