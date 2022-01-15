@@ -208,7 +208,11 @@ where
     }
 }
 
-impl<K, V> CacheEntry<V> for SharedNode<(K, V)> {
+impl<K, V> CacheEntry<V> for SharedNode<(K, V)>
+where
+    K: Debug,
+    V: Debug,
+{
     fn get_value(&self) -> MappedRwLockReadGuard<V> {
         RwLockReadGuard::map(self.read(), |node| &node.element.1)
     }
