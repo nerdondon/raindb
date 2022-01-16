@@ -136,7 +136,7 @@ impl FileSystem for InMemoryFileSystem {
     }
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
-        Ok(self.open_mem_file(path)?.len()?)
+        self.open_mem_file(path)?.len()
     }
 }
 

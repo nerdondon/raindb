@@ -43,7 +43,7 @@ pub struct OsFileSystem {}
 
 /// Public methods.
 impl OsFileSystem {
-    /// Create an instance of the [`OsFileSystem`].
+    /// Create an instance of [`OsFileSystem`].
     pub fn new() -> Self {
         OsFileSystem {}
     }
@@ -135,7 +135,9 @@ pub struct TmpFileSystem {
     temp_dirs: Mutex<Vec<TempDir>>,
 }
 
+/// Public methods
 impl TmpFileSystem {
+    /// Create a new instance of [`TmpFileSystem`].
     pub fn new() -> Self {
         TmpFileSystem {
             temp_dirs: Mutex::new(vec![]),
