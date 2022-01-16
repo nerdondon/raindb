@@ -175,16 +175,16 @@ where
     /// Push a node onto the front of the list.
     pub fn push_node_front(&mut self, node: SharedNode<T>) {
         node.write().prev = None;
+        node.write().next = self.head.clone();
 
         match self.head.as_ref() {
             Some(head_node) => {
                 // Fix existing links
-                head_node.write().prev = Some(Arc::downgrade(&node))
+                head_node.write().prev = Some(Arc::downgrade(&node));
             }
-            None => self.head = Some(Arc::clone(&node)),
+            None => self.tail = Some(Arc::clone(&node)),
         }
 
-        node.write().next = self.head.clone();
         self.head = Some(node);
         self.length += 1;
     }
