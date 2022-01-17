@@ -340,6 +340,21 @@ impl Version {
     }
 
     /**
+    The same as [`Version::get_overlapping_files`] but returns owned references instead of a
+    reference to the `Arc`.
+    */
+    pub fn get_overlapping_files_strong(
+        &self,
+        level: usize,
+        key_range: Range<Option<&InternalKey>>,
+    ) -> Vec<Arc<FileMetadata>> {
+        self.get_overlapping_files(level, key_range)
+            .into_iter()
+            .map(|file| Arc::clone(file))
+            .collect()
+    }
+
+    /**
     Finalize a version by calculating compaction scores.
 
     Level 0 is treated differently than other levels where it is bounded by number of files rather
