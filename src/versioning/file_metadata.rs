@@ -115,7 +115,7 @@ impl Comparator<&FileMetadata> for FileMetadataBySmallestKey {
             Ordering::Greater | Ordering::Less => order,
             Ordering::Equal => {
                 // Break ties by file number
-                return a.file_number().cmp(&b.file_number());
+                a.file_number().cmp(&b.file_number())
             }
         }
     }
