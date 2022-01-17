@@ -260,7 +260,7 @@ impl Version {
 
             if level + 2 < MAX_NUM_LEVELS {
                 let files_overlapping_range: Vec<&Arc<FileMetadata>> =
-                    self.get_overlapping_files(level + 2, &start_key..&end_key);
+                    self.get_overlapping_files(level + 2, Some(&start_key)..Some(&end_key));
 
                 let total_overlapping_file_size = utils::sum_file_sizes(&files_overlapping_range);
                 if total_overlapping_file_size
@@ -291,24 +291,29 @@ impl Version {
     pub fn get_overlapping_files(
         &self,
         level: usize,
-        key_range: Range<&InternalKey>,
+        key_range: Range<Option<&InternalKey>>,
     ) -> Vec<&Arc<FileMetadata>> {
         assert!(level > 0);
         assert!(level <= MAX_NUM_LEVELS);
 
         let mut overlapping_files = vec![];
-        let mut start_user_key = key_range.start.get_user_key();
-        let mut end_user_key = key_range.end.get_user_key();
+        let mut start_user_key = key_range
+            .start
+            .map(|internal_key| internal_key.get_user_key());
+        let mut end_user_key = key_range
+            .end
+            .map(|internal_key| internal_key.get_user_key());
         let mut index: usize = 0;
         while index < self.files[level].len() {
             let current_file = &self.files[level][index];
             let file_range_start = current_file.smallest_key().get_user_key();
             let file_range_end = current_file.largest_key().get_user_key();
-            if file_range_end < start_user_key {
-                // File range is completely before the target range so we can skip this file
-                index += 1;
-            } else if end_user_key < file_range_start {
-                // File range is completely after the target range so we can skip this file
+            let is_file_range_before_target =
+                key_range.start.is_some() && file_range_end < start_user_key.unwrap();
+            let is_file_range_after_target =
+                key_range.end.is_some() && end_user_key.unwrap() < file_range_start;
+
+            if is_file_range_before_target || is_file_range_after_target {
                 index += 1;
             } else {
                 overlapping_files.push(current_file);
@@ -319,12 +324,12 @@ impl Version {
 
                 // Level-0 files may have overlapping key ranges. Check if the newly added file
                 // expands our target range. If so, update the search range and restart the search.
-                if file_range_start < start_user_key {
-                    start_user_key = file_range_start;
+                if key_range.start.is_some() && file_range_start < start_user_key.unwrap() {
+                    start_user_key = Some(file_range_start);
                     overlapping_files.clear();
                     index = 0;
-                } else if file_range_end > end_user_key {
-                    end_user_key = file_range_end;
+                } else if key_range.end.is_some() && file_range_end > end_user_key.unwrap() {
+                    end_user_key = Some(file_range_end);
                     overlapping_files.clear();
                     index = 0;
                 }
@@ -342,7 +347,7 @@ impl Version {
 
     1. With larger memtables, level 0 compactions can be read intensive
 
-    1. The files in level 0 are merged on every reads, so we want to minimize the number of
+    1. The files in level 0 are merged on every read, so we want to minimize the number of
        individual files when the file size is small. File sizes can be small if the memtable maximum
        size setting is low, if the compression ratios are high, or if there are lots of rights or
        individual deletions.
