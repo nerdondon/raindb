@@ -129,9 +129,9 @@ pub(crate) struct Version {
     wal_file_number: u64,
 }
 
-/// Public methods
+/// Crate-only methods
 impl Version {
-    pub fn new(
+    pub(crate) fn new(
         db_options: DbOptions,
         table_cache: &Arc<TableCache>,
         last_sequence_number: u64,
@@ -158,7 +158,7 @@ impl Version {
 
     Returns an `GetResponse` struct containing the found value and seek charge metadata.
     */
-    pub fn get(&self) -> ReadResult<GetResponse> {
+    pub(crate) fn get(&self) -> ReadResult<GetResponse> {
         todo!("working on it!");
     }
 
@@ -170,22 +170,22 @@ impl Version {
 
     Returns true if a new compaction may need to be triggered, false otherwise.
     */
-    pub fn update_stats(&self, charging_metadata: SeekChargeMetadata) -> ReadResult<bool> {
+    pub(crate) fn update_stats(&self, charging_metadata: SeekChargeMetadata) -> ReadResult<bool> {
         todo!("working on it!");
     }
 
     /// Return the number of table files at the specified level.
-    pub fn num_files_at_level(&self, level: usize) -> usize {
+    pub(crate) fn num_files_at_level(&self, level: usize) -> usize {
         self.files[level].len()
     }
 
     /// Get a reference to the version's seek compaction metadata.
-    pub fn get_seek_compaction_metadata(&self) -> Option<&SeekCompactionMetadata> {
+    pub(crate) fn get_seek_compaction_metadata(&self) -> Option<&SeekCompactionMetadata> {
         self.seek_compaction_metadata.as_ref()
     }
 
     /// Get a reference to the version's size compaction metadata.
-    pub fn get_size_compaction_metadata(&self) -> Option<&SizeCompactionMetadata> {
+    pub(crate) fn get_size_compaction_metadata(&self) -> Option<&SizeCompactionMetadata> {
         self.size_compaction_metadata.as_ref()
     }
 
@@ -216,7 +216,7 @@ impl Version {
     }
 
     /// Clones the current version while resetting compaction metadata.
-    pub fn new_from_current(&self) -> Version {
+    pub(crate) fn new_from_current(&self) -> Version {
         let mut new_version = self.clone();
         new_version.set_seek_compaction_metadata(None);
         new_version.set_size_compaction_metadata(None);
@@ -228,7 +228,7 @@ impl Version {
     Return the level at which we should place a new memtable compaction result that covers the
     range from `smallest_user_key` to `largest_user_key`.
     */
-    pub fn pick_level_for_memtable_output(
+    pub(crate) fn pick_level_for_memtable_output(
         &self,
         smallest_user_key: &[u8],
         largest_user_key: &[u8],
@@ -288,7 +288,7 @@ impl Version {
 
     This is synonomous to LevelDB's `Version::GetOverlappingInputs` method.
     */
-    pub fn get_overlapping_files(
+    pub(crate) fn get_overlapping_files(
         &self,
         level: usize,
         key_range: Range<Option<&InternalKey>>,
@@ -343,7 +343,7 @@ impl Version {
     The same as [`Version::get_overlapping_files`] but returns owned references instead of a
     reference to the `Arc`.
     */
-    pub fn get_overlapping_files_strong(
+    pub(crate) fn get_overlapping_files_strong(
         &self,
         level: usize,
         key_range: Range<Option<&InternalKey>>,
@@ -371,7 +371,7 @@ impl Version {
 
     This is synonomous with LevelDB's `VersionSet::Finalize`.
     */
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         let mut best_level: usize = 0;
         let mut best_score: f64 = -1.;
 
