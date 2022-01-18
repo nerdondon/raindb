@@ -1,8 +1,10 @@
 use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, MutexGuard};
 
+use crate::compaction::manifest::CompactionManifest;
 use crate::config::MAX_NUM_LEVELS;
 use crate::db::GuardedDbFields;
 use crate::file_names::FileNameHandler;
@@ -15,6 +17,7 @@ use crate::versioning::errors::{ManifestWriteErrorKind, WriteError};
 use crate::{DbOptions, DB};
 
 use super::errors::WriteResult;
+use super::file_metadata::FileMetadata;
 use super::version::{Version, VersionBuilder};
 use super::VersionChangeManifest;
 
@@ -345,6 +348,66 @@ impl VersionSet {
         }
 
         live_files
+    }
+
+    /// Compact the specified key range in the specified level.
+    pub fn compact_range(
+        &mut self,
+        level_to_compact: usize,
+        key_range: Range<Option<InternalKey>>,
+    ) -> Option<CompactionManifest> {
+        let mut compaction_input_files: Vec<Arc<FileMetadata>> = self
+            .get_current_version()
+            .read()
+            .element
+            .get_overlapping_files_strong(
+                level_to_compact,
+                key_range.start.as_ref()..key_range.end.as_ref(),
+            );
+
+        if compaction_input_files.is_empty() {
+            log::info!(
+                "No overlapping files found for level {} in the specified key range so no \
+                compaction is necessary.",
+                level_to_compact
+            );
+            return None;
+        }
+
+        if level_to_compact > 0 {
+            /*
+            Avoid compacting too much in one shot in case the range is large.
+
+            This cannot be done for level 0 since level 0 files can overlap and we must not pick
+            one file and drop another if the two files overlap.
+            */
+            let file_size_limit = self.options.max_file_size();
+            let mut curr_compaction_size: u64 = 0;
+            let mut file_index: usize = 0;
+            while !compaction_input_files.is_empty() {
+                curr_compaction_size += compaction_input_files[file_index].get_file_size();
+                if curr_compaction_size >= file_size_limit {
+                    compaction_input_files.truncate(file_index + 1);
+                    break;
+                }
+
+                file_index += 1;
+            }
+        }
+
+        let mut compaction_manifest = CompactionManifest::new(&self.options, level_to_compact);
+        compaction_manifest.set_input_version(self.get_current_version());
+        compaction_manifest.set_compaction_level_files(compaction_input_files);
+
+        /*
+        Update the place where the next compaction for this level will start. This is updated
+        immediately instead of waiting for the change manifest to be applied so that if the
+        compaction fails, a different key range is tried for the next compactino.
+        */
+        let next_compaction_key = compaction_manifest.finalize_compaction_inputs();
+        self.compaction_pointers[level_to_compact] = Some(next_compaction_key);
+
+        Some(compaction_manifest)
     }
 }
 
