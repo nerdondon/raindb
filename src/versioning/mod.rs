@@ -17,8 +17,6 @@ Each [`Version`] keeps track of a set of table files per level.
 
 pub mod errors;
 
-mod utils;
-
 pub(crate) mod version_set;
 pub(crate) use version_set::VersionSet;
 
@@ -26,4 +24,5 @@ pub(crate) mod version_manifest;
 pub(crate) use version_manifest::VersionChangeManifest;
 
 pub(crate) mod file_metadata;
+pub(crate) mod utils;
 pub(crate) mod version;
