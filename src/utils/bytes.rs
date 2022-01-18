@@ -35,7 +35,7 @@ impl BinarySeparable for &[u8] {
 
         if diff_idx >= min_prefix_length {
             // Don't do any shortening if one key is a prefix of the other
-            return smaller.clone().to_vec();
+            return smaller.to_vec();
         }
 
         // Check if there is a byte that we can increment to generate a separator from the prefix
@@ -48,7 +48,7 @@ impl BinarySeparable for &[u8] {
             return separator;
         }
 
-        return smaller.clone().to_vec();
+        smaller.to_vec()
     }
 
     fn find_shortest_successor(value: Self) -> Vec<u8> {
