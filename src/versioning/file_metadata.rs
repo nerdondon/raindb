@@ -1,4 +1,6 @@
 use std::cmp::Ordering;
+use std::ops::Range;
+use std::sync::Arc;
 
 use integer_encoding::VarIntWriter;
 
@@ -99,6 +101,68 @@ impl FileMetadata {
     /// Decrement the number of allowed seeks.
     pub(crate) fn decrement_allowed_seeks(&mut self) {
         self.allowed_seeks = self.allowed_seeks.map(|seeks| seeks - 1);
+    }
+
+    /**
+    Get the minimal key range that covers all entries in the provided list of files.
+
+    # Panics
+
+    The provided `files` must not be empty.
+
+    # Legacy
+
+    This synonomous with LevelDB's `VersionSet::GetRange`.
+    */
+    pub(crate) fn get_key_range_for_files(files: &[Arc<FileMetadata>]) -> Range<InternalKey> {
+        assert!(!files.is_empty());
+
+        let mut smallest: &InternalKey = files[0].smallest_key();
+        let mut largest: &InternalKey = files[0].largest_key();
+        for file in files {
+            if file.smallest_key() < smallest {
+                smallest = file.smallest_key();
+            }
+
+            if file.largest_key() < largest {
+                largest = file.largest_key()
+            }
+        }
+
+        smallest.clone()..largest.clone()
+    }
+
+    /**
+    Get the minimal key range that covers all entries in the provided a list of list of files.
+
+    # Panics
+
+    Every set of files must contain at least one file.
+
+    # Legacy
+
+    This synonomous with LevelDB's `VersionSet::GetRange2`.
+    */
+    pub(crate) fn get_key_range_for_multiple_levels(
+        multi_level_files: &[&[Arc<FileMetadata>]],
+    ) -> Range<InternalKey> {
+        let first_range = FileMetadata::get_key_range_for_files(multi_level_files[0]);
+        let mut smallest = first_range.start;
+        let mut largest = first_range.end;
+
+        for files in multi_level_files.iter().skip(1) {
+            let files_key_range = FileMetadata::get_key_range_for_files(files);
+
+            if files_key_range.start < smallest {
+                smallest = files_key_range.start;
+            }
+
+            if files_key_range.end < largest {
+                largest = files_key_range.end
+            }
+        }
+
+        smallest..largest
     }
 }
 
