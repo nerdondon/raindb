@@ -8,7 +8,7 @@ use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
 use crate::table_cache::TableCache;
 use crate::utils::comparator::Comparator;
 use crate::utils::linked_list::SharedNode;
-use crate::DbOptions;
+use crate::{compaction, DbOptions};
 
 use super::errors::ReadResult;
 use super::file_metadata::{FileMetadata, FileMetadataBySmallestKey};
@@ -264,7 +264,9 @@ impl Version {
 
                 let total_overlapping_file_size = utils::sum_file_sizes(&files_overlapping_range);
                 if total_overlapping_file_size
-                    > Version::max_grandparent_overlap_bytes(&self.db_options)
+                    > compaction::utils::max_grandparent_overlap_bytes_from_options(
+                        &self.db_options,
+                    )
                 {
                     break;
                 }
@@ -395,6 +397,31 @@ impl Version {
             compaction_score: best_score,
         }));
     }
+
+    /**
+    Returns true if the version requires a size triggered compaction.
+
+    # Panics
+
+    This will panic if the `size_compaction_metadata` field is not initialized. In practice, this
+    cannot happen because `Version::finalize` is always called on newly created versions and it
+    will populate the field.
+    */
+    pub(crate) fn requires_size_compaction(&self) -> bool {
+        let compaction_score = self
+            .get_size_compaction_metadata()
+            .unwrap()
+            .compaction_score;
+
+        compaction_score >= 1.
+    }
+
+    /// Returns true if the version requires a seek triggered compaction.
+    pub(crate) fn requires_seek_compaction(&self) -> bool {
+        let maybe_seek_metadata = self.get_seek_compaction_metadata();
+
+        maybe_seek_metadata.is_some() && maybe_seek_metadata.unwrap().file_to_compact.is_some()
+    }
 }
 
 /// Private methods
@@ -511,15 +538,6 @@ impl Version {
         }
 
         Some(right)
-    }
-
-    /**
-    Get the maximum number of bytes that a level can overlap with it's grandparent (level + 2).
-
-    This can be used to determine placement of a new table file.
-    */
-    fn max_grandparent_overlap_bytes(options: &DbOptions) -> u64 {
-        options.max_file_size() * 10
     }
 
     /**

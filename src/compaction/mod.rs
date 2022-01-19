@@ -14,5 +14,7 @@ pub(crate) use manual_compaction::ManualCompactionConfiguration;
 pub(crate) mod stats;
 pub(crate) use stats::LevelCompactionStats;
 
+pub(crate) mod utils;
+
 pub(crate) mod worker;
 pub(crate) use worker::{CompactionWorker, TaskKind};
