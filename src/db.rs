@@ -113,8 +113,15 @@ pub(crate) struct GuardedDbFields {
     /**
     Stores state information for a manual compaction. `None` if there is no manual compaction in
     progress or if no manual compaction was requested.
+
+    There is an extra layer of `Arc`/`Mutex` because the configuration is shared by the thread
+    requesting the compaction and the thread processing the compaction. It is an invariant of
+    LevelDB--so by extension RainDB--that only a holder of the main database lock (i.e.
+    [`DB::guarded_fields`]) can mutate the configuration value. The only way to inform Rust of this
+    is either through raw pointers or via another mutex. We choose to just use a mutex since it is
+    easier to deal with.
     */
-    pub(crate) maybe_manual_compaction: Option<ManualCompactionConfiguration>,
+    pub(crate) maybe_manual_compaction: Option<Arc<Mutex<ManualCompactionConfiguration>>>,
 
     /// Queued threads waiting to perform write operations.
     writer_queue: VecDeque<Arc<Writer>>,

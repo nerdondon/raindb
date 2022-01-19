@@ -16,8 +16,13 @@ pub struct ManualCompactionConfiguration {
 
 /// Crate-only methods
 impl ManualCompactionConfiguration {
-    /// Get the key range to manually compact.
+    /// Get a reference to the key range to manually compact.
     pub(crate) fn get_key_range(&self) -> Range<Option<&InternalKey>> {
         self.begin.as_ref()..self.end.as_ref()
+    }
+
+    /// Get a clone of the key range that is being compacted.
+    pub(crate) fn clone_key_range(&self) -> Range<Option<InternalKey>> {
+        self.begin.clone()..self.end.clone()
     }
 }
