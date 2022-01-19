@@ -1,7 +1,9 @@
 use parking_lot::MutexGuard;
+use std::ops::Range;
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::compaction::errors::CompactionWorkerError;
 use crate::db::{GuardedDbFields, PortableDatabaseState};
@@ -10,6 +12,7 @@ use crate::versioning::{VersionChangeManifest, VersionSet};
 use crate::DB;
 
 use super::errors::CompactionWorkerResult;
+use super::manifest::CompactionManifest;
 
 /**
 Name of the compaction thread.
@@ -164,6 +167,73 @@ impl CompactionWorker {
             );
             CompactionWorker::compact_memtable(db_state, db_fields_guard);
             return;
+        }
+
+        let is_manual_compaction = db_fields_guard.maybe_manual_compaction.is_some();
+        let mut manual_compaction_end_key: Option<&InternalKey> = None;
+        let mut compaction_manifest: Option<CompactionManifest> = None;
+        if is_manual_compaction {
+            let compaction_level: usize;
+            let compaction_range: Range<Option<InternalKey>>;
+            {
+                let manual_compaction = db_fields_guard
+                    .maybe_manual_compaction
+                    .as_ref()
+                    .unwrap()
+                    .lock();
+                log::info!(
+                    "Found manual compaction request for level {} and attempting to execute.",
+                    manual_compaction.level
+                );
+                compaction_level = manual_compaction.level;
+                compaction_range = manual_compaction.clone_key_range();
+            }
+
+            compaction_manifest = db_fields_guard
+                .version_set
+                .compact_range(compaction_level, compaction_range);
+            let mut manual_compaction = db_fields_guard
+                .maybe_manual_compaction
+                .as_ref()
+                .unwrap()
+                .lock();
+            manual_compaction.done = compaction_manifest.is_none();
+            if compaction_manifest.is_some() {
+                manual_compaction_end_key = Some(
+                    compaction_manifest
+                        .as_ref()
+                        .unwrap()
+                        .get_compaction_level_files()
+                        .last()
+                        .unwrap()
+                        .largest_key(),
+                );
+            }
+
+            let compaction_start_string: String = match manual_compaction.begin.as_ref() {
+                Some(key) => format!("{:?}", Vec::<u8>::from(key)),
+                None => "(begin)".to_string(),
+            };
+            let compaction_end_string: String = match manual_compaction.end.as_ref() {
+                Some(key) => format!("{:?}", Vec::<u8>::from(key)),
+                None => "(end)".to_string(),
+            };
+            let manual_end_string: String = if manual_compaction.done {
+                "the specified end key".to_string()
+            } else {
+                format!(
+                    "potentially smaller key {:?}",
+                    Vec::<u8>::from(manual_compaction_end_key.as_deref().unwrap())
+                )
+            };
+            log::info!(
+                "Manual compaction requested for level {compaction_level} from {start_key} to \
+                {end_key}. Compaction will end at {manual_end_key}.",
+                compaction_level = manual_compaction.level,
+                start_key = compaction_start_string,
+                end_key = compaction_end_string,
+                manual_end_key = manual_end_string
+            );
         }
     }
 
