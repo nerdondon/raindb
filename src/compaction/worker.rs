@@ -234,6 +234,12 @@ impl CompactionWorker {
                 end_key = compaction_end_string,
                 manual_end_key = manual_end_string
             );
+        } else {
+            log::info!(
+                "Compaction thread proceeding with normal compaction procedure. Determining if a \
+                size triggered or seek triggered compaction is required."
+            );
+            compaction_manifest = db_fields_guard.version_set.pick_compaction();
         }
     }
 

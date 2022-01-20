@@ -409,6 +409,95 @@ impl VersionSet {
 
         Some(compaction_manifest)
     }
+
+    /**
+    Pick a level and inputs for a new compaction.
+
+    # Panics
+
+    Invariants that must be maintained:
+
+    1. A size based compaction cannot be triggered by the last level.
+
+    1. A seek based compaction must have a file in the [`SeekCompactionMetadata::file_to_compact`]
+       field.
+    */
+    pub fn pick_compaction(&self) -> Option<CompactionManifest> {
+        // Prefer compactions triggered by too much data in a level over the compactions triggered
+        // by seeks.
+        let current_version_node = self.get_current_version();
+        let current_version = &current_version_node.read().element;
+        let needs_size_compaction = current_version.requires_size_compaction();
+        let needs_seek_compaction = current_version.requires_seek_compaction();
+        let mut compaction_manifest: CompactionManifest;
+        let level_to_compact: usize;
+
+        if needs_size_compaction {
+            level_to_compact = current_version
+                .get_size_compaction_metadata()
+                .unwrap()
+                .compaction_level;
+            assert!(level_to_compact + 1 < MAX_NUM_LEVELS);
+
+            compaction_manifest = CompactionManifest::new(&self.options, level_to_compact);
+
+            // Pick the first file that comes after the specified compaction pointer at the level
+            for file in current_version.files[level_to_compact].iter() {
+                if self.compaction_pointers[level_to_compact].is_none()
+                    || file.largest_key()
+                        > self.compaction_pointers[level_to_compact].as_ref().unwrap()
+                {
+                    compaction_manifest
+                        .get_mut_compaction_level_files()
+                        .push(Arc::clone(file));
+                    break;
+                }
+            }
+
+            if compaction_manifest.get_compaction_level_files().is_empty() {
+                // Wrap-around to the beginning of the key space
+                compaction_manifest
+                    .get_mut_compaction_level_files()
+                    .push(Arc::clone(&current_version.files[level_to_compact][0]));
+            }
+        } else if needs_seek_compaction {
+            let seek_compaction_metadata = current_version.get_seek_compaction_metadata().unwrap();
+            level_to_compact = seek_compaction_metadata.level_of_file_to_compact;
+            compaction_manifest = CompactionManifest::new(&self.options, level_to_compact);
+            compaction_manifest
+                .get_mut_compaction_level_files()
+                .push(Arc::clone(
+                    seek_compaction_metadata.file_to_compact.as_ref().unwrap(),
+                ));
+        } else {
+            return None;
+        }
+
+        compaction_manifest.set_input_version(self.get_current_version());
+
+        // Files in level 0 overlap each other, so ensure that all overlapping files are added
+        if level_to_compact == 0 {
+            let compaction_level_key_range = FileMetadata::get_key_range_for_files(
+                compaction_manifest.get_compaction_level_files(),
+            );
+            let mut new_compaction_files = current_version.get_overlapping_files_strong(
+                level_to_compact,
+                Some(&compaction_level_key_range.start)..Some(&compaction_level_key_range.end),
+            );
+
+            // We clear the current set of compaction files first. This is ok because the previous
+            // call to get overlapping files will include the original file. This is just a simple
+            // way to avoid duplicates.
+            compaction_manifest.get_mut_compaction_level_files().clear();
+            compaction_manifest
+                .get_mut_compaction_level_files()
+                .append(&mut new_compaction_files);
+        }
+
+        compaction_manifest.finalize_compaction_inputs();
+
+        Some(compaction_manifest)
+    }
 }
 
 /// Private methods
