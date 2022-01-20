@@ -241,6 +241,29 @@ impl CompactionWorker {
             );
             compaction_manifest = db_fields_guard.version_set.pick_compaction();
         }
+
+        // TODO: Actual compaction operations
+
+        if is_manual_compaction {
+            /*
+            The `.take` is fine since the thread requesting the compaction will still have a
+            reference through the `Arc`. Even if the compaction request is not completely fulfilled,
+            the requesting thread gets a new range to request another compaction through the shared
+            state mutation.
+
+            These feels super abusive of shared state and could really benefit from a message
+            passing approach. But--(in the tone of Tony Stark)--that's how LevelDB did it, it's how
+            everything else built on LevelDB does it, and it's worked out pretty well so far
+            (https://youtu.be/KNAgFhh1ji4?t=26). Maybe not entirely accurate but I'm tired.
+            */
+            let manual_compaction = db_fields_guard.maybe_manual_compaction.take().unwrap();
+            let mut manual_compaction_guard = manual_compaction.lock();
+            if !manual_compaction_guard.done {
+                // Only part of the range was compacted. Update to the part of the range that has
+                // not been compacted yet.
+                manual_compaction_guard.begin = Some(manual_compaction_end_key.unwrap().clone());
+            }
+        }
     }
 
     /**
