@@ -11,6 +11,8 @@ pub(crate) mod manifest;
 pub(crate) mod manual_compaction;
 pub(crate) use manual_compaction::ManualCompactionConfiguration;
 
+pub(crate) mod state;
+
 pub(crate) mod stats;
 pub(crate) use stats::LevelCompactionStats;
 
