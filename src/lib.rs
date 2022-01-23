@@ -45,4 +45,7 @@ pub use key::Operation;
 pub mod options;
 pub use options::{DbOptions, ReadOptions, WriteOptions};
 
+pub mod snapshots;
+pub use snapshots::Snapshot;
+
 pub use utils::cache::Cache;

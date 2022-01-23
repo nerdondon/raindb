@@ -239,6 +239,11 @@ where
         }
     }
 
+    /// Get a reference to the first node of the linked list.
+    pub fn head(&self) -> Link<T> {
+        self.head.as_ref().cloned()
+    }
+
     /// Get a reference to the last node of the linked list.
     pub fn tail(&self) -> Link<T> {
         self.tail.as_ref().cloned()
