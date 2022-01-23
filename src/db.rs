@@ -28,6 +28,7 @@ use crate::fs::FileSystem;
 use crate::key::InternalKey;
 use crate::logs::LogWriter;
 use crate::memtable::{MemTable, SkipListMemTable};
+use crate::snapshots::SnapshotList;
 use crate::table_cache::TableCache;
 use crate::tables::TableBuilder;
 use crate::utils::linked_list::SharedNode;
@@ -150,6 +151,9 @@ pub(crate) struct GuardedDbFields {
     This is synonomous to the `DBImpl::pending_outputs_` field in LevelDB.
     */
     pub(crate) tables_in_use: HashSet<u64>,
+
+    /// A list of snapshots currently in use.
+    pub(crate) snapshots: SnapshotList,
 }
 
 /// The primary database object that exposes the public API.
