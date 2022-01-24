@@ -199,6 +199,22 @@ Compactions will drop overwritten values. They will also drop deletion markers (
 if older levels (**L-n**) do not contain a file whose key range overlaps the key in the deletion
 marker.
 
+#### Special case: boundary files
+
+As mentioned above, usually only one file is read in for the level **L** that is being compacted.
+One case where more files may be read in, is for overlapping files in level 0. The other case where
+more files are read in for the compaction level or the parent level are when the selected file will
+split series of records for the same user key. Recall that a key is made up of three components: the
+user key, the sequence number, and the operation tag. If part of the records with the same user key
+are compacted to an older level, then obsolete data can be exposed. Assume there are two files
+**F1(l1, u1)** and **F2(l2, u2** where `user_key(u1) == user_key(l2)`. If we compact **F1** to the
+parent level **L+1** and not **F2**, then subsequent `get` operations will return the record from
+**F2** in the younger level instead of from **F1** in the older level that we compacted to. The
+additional files--**F2** in the example--are called boundary files. This edge case and the code to
+address it are described more in the LevelDB repository:
+[#339](https://github.com/google/leveldb/pull/339) and commit
+[13e3c4e](https://github.com/google/leveldb/commit/13e3c4efc66b8d7317c7648766a930b5d7e48aa7).
+
 ## Data Formats
 
 ### Internal key format
