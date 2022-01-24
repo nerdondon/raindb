@@ -30,7 +30,7 @@ use crate::logs::LogWriter;
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::snapshots::SnapshotList;
 use crate::table_cache::TableCache;
-use crate::tables::TableBuilder;
+use crate::tables::{Table, TableBuilder};
 use crate::utils::linked_list::SharedNode;
 use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::Version;
@@ -776,9 +776,8 @@ impl DB {
 
             // Verify that the table file is usable by attempting to create an iterator from it
             match table_cache.find_table(metadata.file_number()) {
-                Ok(table_cache_entry) => {
-                    let table = table_cache_entry.get_value();
-                    let _table_iter = table.two_level_iter(ReadOptions::default());
+                Ok(table) => {
+                    let _table_iter = Table::iter_with(table, ReadOptions::default());
                 }
                 Err(error) => {
                     log::error!(

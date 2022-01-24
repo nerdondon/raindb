@@ -10,7 +10,7 @@ use crate::file_names::FileNameHandler;
 use crate::fs::FileSystem;
 use crate::key::InternalKey;
 use crate::tables::Table;
-use crate::utils::cache::{CacheEntry, LRUCache};
+use crate::utils::cache::LRUCache;
 use crate::DbOptions;
 use crate::{Cache, ReadOptions};
 
@@ -22,7 +22,7 @@ pub(crate) struct TableCache {
     options: DbOptions,
 
     /// The underlying cache storing the table readers.
-    cache: Box<dyn Cache<FileNumber, Table>>,
+    cache: Box<dyn Cache<FileNumber, Arc<Table>>>,
 
     /// Utility for getting file names used by the database.
     file_name_handler: FileNameHandler,
@@ -35,7 +35,7 @@ pub(crate) struct TableCache {
 impl TableCache {
     /// Create a new instance of a [`TableCache`].
     pub fn new(options: DbOptions, capacity: usize) -> Self {
-        let cache = Box::new(LRUCache::<FileNumber, Table>::new(capacity));
+        let cache = Box::new(LRUCache::new(capacity));
         let file_name_handler = FileNameHandler::new(options.db_path().to_string());
         let filesystem_provider = options.filesystem_provider();
 
@@ -54,8 +54,7 @@ impl TableCache {
         file_number: u64,
         key: &InternalKey,
     ) -> RainDBResult<Option<Vec<u8>>> {
-        let table_cache_entry = self.find_table(file_number)?;
-        let table = table_cache_entry.get_value();
+        let table = self.find_table(file_number)?;
 
         Ok(table.get(read_options, key)?)
     }
@@ -66,10 +65,11 @@ impl TableCache {
     }
 
     /// Get a reference to a cache entry of a table reader.
-    pub fn find_table(&self, file_number: u64) -> RainDBResult<Box<dyn CacheEntry<Table>>> {
+    pub fn find_table(&self, file_number: u64) -> RainDBResult<Arc<Table>> {
         // Check the cache for if there is already a reader and return that if there is
         let maybe_cached_table = self.cache.get(&file_number);
-        if let Some(table) = maybe_cached_table {
+        if let Some(cache_entry) = maybe_cached_table {
+            let table = Arc::clone(&cache_entry.get_value());
             return Ok(table);
         }
 
@@ -77,9 +77,10 @@ impl TableCache {
         let table_file_name = self.file_name_handler.get_table_file_path(file_number);
         let table_file = self.filesystem_provider.open_file(&table_file_name)?;
         let table_reader = Table::open(self.options.clone(), table_file)?;
-        let cache_entry = self.cache.insert(file_number, table_reader);
+        let cache_entry = self.cache.insert(file_number, Arc::new(table_reader));
+        let table = Arc::clone(&cache_entry.get_value());
 
-        Ok(cache_entry)
+        Ok(table)
     }
 }
 
