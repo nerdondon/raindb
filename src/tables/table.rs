@@ -6,7 +6,7 @@ use std::io::{self, Read};
 use std::sync::Arc;
 
 use crate::config::{TableFileCompressionType, SIZE_OF_U32_BYTES};
-use crate::errors::{DBIOError, RainDBResult};
+use crate::errors::{DBIOError, RainDBError, RainDBResult};
 use crate::filter_policy;
 use crate::fs::ReadonlyRandomAccessFile;
 use crate::iterator::RainDbIterator;
@@ -174,15 +174,19 @@ impl Table {
         }
     }
 
-    /// Get a two-level iterator for this table.
-    pub fn two_level_iter(&self, read_options: ReadOptions) -> TwoLevelIterator {
-        TwoLevelIterator {
-            table: self,
-            read_options,
-            index_block_iter: self.index_block.iter(),
-            maybe_data_block_iter: None,
-            data_block_handle: None,
-        }
+    /**
+    Get an iterator for the table.
+
+    In the terminology set by LevelDB, this is a two level iterator. We invert the lifetime
+    relationship of the iterator object and the table unlike common Rust iterator objects. This is
+    because of the requirement to keep a list of table iterators in single iterator that merges
+    all of the table data. There was an effort to use [`std::borrow::Cow`] and [`std::ops::Deref`]
+    in RainDB but things got a little hairy and the effort was not worth it at the time to come up
+    with a more generic solution to allow a method that accepts either a table reference or an
+    owned value.
+    */
+    pub fn iter_with(table: Arc<Table>, read_options: ReadOptions) -> TwoLevelIterator {
+        TwoLevelIterator::new(table, read_options)
     }
 }
 
@@ -402,9 +406,9 @@ block.
 This iterator yields the concatenation of all key-value pairs in a sequence of blocks (e.g. in a
 table file).
 */
-pub struct TwoLevelIterator<'t> {
+pub struct TwoLevelIterator {
     /// The table the iterator is for.
-    table: &'t Table,
+    table: Arc<Table>,
 
     /// Options for configuring the behavior of reads done by the iterator.
     read_options: ReadOptions,
@@ -420,7 +424,20 @@ pub struct TwoLevelIterator<'t> {
 }
 
 /// Private methods
-impl<'t> TwoLevelIterator<'t> {
+impl TwoLevelIterator {
+    /// Create a new instance of [`TwoLevelIterator`].
+    fn new(table: Arc<Table>, read_options: ReadOptions) -> Self {
+        let index_block_iter = table.index_block.iter();
+
+        Self {
+            table,
+            read_options,
+            index_block_iter,
+            maybe_data_block_iter: None,
+            data_block_handle: None,
+        }
+    }
+
     fn init_data_block(&mut self) -> TableResult<()> {
         if !self.index_block_iter.is_valid() {
             self.maybe_data_block_iter = None;
@@ -434,9 +451,8 @@ impl<'t> TwoLevelIterator<'t> {
             {
                 // Don't need to do anything since the data block is already stored
             } else {
-                let data_block = self
-                    .table
-                    .get_block_reader(&self.read_options, &block_handle)?;
+                let data_block =
+                    (*self.table).get_block_reader(&self.read_options, &block_handle)?;
 
                 self.maybe_data_block_iter = Some(data_block.iter());
                 self.data_block_handle = Some(block_handle);
@@ -506,9 +522,9 @@ impl<'t> TwoLevelIterator<'t> {
     }
 }
 
-impl<'t> RainDbIterator for TwoLevelIterator<'t> {
+impl RainDbIterator for TwoLevelIterator {
     type Key = InternalKey;
-    type Error = ReadError;
+    type Error = RainDBError;
 
     fn is_valid(&self) -> bool {
         self.maybe_data_block_iter.is_some()
