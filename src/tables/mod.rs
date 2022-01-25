@@ -6,7 +6,7 @@ mod constants;
 mod filter_block;
 mod footer;
 
-mod table;
+pub(crate) mod table;
 pub use table::BlockCacheKey;
 pub(crate) use table::Table;
 
