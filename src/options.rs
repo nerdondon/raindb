@@ -9,7 +9,7 @@ use crate::fs::{FileSystem, OsFileSystem};
 use crate::tables::block::DataBlockReader;
 use crate::tables::BlockCacheKey;
 use crate::utils::cache::LRUCache;
-use crate::Cache;
+use crate::{Cache, Snapshot};
 
 /**
 Holds options to control database behavior.
@@ -130,7 +130,7 @@ impl Default for DbOptions {
 }
 
 /// Options for read operations.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReadOptions {
     /**
     Cache data read as a result of a read operation.
@@ -140,16 +140,28 @@ pub struct ReadOptions {
     **Defaults to true.**
     */
     pub fill_cache: bool,
+
+    /**
+    Configure the read operation to read as of the state of the supplied snapshot. If [`None`], the
+    read will be performed at the state of the database when the request was received.
+
+    This snapshot must have been received by the database it is being passed to and must not have
+    been released yet.
+    */
+    pub snapshot: Option<Snapshot>,
 }
 
 impl Default for ReadOptions {
     fn default() -> Self {
-        Self { fill_cache: true }
+        Self {
+            fill_cache: true,
+            snapshot: None,
+        }
     }
 }
 
 /// Options for write operations.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WriteOptions {
     /**
     Whether or not to perform the write operation synchronously.
