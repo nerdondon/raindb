@@ -23,6 +23,7 @@ pub(crate) use version_set::VersionSet;
 pub(crate) mod version_manifest;
 pub(crate) use version_manifest::VersionChangeManifest;
 
+pub(crate) mod file_iterators;
 pub(crate) mod file_metadata;
 pub(crate) mod utils;
 pub(crate) mod version;
