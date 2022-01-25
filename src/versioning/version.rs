@@ -12,7 +12,6 @@ use crate::{compaction, DbOptions};
 
 use super::errors::ReadResult;
 use super::file_metadata::{FileMetadata, FileMetadataBySmallestKey};
-use super::utils;
 use super::version_manifest::DeletedFile;
 use super::VersionChangeManifest;
 
@@ -262,7 +261,8 @@ impl Version {
                 let files_overlapping_range: Vec<&Arc<FileMetadata>> =
                     self.get_overlapping_files(level + 2, Some(&start_key)..Some(&end_key));
 
-                let total_overlapping_file_size = utils::sum_file_sizes(&files_overlapping_range);
+                let total_overlapping_file_size =
+                    super::utils::sum_file_sizes(&files_overlapping_range);
                 if total_overlapping_file_size
                     > compaction::utils::max_grandparent_overlap_bytes_from_options(
                         &self.db_options,
@@ -382,7 +382,7 @@ impl Version {
             if level == 0 {
                 new_score = (self.files[level].len() / L0_COMPACTION_TRIGGER) as f64;
             } else {
-                let level_file_size = utils::sum_file_sizes(&self.files[level]) as f64;
+                let level_file_size = super::utils::sum_file_sizes(&self.files[level]) as f64;
                 new_score = level_file_size / Version::max_bytes_for_level(level);
             }
 
@@ -483,7 +483,8 @@ impl Version {
         // numbers are sorted in decreasing order.
         let smallest_full_key =
             InternalKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
-        let maybe_file_index = Version::find_file_with_upper_bound_range(files, &smallest_full_key);
+        let maybe_file_index =
+            super::utils::find_file_with_upper_bound_range(files, &smallest_full_key);
 
         if maybe_file_index.is_none() {
             // The beginning of the range is after all of the files, so there is no overlap
@@ -494,50 +495,6 @@ impl Version {
         // We know file[file_index].largest > smallest_user_key.
         // If the largest_user_key is also < file[file_index].smallest, then there is no overlap.
         largest_user_key >= files[file_index].smallest_key().get_user_key()
-    }
-
-    /**
-    Binary search a sorted set of disjoint files for a file whose largest key forms a tight upper
-    bound on the target key.
-
-    # Invariants
-
-    The passed in `files` **must** be a sorted set and the files must store key ranges that do
-    not overlap with the key ranges in any other file.
-
-    Returns the index of the file whose key range creates an upper bound on the target key (i.e.
-    its largest key is greater than or equal the target). Otherwise returns `None`.
-
-    # Legacy
-
-    This is synonomous with LevelDB's `leveldb::FindFile` method.
-    */
-    fn find_file_with_upper_bound_range(
-        files: &[Arc<FileMetadata>],
-        target_user_key: &InternalKey,
-    ) -> Option<usize> {
-        let mut left: usize = 0;
-        let mut right: usize = files.len();
-        while left < right {
-            let mid: usize = (left + right) / 2;
-            let file = &files[mid];
-
-            if file.largest_key() < target_user_key {
-                // The largest key in the file at mid is less than the target, so the set of files
-                // at or before mid are not interesting.
-                left = mid + 1;
-            } else {
-                // The largest key in the file at mid is greater than or equal to the target, so
-                // the set of files after mid are not interesting.
-                right = mid;
-            }
-        }
-
-        if right == files.len() {
-            return None;
-        }
-
-        Some(right)
     }
 
     /**
