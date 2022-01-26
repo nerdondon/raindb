@@ -13,6 +13,7 @@ use crate::DB;
 
 use super::errors::CompactionWorkerResult;
 use super::manifest::CompactionManifest;
+use super::state::CompactionState;
 
 /**
 Name of the compaction thread.
@@ -361,5 +362,69 @@ impl CompactionWorker {
             Arc::clone(&db_state.file_name_handler).as_ref(),
             Arc::clone(&db_state.table_cache).as_ref(),
         );
+    }
+
+    /**
+    Enact the compaction specified by the specified compaction state and manifest.
+
+    The compaction work can be interrupted if an immutable memtable is detected. Compaction will
+    prioritize compacting the immutable memtable before proceeding with table file compaction.
+
+    # Panics
+
+    The compaction manifest must have files to compact at the specified compaction level.
+
+    # Legacy
+
+    This is equivalent to LevelDB's `DoCompactionWork` method.
+    */
+    fn compact_tables(
+        db_state: &PortableDatabaseState,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        compaction_manifest: CompactionManifest,
+    ) -> CompactionWorkerResult<CompactionState> {
+        let compaction_instant = Instant::now();
+        let total_memtable_compaction_time: Duration = Duration::default();
+
+        log::info!(
+            "Compacting {num_compaction_level_files} files at level {compaction_level} with \
+            {num_parent_files} files at parent level {parent_level}.",
+            num_compaction_level_files = compaction_manifest.get_compaction_level_files().len(),
+            compaction_level = compaction_manifest.level(),
+            num_parent_files = compaction_manifest.get_parent_level_files().len(),
+            parent_level = compaction_manifest.level() + 1
+        );
+
+        // Assert invariants
+        assert!(
+            db_fields_guard
+                .version_set
+                .num_files_at_level(compaction_manifest.level())
+                > 0
+        );
+
+        let compaction_state: CompactionState = if db_fields_guard.snapshots.is_empty() {
+            CompactionState::new(
+                compaction_manifest,
+                db_fields_guard.version_set.get_prev_sequence_number(),
+            )
+        } else {
+            CompactionState::new(
+                compaction_manifest,
+                db_fields_guard
+                    .snapshots
+                    .oldest()
+                    .read()
+                    .element
+                    .sequence_number(),
+            )
+        };
+
+        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+            db_fields_guard,
+            || -> CompactionWorkerResult<()> { Ok(()) },
+        );
+
+        Ok(compaction_state)
     }
 }

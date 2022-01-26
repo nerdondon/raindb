@@ -83,6 +83,11 @@ impl CompactionManifest {
         }
     }
 
+    /// Get the level this compaction manifest is for.
+    pub(crate) fn level(&self) -> usize {
+        self.level
+    }
+
     /// Set the input version.
     pub(crate) fn set_input_version(&mut self, version: SharedNode<Version>) {
         self.maybe_input_version = Some(version);
@@ -101,6 +106,13 @@ impl CompactionManifest {
     /// Get a mutable reference to the set of files involved at the compaction level.
     pub(crate) fn get_mut_compaction_level_files(&mut self) -> &mut Vec<Arc<FileMetadata>> {
         &mut self.input_files[0]
+    }
+
+    /**
+    Get a reference to the set of files overlapping the compaction key range at the parent level.
+    */
+    pub(crate) fn get_parent_level_files(&self) -> &[Arc<FileMetadata>] {
+        &self.input_files[1]
     }
 
     /**
