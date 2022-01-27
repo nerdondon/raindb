@@ -233,6 +233,25 @@ impl CompactionManifest {
 
         compaction_level_key_range.start
     }
+
+    /**
+    Check if a compaction can be completed by just moving a single file to the parent level
+    without merging or splitting.
+
+    We avoid a move if there is lots of overlapping grandparent data. Otherwise, the move could
+    create a parent file that will require a very expensive merge later on.
+    */
+    pub(crate) fn is_trivial_move(&self) -> bool {
+        let num_compaction_level_files = self.get_compaction_level_files().len();
+        let num_parent_level_files = self.input_files[1].len();
+        let is_grandparents_overlap_under_limit =
+            versioning::utils::sum_file_sizes(&self.grandparent_files)
+                <= utils::max_grandparent_overlap_bytes(self.max_output_file_size_bytes);
+
+        num_compaction_level_files == 1
+            && num_parent_level_files == 0
+            && is_grandparents_overlap_under_limit
+    }
 }
 
 /// Private methods
