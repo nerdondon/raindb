@@ -1,4 +1,5 @@
-use crate::key::RainDbKeyType;
+use crate::errors::RainDBError;
+use crate::key::{InternalKey, RainDbKeyType};
 
 /**
 A RainDB specific iterator implementation that has more cursor-like behavior.
@@ -64,4 +65,104 @@ where
     returns `None`.
     */
     fn current(&self) -> Option<(&Self::Key, &Vec<u8>)>;
+}
+
+/**
+An wrapper around an iterator that caches the `current()` and `is_valid()` results.
+
+This maps to the LevelDB's `IteratorWrapper` and according to LevelDB is supposed to help avoid
+costs from virtual function calls and also "gives better cache locality". Not sure how much the
+latter actually saves.
+*/
+pub(crate) struct CachingIterator {
+    /// The underlying iterator.
+    iterator: Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>,
+
+    /// The cached validity value.
+    is_valid: bool,
+
+    /// The cached key-value pair.
+    cached_entry: Option<(InternalKey, Vec<u8>)>,
+}
+
+/// Crate-only methods
+impl CachingIterator {
+    /// Create a new instance of [`CachingIterator`].
+    pub(crate) fn new(
+        iterator: Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>,
+    ) -> Self {
+        let is_valid = iterator.is_valid();
+        let current_entry = iterator
+            .current()
+            .map(|(key, value)| (key.clone(), value.clone()));
+
+        Self {
+            iterator,
+            is_valid,
+            cached_entry: current_entry,
+        }
+    }
+}
+
+/// Private methods
+impl CachingIterator {
+    /// Update the cached values.
+    fn update_cached_values(&mut self) {
+        self.is_valid = self.iterator.is_valid();
+        if self.is_valid {
+            self.cached_entry = self
+                .iterator
+                .current()
+                .map(|(key, value)| (key.clone(), value.clone()));
+        }
+    }
+}
+
+impl RainDbIterator for CachingIterator {
+    type Key = InternalKey;
+
+    type Error = RainDBError;
+
+    fn is_valid(&self) -> bool {
+        self.is_valid
+    }
+
+    fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error> {
+        self.iterator.seek(target)?;
+        self.update_cached_values();
+
+        Ok(())
+    }
+
+    fn seek_to_first(&mut self) -> Result<(), Self::Error> {
+        self.iterator.seek_to_first()?;
+        self.update_cached_values();
+
+        Ok(())
+    }
+
+    fn seek_to_last(&mut self) -> Result<(), Self::Error> {
+        self.iterator.seek_to_last()?;
+        self.update_cached_values();
+
+        Ok(())
+    }
+
+    fn next(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+        self.iterator.next()?;
+        self.update_cached_values();
+
+        self.current()
+    }
+
+    fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+        self.iterator.prev()?;
+        self.update_cached_values();
+
+        self.current()
+    }
+
+    fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
+        self.cached_entry.as_ref().map(|entry| (&entry.0, &entry.1))
+    }
 }
