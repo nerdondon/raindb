@@ -6,6 +6,7 @@ file metadata (i.e. [`FileMetadata`]).
 use std::sync::Arc;
 
 use crate::errors::{RainDBError, RainDBResult};
+use crate::iterator::CachingIterator;
 use crate::key::InternalKey;
 use crate::table_cache::TableCache;
 use crate::tables::table::TwoLevelIterator;
@@ -233,5 +234,298 @@ impl RainDbIterator for FilesEntryIterator {
         }
 
         self.current_table_iter.as_ref().unwrap().current()
+    }
+}
+
+/// Enum for indicating the direction of iteration.
+enum IterationDirection {
+    Forward,
+    Backward,
+}
+
+/**
+An iterator that merges the output of a list of iterators sorted order.
+
+This iterator does not do any sort of de-duplication.
+
+A heap is not used to merge the inputs because
+*/
+pub(crate) struct MergingIterator {
+    /// The underlying iterators.
+    iterators: Vec<CachingIterator>,
+
+    /// The current direction of iteration.
+    direction: IterationDirection,
+
+    /// The index of the iterator we are currently reading.
+    current_iterator_index: Option<usize>,
+
+    /**
+    Store errors encountered during iteration. The index of the error maps to the index of the
+    iterator that encountered the error. Only one error is stored per iterator.
+
+    LevelDB doesn't throw errors when errors are encountered during iteration. A client needs to
+    explicitly check for an error status by calling `Iterator::status()`. This vector emulates
+    this behavior.
+    */
+    errors: Vec<Option<RainDBError>>,
+}
+
+/// Crate-only methods
+impl MergingIterator {
+    /// Creata a new instance of [`MergingIterator`].
+    pub(crate) fn new(
+        iterators: Vec<Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>>,
+    ) -> Self {
+        let wrapped_iterators: Vec<CachingIterator> = iterators
+            .into_iter()
+            .map(|iter| CachingIterator::new(iter))
+            .collect();
+        let errors = vec![None; wrapped_iterators.len()];
+
+        Self {
+            iterators: wrapped_iterators,
+            direction: IterationDirection::Forward,
+            current_iterator_index: None,
+            errors,
+        }
+    }
+
+    /**
+    Get the first error if any. This will take ownership of the error, leaving a `None` in its
+    place.
+    */
+    pub(crate) fn get_error(&mut self) -> Option<RainDBError> {
+        for maybe_error in self.errors.iter_mut() {
+            if maybe_error.is_some() {
+                return maybe_error.take();
+            }
+        }
+
+        None
+    }
+}
+
+/// Private methods
+impl MergingIterator {
+    /// Find the iterator with the currently smallest key and update the merging iterator state.
+    fn find_smallest(&mut self) {
+        let mut smallest_iterator_index: usize = 0;
+        for (index, iter) in self.iterators.iter().enumerate() {
+            if !iter.is_valid() {
+                continue;
+            }
+
+            if let Some((key, _)) = iter.current() {
+                if key < self.iterators[smallest_iterator_index].current().unwrap().0 {
+                    smallest_iterator_index = index;
+                }
+            }
+        }
+
+        self.current_iterator_index = Some(smallest_iterator_index);
+    }
+
+    /// Find the iterator with the currently largest key and update the merging iterator state.
+    fn find_largest(&mut self) {
+        let mut largest_iterator_index: usize = 0;
+        for (index, iter) in self.iterators.iter().rev().enumerate() {
+            if !iter.is_valid() {
+                continue;
+            }
+
+            if let Some((key, _)) = iter.current() {
+                if key > self.iterators[largest_iterator_index].current().unwrap().0 {
+                    largest_iterator_index = index;
+                }
+            }
+        }
+
+        self.current_iterator_index = Some(largest_iterator_index);
+    }
+
+    /// Store the error at the specified index.
+    fn save_error(&mut self, iterator_index: usize, error: RainDBError) {
+        log::error!(
+            "An error occurred during a merge iteration. Error: {}",
+            &error
+        );
+        self.errors[iterator_index] = Some(error);
+    }
+
+    /// Move the current iterator to the next entry.
+    fn advance_current_iterator(&mut self) {
+        if let Some(current_iter_index) = self.current_iterator_index {
+            let current_iter = &mut self.iterators[current_iter_index];
+            current_iter.next();
+        }
+    }
+
+    /// Move the current iterator to the prev entry.
+    fn reverse_current_iterator(&mut self) {
+        if let Some(current_iter_index) = self.current_iterator_index {
+            let current_iter = &mut self.iterators[current_iter_index];
+            current_iter.prev();
+        }
+    }
+}
+
+impl RainDbIterator for MergingIterator {
+    type Key = InternalKey;
+
+    type Error = RainDBError;
+
+    fn is_valid(&self) -> bool {
+        self.current_iterator_index.is_some()
+    }
+
+    fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error> {
+        for index in 0..self.iterators.len() {
+            let iter = &mut self.iterators[index];
+            let seek_result = iter.seek(target);
+            if let Err(error) = seek_result {
+                self.save_error(index, error);
+            }
+        }
+
+        self.find_smallest();
+        self.direction = IterationDirection::Forward;
+
+        Ok(())
+    }
+
+    fn seek_to_first(&mut self) -> Result<(), Self::Error> {
+        for index in 0..self.iterators.len() {
+            let iter = &mut self.iterators[index];
+            let seek_result = iter.seek_to_first();
+            if let Err(error) = seek_result {
+                self.save_error(index, error);
+            }
+        }
+
+        self.find_smallest();
+        self.direction = IterationDirection::Forward;
+
+        Ok(())
+    }
+
+    fn seek_to_last(&mut self) -> Result<(), Self::Error> {
+        for index in 0..self.iterators.len() {
+            let iter = &mut self.iterators[index];
+            let seek_result = iter.seek_to_last();
+            if let Err(error) = seek_result {
+                self.save_error(index, error);
+            }
+        }
+
+        self.find_largest();
+        self.direction = IterationDirection::Backward;
+
+        Ok(())
+    }
+
+    fn next(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+        /*
+        Ensure that all child iterators are positioned after the current key.
+        If we are already moving in the forward direction, this is implicitly true for all
+        non-current iterators since the current iterator is the smallest iterator. Otherwise, we
+        explicitly position the non-current iterators.
+        */
+        if let IterationDirection::Backward = self.direction {
+            let current_key = self.current().unwrap().0.clone();
+            for index in 0..self.iterators.len() {
+                /*
+                We are forced to do this obtuse error saving because Rust can't handle multiple
+                mutable borrows to fields we use disjointly. It is also because of this that we
+                use indexes instead of `.iter_mut` to iterator the child iterators.
+                */
+                let mut maybe_error: Option<RainDBError> = None;
+                if let Some(current_index) = self.current_iterator_index {
+                    if index == current_index {
+                        continue;
+                    }
+                }
+
+                let iter = &mut self.iterators[index];
+                let seek_result = iter.seek(&current_key);
+                if let Err(error) = seek_result {
+                    maybe_error = Some(error);
+                }
+
+                if iter.is_valid() && (*iter.current().unwrap().0) == current_key {
+                    iter.next();
+                }
+
+                if let Some(error) = maybe_error {
+                    self.save_error(index, error);
+                }
+            }
+
+            self.direction = IterationDirection::Forward;
+        }
+
+        self.advance_current_iterator();
+        self.find_smallest();
+
+        self.current()
+    }
+
+    fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
+        /*
+        Ensure that all child iterators are positioned before the current key.
+        If we are already moving in the backward direction, this is implicitly true for all
+        non-current iterators since the current iterator is the largest iterator. Otherwise, we
+        explicitly position the non-current iterators.
+        */
+        if let IterationDirection::Forward = self.direction {
+            let current_key = self.current().unwrap().0.clone();
+            for index in 0..self.iterators.len() {
+                let mut maybe_error: Option<RainDBError> = None;
+                if let Some(current_index) = self.current_iterator_index {
+                    if index == current_index {
+                        continue;
+                    }
+                }
+
+                let iter = &mut self.iterators[index];
+                let seek_result = iter.seek(&current_key);
+                if let Err(error) = seek_result {
+                    maybe_error = Some(error);
+                }
+
+                if iter.is_valid() {
+                    // The child iterator's first entry is >= the current key. Step back one to be
+                    // less than the current key
+                    iter.prev();
+                } else {
+                    // The child iterator has no entries with keys >= the current key. Position at
+                    // the last entry.
+                    let seek_result = iter.seek(&current_key);
+                    if let Err(error) = seek_result {
+                        maybe_error = Some(error);
+                    }
+                }
+
+                if let Some(error) = maybe_error {
+                    self.save_error(index, error);
+                }
+            }
+
+            self.direction = IterationDirection::Backward;
+        }
+
+        self.reverse_current_iterator();
+        self.find_largest();
+
+        self.current()
+    }
+
+    fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
+        if let Some(current_iter_index) = self.current_iterator_index {
+            let current_iter = &self.iterators[current_iter_index];
+            return current_iter.current();
+        }
+
+        None
     }
 }
