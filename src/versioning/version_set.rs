@@ -184,6 +184,11 @@ impl VersionSet {
         self.manifest_file_number
     }
 
+    /// Get an owned reference to the table cache.
+    pub fn get_table_cache(&self) -> Arc<TableCache> {
+        Arc::clone(&self.table_cache)
+    }
+
     /// Returns true if a level on the current version needs compaction.
     pub fn needs_compaction(&self) -> bool {
         // We have a shared reference to `self` so the `current_version` field cannot have been
@@ -573,6 +578,7 @@ impl VersionSet {
             let mut manifest_file = LogWriter::new(
                 version_set.options.filesystem_provider(),
                 manifest_path.clone(),
+                false,
             )?;
             version_set.write_snapshot(&mut manifest_file)?;
             version_set.maybe_manifest_file = Some(Arc::new(Mutex::new(manifest_file)));
