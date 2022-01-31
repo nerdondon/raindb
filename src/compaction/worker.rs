@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 
 use crate::compaction::errors::CompactionWorkerError;
 use crate::db::{GuardedDbFields, PortableDatabaseState};
+use crate::errors::RainDBResult;
 use crate::key::InternalKey;
+use crate::versioning::file_iterators::MergingIterator;
 use crate::versioning::{VersionChangeManifest, VersionSet};
-use crate::DB;
+use crate::{RainDbIterator, DB};
 
 use super::errors::CompactionWorkerResult;
 use super::manifest::CompactionManifest;
@@ -382,9 +384,9 @@ impl CompactionWorker {
         db_state: &PortableDatabaseState,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
         compaction_manifest: CompactionManifest,
-    ) -> CompactionWorkerResult<CompactionState> {
+    ) -> RainDBResult<CompactionState> {
         let compaction_instant = Instant::now();
-        let total_memtable_compaction_time: Duration = Duration::default();
+        let mut total_memtable_compaction_time: Duration = Duration::default();
 
         log::info!(
             "Compacting {num_compaction_level_files} files at level {compaction_level} with \
@@ -403,7 +405,7 @@ impl CompactionWorker {
                 > 0
         );
 
-        let compaction_state: CompactionState = if db_fields_guard.snapshots.is_empty() {
+        let mut compaction_state: CompactionState = if db_fields_guard.snapshots.is_empty() {
             CompactionState::new(
                 compaction_manifest,
                 db_fields_guard.version_set.get_prev_sequence_number(),
@@ -420,9 +422,17 @@ impl CompactionWorker {
             )
         };
 
-        parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
+        // Release lock while doing actual compaction work
+        let compaction_result = parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
             db_fields_guard,
-            || -> CompactionWorkerResult<()> { Ok(()) },
+            || -> RainDBResult<MergingIterator> {
+                let mut file_iterator = compaction_state
+                    .compaction_manifest()
+                    .make_merging_iterator(Arc::clone(&db_state.table_cache))?;
+                file_iterator.seek_to_first()?;
+
+                Ok(file_iterator)
+            },
         );
 
         Ok(compaction_state)
