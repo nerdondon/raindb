@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use crate::config::MAX_NUM_LEVELS;
+use crate::errors::{RainDBError, RainDBResult};
 use crate::key::InternalKey;
+use crate::table_cache::TableCache;
+use crate::tables::Table;
 use crate::utils::linked_list::SharedNode;
+use crate::versioning::file_iterators::{FilesEntryIterator, MergingIterator};
 use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::Version;
 use crate::versioning::{self, VersionChangeManifest};
-use crate::DbOptions;
+use crate::{DbOptions, RainDbIterator, ReadOptions};
 
 use super::utils;
 
@@ -251,6 +255,82 @@ impl CompactionManifest {
         num_compaction_level_files == 1
             && num_parent_level_files == 0
             && is_grandparents_overlap_under_limit
+    }
+
+    /**
+    Create an iterator that will yield entries in the files participating in the compaction.
+    # Legacy
+
+    This is synonomous with LevelDB's `VersionSet::MakeInputIterator`. Unlike LevelDB, we return
+    the error immediately. LevelDB will push `ErrorIterator`'s onto the iterator list and will
+    ignore iteration errors until the very end of the compaction routine where the erroroneous
+    compaction output is discarded.
+    */
+    pub(crate) fn make_merging_iterator(
+        &self,
+        table_cache: Arc<TableCache>,
+    ) -> RainDBResult<MergingIterator> {
+        let read_opts = ReadOptions {
+            fill_cache: false,
+            snapshot: None,
+        };
+
+        // Level 0 files overlap so each of their iterators is necessary to merge key ranges. Other
+        // levels do not overlap so a regular two level iterator can be used to merge the key
+        // ranges.
+        let capacity = if self.level == 0 {
+            self.get_compaction_level_files().len() + 1
+        } else {
+            2
+        };
+        let mut iterators: Vec<Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>> =
+            Vec::with_capacity(capacity);
+
+        for input_files_index in 0..self.input_files.len() {
+            if self.input_files[input_files_index].is_empty() {
+                continue;
+            }
+
+            if self.level + input_files_index == 0 {
+                log::info!(
+                    "Making a merging iterator with a level at level 0. Adding iterators for all \
+                    files at the level."
+                );
+                let files = &self.input_files[input_files_index];
+                for file in files {
+                    let table_result = table_cache.find_table(file.file_number());
+                    match table_result {
+                        Ok(table) => {
+                            let iterator = Box::new(Table::iter_with(table, read_opts.clone()));
+                            iterators.push(iterator);
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "Failed to open or find the table at file number {file_number}. \
+                                Skipping the file but proceeding with compaction. Error: {error}",
+                                file_number = file.file_number(),
+                                error = error
+                            );
+
+                            return Err(error);
+                        }
+                    }
+                }
+            } else {
+                let file_list = self.input_files[input_files_index].clone();
+                let file_list_iter = Box::new(FilesEntryIterator::new(
+                    file_list,
+                    Arc::clone(&table_cache),
+                    read_opts.clone(),
+                ));
+                iterators.push(file_list_iter);
+            }
+        }
+
+        // We should not have more iterators than files.
+        assert!(iterators.len() <= capacity);
+
+        Ok(MergingIterator::new(iterators))
     }
 }
 
