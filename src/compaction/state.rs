@@ -84,4 +84,62 @@ impl CompactionState {
     pub(crate) fn table_builder_mut(&mut self) -> &mut TableBuilder {
         self.table_builder.as_mut().unwrap()
     }
+
+    /**
+    Finalize and check usability of a generated table file.
+
+    # Panics
+
+    There must be a table builder for a table file in the `table_builder` field.
+    */
+    pub(crate) fn finish_compaction_output_file(
+        &mut self,
+        table_cache: Arc<TableCache>,
+        iterator: &mut MergingIterator,
+    ) -> RainDBResult<()> {
+        // Assert invariants
+        assert!(self.has_table_builder());
+
+        let table_file_number = self.current_output_mut().file_number();
+        assert!(table_file_number != 0);
+
+        // Check for iterator errors
+        let mut maybe_error: Option<RainDBError> = None;
+        let num_table_entries = self.table_builder_mut().get_num_entries();
+        if let Some(iter_err) = iterator.get_error() {
+            maybe_error = Some(iter_err);
+            self.table_builder_mut().abandon();
+        } else {
+            let finalize_result = self.table_builder_mut().finalize();
+            if let Err(finalize_err) = finalize_result {
+                maybe_error = Some(RainDBError::TableBuild(finalize_err));
+            }
+        }
+
+        // Record some table build statistics and clear the builder
+        let table_size = self.table_builder_mut().file_size();
+        self.current_output_mut().set_file_size(table_size);
+        self.total_size_bytes += table_size;
+        self.table_builder.take();
+
+        if let Some(err) = maybe_error {
+            return Err(err);
+        }
+
+        if num_table_entries > 0 {
+            // Verify the table file if there were no errors during generation
+            let _table_iter = table_cache.find_table(table_file_number)?;
+
+            log::info!(
+                "Generated table {table_num} at level {level}. It has {num_entries} entries \
+                ({num_bytes} bytes).",
+                table_num = table_file_number,
+                level = self.compaction_manifest.level(),
+                num_entries = num_table_entries,
+                num_bytes = table_size
+            );
+        }
+
+        Ok(())
+    }
 }
