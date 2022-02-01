@@ -175,12 +175,16 @@ pub(crate) struct LogWriter {
 /// Public methods
 impl LogWriter {
     /// Construct a new [`LogWriter`].
-    pub fn new<P: AsRef<Path>>(fs: Arc<dyn FileSystem>, log_file_path: P) -> LogIOResult<Self> {
+    pub fn new<P: AsRef<Path>>(
+        fs: Arc<dyn FileSystem>,
+        log_file_path: P,
+        is_appending: bool,
+    ) -> LogIOResult<Self> {
         log::info!(
-            "Creating a log file at {}",
+            "Creating/appending to a log file at {}",
             log_file_path.as_ref().to_string_lossy()
         );
-        let log_file = fs.create_file(log_file_path.as_ref())?;
+        let log_file = fs.create_file(log_file_path.as_ref(), is_appending)?;
 
         let mut block_offset = 0;
         let log_file_size = fs.get_file_size(log_file_path.as_ref())? as usize;
