@@ -1,4 +1,10 @@
+use std::sync::Arc;
+
+use crate::db::PortableDatabaseState;
+use crate::errors::{RainDBError, RainDBResult};
+use crate::table_cache::TableCache;
 use crate::tables::TableBuilder;
+use crate::versioning::file_iterators::MergingIterator;
 use crate::versioning::file_metadata::FileMetadata;
 
 use super::manifest::CompactionManifest;
@@ -139,6 +145,35 @@ impl CompactionState {
                 num_bytes = table_size
             );
         }
+
+        Ok(())
+    }
+
+    /**
+    Create a new table builder to aggregate compaction results into a new table file.
+
+    # Panics
+
+    There must not already be a table builder in use.
+    */
+    fn open_compaction_output_file(
+        &mut self,
+        db_state: &PortableDatabaseState,
+    ) -> RainDBResult<()> {
+        assert!(!self.has_table_builder());
+
+        let file_number: u64;
+        {
+            let mut db_fields_guard = db_state.guarded_db_fields.lock();
+            file_number = db_fields_guard.version_set.get_new_file_number();
+            db_fields_guard.tables_in_use.insert(file_number);
+            let file_metadata = FileMetadata::new(file_number);
+            self.output_files.push(file_metadata);
+        }
+
+        // Create the actual file
+        let table_builder = TableBuilder::new(db_state.options.clone(), file_number)?;
+        self.table_builder = Some(table_builder);
 
         Ok(())
     }
