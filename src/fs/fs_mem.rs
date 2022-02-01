@@ -108,17 +108,19 @@ impl FileSystem for InMemoryFileSystem {
         Ok(())
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
+    fn create_file(&self, path: &Path, append: bool) -> io::Result<Box<dyn RandomAccessFile>> {
         let mut files = self.files.write();
-        match files.get_mut(path) {
-            Some(file) => Ok(Box::new(file.clone())),
-            None => {
-                let new_file = LockableInMemoryFile::new();
-                files.insert(path.to_path_buf(), new_file);
-                let file = files.get(path).unwrap();
-                Ok(Box::new(file.clone()))
+        if let Some(file) = files.get_mut(path) {
+            if append {
+                return Ok(Box::new(file.clone()));
             }
         }
+
+        let new_file = LockableInMemoryFile::new();
+        files.insert(path.to_path_buf(), new_file);
+        let file = files.get(path).unwrap();
+
+        Ok(Box::new(file.clone()))
     }
 
     fn remove_file(&self, path: &Path) -> io::Result<()> {

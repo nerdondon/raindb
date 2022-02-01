@@ -93,12 +93,18 @@ impl FileSystem for OsFileSystem {
         fs::rename(from, to)
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(path)?;
+    fn create_file(&self, path: &Path, append: bool) -> io::Result<Box<dyn RandomAccessFile>> {
+        let mut open_options = OpenOptions::new();
+        open_options.create(true).read(true);
+
+        if append {
+            open_options.append(true);
+        } else {
+            open_options.truncate(true);
+        }
+
+        let file = open_options.open(path)?;
+
         Ok(Box::new(file))
     }
 
@@ -191,12 +197,18 @@ impl FileSystem for TmpFileSystem {
         fs::rename(from, to)
     }
 
-    fn create_file(&self, path: &Path) -> io::Result<Box<dyn RandomAccessFile>> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(path)?;
+    fn create_file(&self, path: &Path, append: bool) -> io::Result<Box<dyn RandomAccessFile>> {
+        let mut open_options = OpenOptions::new();
+        open_options.create(true).read(true);
+
+        if append {
+            open_options.append(true);
+        } else {
+            open_options.truncate(true);
+        }
+
+        let file = open_options.open(path)?;
+
         Ok(Box::new(file))
     }
 
@@ -271,7 +283,7 @@ mod tests {
         file_path.push(&test_dir);
         file_path.push("testing_file");
 
-        let mut file = file_system.create_file(&file_path).unwrap();
+        let mut file = file_system.create_file(&file_path, true).unwrap();
         assert!(file.write(b"Hello World").is_ok());
         assert!(file.flush().is_ok());
 
@@ -292,7 +304,7 @@ mod tests {
         file_path.push(&test_dir);
         file_path.push("testing_file");
 
-        let mut file = file_system.create_file(&file_path).unwrap();
+        let mut file = file_system.create_file(&file_path, true).unwrap();
         assert!(file.write(b"Hello World").is_ok());
         assert!(file.flush().is_ok());
         assert_eq!(

@@ -90,7 +90,7 @@ impl TableBuilder {
         let table_file_name = file_name_handler.get_table_file_path(file_number);
         let file = options
             .filesystem_provider()
-            .create_file(&table_file_name)?;
+            .create_file(&table_file_name, false)?;
         let filter_block_builder = FilterBlockBuilder::new(options.filter_policy());
 
         Ok(Self {

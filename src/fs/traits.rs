@@ -64,10 +64,10 @@ pub trait FileSystem: Send + Sync {
     /**
     Open a file in read/write mode.
 
-    This function will create the file if it doesn't exist. Critically, it does not truncate an
-    existing file and sets the append mode.
+    This function will create the file if it doesn't exist. Setting the `append` parameter to true
+    will start appending to an existing file, otherwise an existing file is truncated to length 0.
     */
-    fn create_file(&self, path: &Path) -> Result<Box<dyn RandomAccessFile>>;
+    fn create_file(&self, path: &Path, append: bool) -> Result<Box<dyn RandomAccessFile>>;
 
     /// Remove a file from the filesystem.
     fn remove_file(&self, path: &Path) -> Result<()>;

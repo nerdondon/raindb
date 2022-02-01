@@ -242,7 +242,7 @@ impl DB {
         // Create WAL
         let wal_file_number = 0;
         let wal_file_path = file_name_handler.get_wal_file_path(wal_file_number);
-        let wal = LogWriter::new(Arc::clone(&fs), wal_file_path)?;
+        let wal = LogWriter::new(Arc::clone(&fs), wal_file_path, false)?;
 
         // Create memtable
         let memtable = Box::new(SkipListMemTable::new());
@@ -552,7 +552,7 @@ impl DB {
                 let new_wal_number = mutex_guard.version_set.get_new_file_number();
                 let wal_file_path = self.file_name_handler.get_wal_file_path(new_wal_number);
                 let maybe_wal_writer =
-                    LogWriter::new(self.options.filesystem_provider(), wal_file_path);
+                    LogWriter::new(self.options.filesystem_provider(), wal_file_path, false);
 
                 if maybe_wal_writer.is_err() {
                     let error = maybe_wal_writer.err().unwrap();
@@ -909,7 +909,7 @@ impl DB {
         let manifest_file_path = file_name_handler.get_manifest_file_path(manifest_file_number);
         let manifest_file_name = manifest_file_path.file_name().unwrap();
         let temp_file_path = file_name_handler.get_temp_file_path(manifest_file_number);
-        let mut temp_file = filesystem_provider.create_file(&temp_file_path)?;
+        let mut temp_file = filesystem_provider.create_file(&temp_file_path, false)?;
         let contents = [
             manifest_file_name.to_string_lossy().as_bytes(),
             "\n".as_bytes(),
