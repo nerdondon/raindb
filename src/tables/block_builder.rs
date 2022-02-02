@@ -65,9 +65,8 @@ where
     pub(crate) fn new(prefix_compression_restart_interval: usize) -> Self {
         assert!(prefix_compression_restart_interval > 0, "Attempted to create a block builder with a prefix compression restart interval of 0. Only values > 1 are accepted.");
 
-        let mut restart_points = vec![];
         // The first restart point is at offset 0 i.e. the first key is not compressed
-        restart_points.push(0);
+        let restart_points = vec![0];
 
         Self {
             prefix_compression_restart_interval,
@@ -94,7 +93,7 @@ where
 
     This method was just called `Add` in LevelDB.
     */
-    pub(crate) fn add_entry(&mut self, key: Rc<K>, value: &Vec<u8>) {
+    pub(crate) fn add_entry(&mut self, key: Rc<K>, value: &[u8]) {
         let key_bytes = key.as_bytes();
 
         // Panic if our invariants are not maintained. This is a bug.
