@@ -127,10 +127,10 @@ impl TableBuilder {
 
     RainDB eschews maintaining this state and will delay both the emission of the data block
     as well as the insertion of the index entry until the next key is seen. Because table building
-    generall occurs from a pre-existing collection of data, there isn't much of a delay until the
+    generally occurs from a pre-existing collection of data, there isn't much of a delay until the
     next entry is added or the entire table is finalized and flushed to disk.
     */
-    pub fn add_entry(&mut self, key: Rc<InternalKey>, value: &Vec<u8>) -> TableBuildResult<()> {
+    pub fn add_entry(&mut self, key: Rc<InternalKey>, value: &[u8]) -> TableBuildResult<()> {
         // Panic if our invariants are not maintained. This is a bug.
         assert!(!self.file_closed, "{}", BuilderError::AlreadyClosed);
         assert!(
