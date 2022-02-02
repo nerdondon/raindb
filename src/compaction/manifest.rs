@@ -57,16 +57,35 @@ pub(crate) struct CompactionManifest {
     overlapping_grandparents: Vec<Arc<FileMetadata>>,
 
     /**
-    Indices into the `maybe_input_version.files` recording the index of the file at a level
-    that satisfy conditions implemented in the [`CompactionManifest::IsBaseLevelForKey`] method.
+    The current index into the grandparent files during the generation of new table files.
 
-    Pointers are only stored for levels oldr than the levels being used in the compaction, i.e.
+    This is used to track the overlap of the file being generated with grandparent files.
+    */
+    grandparent_index: usize,
+
+    /// The number of bytes overlapping with grandparent files for the current file being compacted.
+    current_overlapping_bytes: u64,
+
+    /**
+    Returns true if the key range we are compacting is currently overlapping grandparent files.
+
+    # Legacy
+
+    This field is synonomous to LevelDB's `Compaction::seen_key_`.
+    */
+    is_overlappping: bool,
+
+    /**
+    Indices into the `maybe_input_version.files` recording the index of the file at a level
+    where the keys being processed for a compaction are at the base level.
+
+    This is internal state kept during table file generation and is mostly used by the
+    [`CompactionManifest::IsBaseLevelForKey`] method.
+
+    Pointers are only stored for levels older than the levels being used in the compaction, i.e.
     for all levels >= `level` + 2.
     */
-    level_pointers: [usize; MAX_NUM_LEVELS],
-
-    /// The set of files in the grandparent level that overlap the files involved in the compaction.
-    grandparent_files: Vec<Arc<FileMetadata>>,
+    base_level_pointers: [usize; MAX_NUM_LEVELS],
 }
 
 /// Crate-only methods
@@ -82,8 +101,10 @@ impl CompactionManifest {
             maybe_input_version: None,
             input_files: Default::default(),
             overlapping_grandparents: vec![],
-            level_pointers: [0; MAX_NUM_LEVELS],
-            grandparent_files: vec![],
+            grandparent_index: 0,
+            is_overlappping: false,
+            current_overlapping_bytes: 0,
+            base_level_pointers: [0; MAX_NUM_LEVELS],
         }
     }
 
@@ -226,10 +247,11 @@ impl CompactionManifest {
 
         // Compute the set of grandparent files that overlap this compaction
         if self.level + 2 < MAX_NUM_LEVELS {
-            self.grandparent_files = input_version.read().element.get_overlapping_files_strong(
-                self.level + 2,
-                Some(&all_files_range.start)..Some(&all_files_range.end),
-            );
+            self.overlapping_grandparents =
+                input_version.read().element.get_overlapping_files_strong(
+                    self.level + 2,
+                    Some(&all_files_range.start)..Some(&all_files_range.end),
+                );
         }
 
         self.change_manifest
@@ -249,7 +271,7 @@ impl CompactionManifest {
         let num_compaction_level_files = self.get_compaction_level_files().len();
         let num_parent_level_files = self.input_files[1].len();
         let is_grandparents_overlap_under_limit =
-            versioning::utils::sum_file_sizes(&self.grandparent_files)
+            versioning::utils::sum_file_sizes(&self.overlapping_grandparents)
                 <= utils::max_grandparent_overlap_bytes(self.max_output_file_size_bytes);
 
         num_compaction_level_files == 1
@@ -331,6 +353,39 @@ impl CompactionManifest {
         assert!(iterators.len() <= capacity);
 
         Ok(MergingIterator::new(iterators))
+    }
+
+    /**
+    Returns true if and only if we should stop building the current table file before processing
+    the specified key.
+
+    This can occur if there would be too much overlap with files in the grandparent level.
+    */
+    pub(crate) fn should_stop_before_key(&mut self, key: &InternalKey) -> bool {
+        // Scan to find the earliest grandparent file with a key range that overlaps the provided
+        // key.
+        while self.grandparent_index < self.overlapping_grandparents.len()
+            && key > self.overlapping_grandparents[self.grandparent_index].largest_key()
+        {
+            if self.is_overlappping {
+                self.current_overlapping_bytes +=
+                    &self.overlapping_grandparents[self.grandparent_index].get_file_size();
+            }
+
+            self.grandparent_index += 1;
+        }
+
+        self.is_overlappping = true;
+
+        if self.current_overlapping_bytes
+            > utils::max_grandparent_overlap_bytes(self.max_output_file_size_bytes)
+        {
+            self.current_overlapping_bytes = 0;
+
+            true
+        } else {
+            false
+        }
     }
 }
 
