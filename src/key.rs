@@ -106,8 +106,8 @@ impl InternalKey {
     }
 
     /// Get a reference to operation tag for this key.
-    pub(crate) fn get_operation(&self) -> &Operation {
-        &self.operation
+    pub(crate) fn get_operation(&self) -> Operation {
+        self.operation
     }
 }
 
@@ -118,7 +118,7 @@ impl RainDbKeyType for InternalKey {
         let mut buf: Vec<u8> = Vec::with_capacity(self.get_user_key().len() + 8 + 1);
         buf.extend_from_slice(self.get_user_key());
         buf.extend_from_slice(&self.sequence_number.encode_fixed_vec());
-        buf.extend_from_slice(&[*self.get_operation() as u8]);
+        buf.extend_from_slice(&[self.get_operation() as u8]);
 
         buf
     }

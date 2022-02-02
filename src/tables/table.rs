@@ -164,7 +164,7 @@ impl Table {
         block_reader_iter.seek(key)?;
         match block_reader_iter.current() {
             Some((key, value)) => {
-                if *key.get_operation() == Operation::Delete {
+                if key.get_operation() == Operation::Delete {
                     return Ok(None);
                 }
 
