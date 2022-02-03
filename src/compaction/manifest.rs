@@ -387,6 +387,35 @@ impl CompactionManifest {
             false
         }
     }
+
+    /**
+    Returns true if the provided user key will not overlap any information stored in levels older
+    than the level that the compaction file will be installed to (i.e. `level + 1`).
+    */
+    pub(crate) fn is_base_level_for_key(&mut self, key: &InternalKey) -> bool {
+        let user_key = key.get_user_key();
+        let input_version = &self.maybe_input_version.as_ref().unwrap().read().element;
+        for level in (self.level() + 2)..MAX_NUM_LEVELS {
+            let level_files = &input_version.files[level];
+            while self.base_level_pointers[level] < level_files.len() {
+                let file = &level_files[self.base_level_pointers[level]];
+                if user_key <= file.largest_key().get_user_key() {
+                    if user_key >= file.smallest_key().get_user_key() {
+                        // The user key falls in this file's range, so `self.level + 1` is not the
+                        // base level for this key.
+                        return false;
+                    }
+
+                    // We are still processing entries that may overlap with information stored in
+                    // an older level so don't move the file pointer forward
+                    break;
+                }
+                self.base_level_pointers[level] += 1;
+            }
+        }
+
+        true
+    }
 }
 
 /// Private methods
