@@ -447,6 +447,21 @@ impl CompactionWorker {
                         total_memtable_compaction_time += memtable_compaction_start.elapsed();
                     }
 
+                    /*
+                    If the table file that is currently being built overlaps too much of the
+                    grandparent files, start a new file.
+                    */
+                    if compaction_state.has_table_builder()
+                        && compaction_state
+                            .compaction_manifest_mut()
+                            .should_stop_before_key(file_iterator.current().unwrap().0)
+                    {
+                        compaction_state.finish_compaction_output_file(
+                            Arc::clone(&db_state.table_cache),
+                            &mut file_iterator,
+                        )?;
+                    }
+
                     file_iterator.next();
                 }
 
