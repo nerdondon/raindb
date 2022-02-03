@@ -431,6 +431,25 @@ impl CompactionWorker {
                     .make_merging_iterator(Arc::clone(&db_state.table_cache))?;
                 file_iterator.seek_to_first()?;
 
+                while file_iterator.is_valid() && !db_state.is_shutting_down.load(Ordering::Acquire)
+                {
+                    if db_state.has_immutable_memtable.load(Ordering::Acquire) {
+                        // Prioritize compacting an immutable memtable if there is one
+                        let memtable_compaction_start = Instant::now();
+                        let mut db_mutex_guard = db_state.guarded_db_fields.lock();
+                        if db_mutex_guard.maybe_immutable_memtable.is_some() {
+                            CompactionWorker::compact_memtable(db_state, &mut db_mutex_guard);
+
+                            // Notify waiting writers if there are any
+                            db_state.background_work_finished_signal.notify_all();
+                        }
+
+                        total_memtable_compaction_time += memtable_compaction_start.elapsed();
+                    }
+
+                    file_iterator.next();
+                }
+
                 Ok(file_iterator)
             },
         );
