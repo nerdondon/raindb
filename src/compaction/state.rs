@@ -91,6 +91,11 @@ impl CompactionState {
         self.table_builder.as_mut().unwrap()
     }
 
+    /// Get the smallest sequence number that can be dropped in a compaction.
+    pub(crate) fn get_smallest_snapshot(&self) -> u64 {
+        self.smallest_snapshot
+    }
+
     /**
     Finalize and check usability of a generated table file.
 

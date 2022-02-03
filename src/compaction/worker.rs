@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use crate::compaction::errors::CompactionWorkerError;
 use crate::db::{GuardedDbFields, PortableDatabaseState};
-use crate::errors::RainDBResult;
-use crate::key::InternalKey;
+use crate::errors::{RainDBError, RainDBResult};
+use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
 use crate::versioning::file_iterators::MergingIterator;
 use crate::versioning::{VersionChangeManifest, VersionSet};
-use crate::{RainDbIterator, DB};
+use crate::{Operation, RainDbIterator, DB};
 
 use super::errors::CompactionWorkerResult;
 use super::manifest::CompactionManifest;
@@ -426,6 +426,9 @@ impl CompactionWorker {
         let compaction_result = parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
             db_fields_guard,
             || -> RainDBResult<MergingIterator> {
+                let mut maybe_current_user_key: Option<Vec<u8>> = None;
+                let mut last_sequence_for_key = MAX_SEQUENCE_NUMBER;
+
                 let mut file_iterator = compaction_state
                     .compaction_manifest()
                     .make_merging_iterator(Arc::clone(&db_state.table_cache))?;
@@ -461,6 +464,59 @@ impl CompactionWorker {
                             &mut file_iterator,
                         )?;
                     }
+
+                    // Make a determination on whether or not to keep a key e.g. if it there are
+                    // newer records of it and no snapshots require anything older.
+                    let mut should_drop_entry = false;
+                    let (current_key, current_value) = file_iterator.current().unwrap();
+                    if maybe_current_user_key.is_none()
+                        || current_key.get_user_key() != maybe_current_user_key.as_ref().unwrap()
+                    {
+                        // This is the first occurrence of this user key
+                        maybe_current_user_key = Some(current_key.get_user_key().to_vec());
+                        last_sequence_for_key = MAX_SEQUENCE_NUMBER
+                    }
+
+                    #[allow(clippy::if_same_then_else)]
+                    if last_sequence_for_key <= compaction_state.get_smallest_snapshot() {
+                        // Entry is hidden by a newer entry for the same user key
+                        should_drop_entry = true;
+                    } else if current_key.get_operation() == Operation::Delete
+                        && current_key.get_sequence_number()
+                            <= compaction_state.get_smallest_snapshot()
+                        && compaction_state
+                            .compaction_manifest_mut()
+                            .is_base_level_for_key(current_key)
+                    {
+                        /*
+                        This user key:
+                        - has no data in older levels
+                        - data in younger levels will have larger sequence numbers
+                        - data in the levels being compacted have smaller sequence numbers that
+                          will be dropped in the next iterations of this loop
+
+                        Therefore, this deletion marker is obsolete and can be dropped.
+                        */
+                        should_drop_entry = true;
+                    }
+
+                    last_sequence_for_key = current_key.get_sequence_number();
+
+                    log::debug!(
+                        "Compaction thread processing table entry with--user key: {user_key:?}, \
+                        seq: {seq_num}, operation: {op:?}, is dropping: {is_dropping}, is base \
+                        level: {is_base_level}, last seen sequence: {last_seq}, smallest \
+                        snapshot: {smallest_snapshot}",
+                        user_key = current_key.get_user_key(),
+                        seq_num = current_key.get_sequence_number(),
+                        op = current_key.get_operation(),
+                        is_dropping = should_drop_entry,
+                        is_base_level = compaction_state
+                            .compaction_manifest_mut()
+                            .is_base_level_for_key(current_key),
+                        last_seq = last_sequence_for_key,
+                        smallest_snapshot = compaction_state.get_smallest_snapshot()
+                    );
 
                     file_iterator.next();
                 }
