@@ -156,7 +156,7 @@ impl CompactionState {
 
     There must not already be a table builder in use.
     */
-    fn open_compaction_output_file(
+    pub(crate) fn open_compaction_output_file(
         &mut self,
         db_state: &PortableDatabaseState,
     ) -> RainDBResult<()> {
