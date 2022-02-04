@@ -557,6 +557,31 @@ impl CompactionWorker {
             },
         );
 
+        let mut compaction_error: Option<RainDBError> = None;
+        if let Ok(mut file_iterator) = compaction_result {
+            if db_state.is_shutting_down.load(Ordering::Acquire) {
+                compaction_error = Some(
+                    CompactionWorkerError::UnexpectedState(
+                        "The database is shutting down during a compaction.".to_owned(),
+                    )
+                    .into(),
+                );
+            } else if compaction_state.has_table_builder() {
+                // Close any outstanding table files
+                compaction_error = compaction_state
+                    .finish_compaction_output_file(
+                        Arc::clone(&db_state.table_cache),
+                        &mut file_iterator,
+                    )
+                    .err();
+            }
+
+            if compaction_error.is_none() {
+                compaction_error = file_iterator.get_error();
+            }
+        } else {
+            compaction_error = compaction_result.err();
+        }
         Ok(compaction_state)
     }
 }
