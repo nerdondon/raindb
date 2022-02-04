@@ -145,6 +145,16 @@ impl CompactionManifest {
         self.max_output_file_size_bytes
     }
 
+    /// Get the amount of data that needs to be read for compaction in bytes.
+    pub(crate) fn compaction_input_read_bytes(&self) -> u64 {
+        let mut total_bytes = 0;
+        for input_level_files in self.input_files.iter() {
+            total_bytes += versioning::utils::sum_file_sizes(input_level_files);
+        }
+
+        total_bytes
+    }
+
     /**
     Fill out other compaction input fields based on the currently provided set of inputs.
 
