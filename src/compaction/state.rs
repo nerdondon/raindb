@@ -96,6 +96,14 @@ impl CompactionState {
         self.smallest_snapshot
     }
 
+    /// Get the current size of the outputs in bytes.
+    pub(crate) fn get_output_size(&self) -> u64 {
+        self.output_files
+            .iter()
+            .map(|metadata| metadata.get_file_size())
+            .sum()
+    }
+
     /**
     Finalize and check usability of a generated table file.
 

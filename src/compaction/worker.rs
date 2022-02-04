@@ -1,11 +1,13 @@
 use parking_lot::MutexGuard;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::compaction::errors::CompactionWorkerError;
+use crate::compaction::LevelCompactionStats;
 use crate::db::{GuardedDbFields, PortableDatabaseState};
 use crate::errors::{RainDBError, RainDBResult};
 use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
@@ -582,6 +584,21 @@ impl CompactionWorker {
         } else {
             compaction_error = compaction_result.err();
         }
+
+        // Calculate compaction stats
+        let compaction_duration = compaction_instant.elapsed() - total_memtable_compaction_time;
+        let compaction_input_bytes = compaction_state
+            .compaction_manifest()
+            .compaction_input_read_bytes();
+        let compaction_output_bytes = compaction_state.get_output_size();
+        let compaction_stats = LevelCompactionStats {
+            compaction_duration,
+            bytes_read: compaction_input_bytes,
+            bytes_written: compaction_output_bytes,
+        };
+        db_fields_guard.compaction_stats[compaction_state.compaction_manifest().level() + 1] +=
+            compaction_stats;
+
         Ok(compaction_state)
     }
 }
