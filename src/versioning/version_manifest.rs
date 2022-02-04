@@ -9,7 +9,7 @@ use crate::utils::write_io::WriteHelpers;
 use super::file_metadata::FileMetadata;
 
 /// Represents a file to be deleted at a specified level.
-#[derive(Hash)]
+#[derive(Eq, Hash, PartialEq)]
 pub(crate) struct DeletedFile {
     /// The level to delete the file from.
     pub(crate) level: usize,
@@ -108,6 +108,12 @@ impl VersionChangeManifest {
         metadata.set_largest_key(Some(key_range.end));
 
         self.new_files.push((level, metadata));
+    }
+
+    /// Mark the specified file to be deleted in at the specified level.
+    pub(crate) fn remove_file(&mut self, level: usize, file_number: u64) {
+        self.deleted_files
+            .insert(DeletedFile { level, file_number });
     }
 
     /// Add a compaction pointer to the change manifest.

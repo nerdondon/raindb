@@ -140,6 +140,14 @@ impl CompactionManifest {
         &self.input_files[1]
     }
 
+    /**
+    Get a mutable reference to the version change manifest being managed by this compaction
+    manifest.
+    */
+    pub(crate) fn get_change_manifest_mut(&mut self) -> &mut VersionChangeManifest {
+        &mut self.change_manifest
+    }
+
     /// Get the maximum compaction output file size.
     pub(crate) fn max_output_file_size_bytes(&self) -> u64 {
         self.max_output_file_size_bytes
@@ -430,6 +438,16 @@ impl CompactionManifest {
         }
 
         true
+    }
+
+    /// Mark the compaction inputs as deletions in the version change manifest.
+    pub(crate) fn add_input_deletions(&mut self) {
+        for (index, input_level_files) in self.input_files.iter().enumerate() {
+            for file in input_level_files.iter() {
+                self.change_manifest
+                    .remove_file(self.level() + index, file.file_number());
+            }
+        }
     }
 }
 

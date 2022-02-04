@@ -337,7 +337,7 @@ impl CompactionWorker {
             version."
         );
 
-        let apply_result = VersionSet::log_and_apply(db_fields_guard, change_manifest);
+        let apply_result = VersionSet::log_and_apply(db_fields_guard, &mut change_manifest);
         if let Err(apply_error) = apply_result {
             log::error!(
                 "There was an error logging and applying the change manifest. Error: {}",
@@ -599,6 +599,52 @@ impl CompactionWorker {
         db_fields_guard.compaction_stats[compaction_state.compaction_manifest().level() + 1] +=
             compaction_stats;
 
+        if compaction_error.is_none() {
+            let install_result = CompactionWorker::install_compaction_results(
+                db_fields_guard,
+                &mut compaction_state,
+            );
+            compaction_error = install_result.err().map(|worker_error| worker_error.into());
+        }
+
+        if let Some(error) = compaction_error {
+            DB::set_bad_database_state(db_state, db_fields_guard, error);
+        }
+
+        log::info!(
+            "Compaction thread finished compaction. The level summary is now {level_summary}",
+            level_summary = db_fields_guard.version_set.level_summary()
+        );
+
         Ok(compaction_state)
+    }
+
+    /// Apply compaction changes to create a new version in the version set.
+    fn install_compaction_results(
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        compaction_state: &mut CompactionState,
+    ) -> CompactionWorkerResult<()> {
+        {
+            let compaction_manifest = compaction_state.compaction_manifest();
+            log::info!(
+                "Compacted {compaction_level_files} files at level {compaction_level} + \
+                {parent_level_files} files at level {parent_level} to {output_bytes} bytes.",
+                compaction_level_files = compaction_manifest.get_compaction_level_files().len(),
+                compaction_level = compaction_manifest.level(),
+                parent_level_files = compaction_manifest.get_parent_level_files().len(),
+                parent_level = compaction_manifest.level() + 1,
+                output_bytes = compaction_state.total_size_bytes
+            );
+        }
+
+        compaction_state.finalize_version_manifest();
+        VersionSet::log_and_apply(
+            db_fields_guard,
+            compaction_state
+                .compaction_manifest_mut()
+                .get_change_manifest_mut(),
+        )?;
+
+        Ok(())
     }
 }

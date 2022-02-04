@@ -254,14 +254,14 @@ impl VersionSet {
     */
     pub fn log_and_apply(
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
-        mut change_manifest: VersionChangeManifest,
+        change_manifest: &mut VersionChangeManifest,
     ) -> WriteResult<()> {
         let (new_version, created_new_manifest_file) =
-            VersionSet::get_new_version_from_current(db_fields_guard, &mut change_manifest)?;
+            VersionSet::get_new_version_from_current(db_fields_guard, change_manifest)?;
 
         let manifest_write_result = VersionSet::persist_changes(
             db_fields_guard,
-            &change_manifest,
+            change_manifest,
             created_new_manifest_file,
         );
         let version_set = &mut db_fields_guard.version_set;
@@ -502,6 +502,21 @@ impl VersionSet {
         compaction_manifest.finalize_compaction_inputs();
 
         Some(compaction_manifest)
+    }
+
+    /// Get a human-readable summary of the files in each of level of the current version.
+    pub fn level_summary(&self) -> String {
+        let level_summary = self
+            .get_current_version()
+            .read()
+            .element
+            .files
+            .iter()
+            .map(|files| files.len().to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        format!("files[ {level_summary} ]", level_summary = level_summary)
     }
 }
 
