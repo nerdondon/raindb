@@ -239,6 +239,11 @@ impl TableBuilder {
     pub fn file_size(&self) -> u64 {
         self.current_offset
     }
+
+    /// Get the number of entries in the table file.
+    pub fn get_num_entries(&self) -> usize {
+        self.num_entries
+    }
 }
 
 /// Private methods

@@ -140,6 +140,11 @@ impl CompactionManifest {
         &self.input_files[1]
     }
 
+    /// Get the maximum compaction output file size.
+    pub(crate) fn max_output_file_size_bytes(&self) -> u64 {
+        self.max_output_file_size_bytes
+    }
+
     /**
     Fill out other compaction input fields based on the currently provided set of inputs.
 

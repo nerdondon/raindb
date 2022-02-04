@@ -518,6 +518,38 @@ impl CompactionWorker {
                         smallest_snapshot = compaction_state.get_smallest_snapshot()
                     );
 
+                    if !should_drop_entry {
+                        // Open output file if one is not already open
+                        if !compaction_state.has_table_builder() {
+                            compaction_state.open_compaction_output_file(db_state)?;
+                        }
+
+                        if compaction_state.table_builder_mut().get_num_entries() == 0 {
+                            compaction_state
+                                .current_output_mut()
+                                .set_smallest_key(Some(current_key.clone()));
+                        }
+
+                        compaction_state
+                            .current_output_mut()
+                            .set_largest_key(Some(current_key.clone()));
+                        compaction_state
+                            .table_builder_mut()
+                            .add_entry(Rc::new(current_key.clone()), current_value)?;
+
+                        // Close output file if it hits the file size threshold
+                        if compaction_state.table_builder_mut().file_size()
+                            >= compaction_state
+                                .compaction_manifest()
+                                .max_output_file_size_bytes()
+                        {
+                            compaction_state.finish_compaction_output_file(
+                                Arc::clone(&db_state.table_cache),
+                                &mut file_iterator,
+                            )?;
+                        }
+                    }
+
                     file_iterator.next();
                 }
 
