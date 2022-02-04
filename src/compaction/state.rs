@@ -190,4 +190,20 @@ impl CompactionState {
 
         Ok(())
     }
+
+    /// Mark files as added or deleted in the version change manifest.
+    pub(crate) fn finalize_version_manifest(&mut self) {
+        self.compaction_manifest.add_input_deletions();
+
+        // Mark files that will be added as part of this compaction
+        let parent_level = self.compaction_manifest.level() + 1;
+        for output_file in &self.output_files {
+            self.compaction_manifest.get_change_manifest_mut().add_file(
+                parent_level,
+                output_file.file_number(),
+                output_file.get_file_size(),
+                output_file.clone_key_range(),
+            );
+        }
+    }
 }
