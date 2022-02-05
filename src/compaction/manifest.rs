@@ -9,7 +9,7 @@ use crate::utils::linked_list::SharedNode;
 use crate::versioning::file_iterators::{FilesEntryIterator, MergingIterator};
 use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::Version;
-use crate::versioning::{self, VersionChangeManifest};
+use crate::versioning::{self, VersionChangeManifest, VersionSet};
 use crate::{DbOptions, RainDbIterator, ReadOptions};
 
 use super::utils;
@@ -447,6 +447,30 @@ impl CompactionManifest {
                 self.change_manifest
                     .remove_file(self.level() + index, file.file_number());
             }
+        }
+    }
+
+    /**
+    Set up the version change manifest for a trivial move.
+
+    # Panics
+
+    In order to be considered a trivial move, there can only be one file in the compaction level.
+    */
+    pub(crate) fn set_change_manifest_for_trivial_move(&mut self) {
+        let file_to_compact = Arc::clone(self.get_compaction_level_files().first().unwrap());
+        self.change_manifest.add_file(
+            self.level,
+            file_to_compact.file_number(),
+            file_to_compact.get_file_size(),
+            file_to_compact.clone_key_range(),
+        )
+    }
+
+    /// Release the input version once a compaction is complete.
+    pub(crate) fn release_inputs(&mut self, version_set: &mut VersionSet) {
+        if let Some(input_version) = self.maybe_input_version.take() {
+            version_set.release_version(input_version);
         }
     }
 }

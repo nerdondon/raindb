@@ -18,6 +18,7 @@ use crate::{Operation, RainDbIterator, DB};
 use super::errors::CompactionWorkerResult;
 use super::manifest::CompactionManifest;
 use super::state::CompactionState;
+use super::ManualCompactionConfiguration;
 
 /**
 Name of the compaction thread.
@@ -175,8 +176,8 @@ impl CompactionWorker {
         }
 
         let is_manual_compaction = db_fields_guard.maybe_manual_compaction.is_some();
-        let mut manual_compaction_end_key: Option<&InternalKey> = None;
-        let mut compaction_manifest: Option<CompactionManifest> = None;
+        let mut manual_compaction_end_key: Option<InternalKey> = None;
+        let maybe_compaction_manifest: Option<CompactionManifest>;
         if is_manual_compaction {
             let compaction_level: usize;
             let compaction_range: Range<Option<InternalKey>>;
@@ -194,7 +195,7 @@ impl CompactionWorker {
                 compaction_range = manual_compaction.clone_key_range();
             }
 
-            compaction_manifest = db_fields_guard
+            maybe_compaction_manifest = db_fields_guard
                 .version_set
                 .compact_range(compaction_level, compaction_range);
             let mut manual_compaction = db_fields_guard
@@ -202,52 +203,112 @@ impl CompactionWorker {
                 .as_ref()
                 .unwrap()
                 .lock();
-            manual_compaction.done = compaction_manifest.is_none();
-            if compaction_manifest.is_some() {
+            manual_compaction.done = maybe_compaction_manifest.is_none();
+            if maybe_compaction_manifest.is_some() {
                 manual_compaction_end_key = Some(
-                    compaction_manifest
+                    maybe_compaction_manifest
                         .as_ref()
                         .unwrap()
                         .get_compaction_level_files()
                         .last()
                         .unwrap()
-                        .largest_key(),
+                        .largest_key()
+                        .clone(),
                 );
             }
 
-            let compaction_start_string: String = match manual_compaction.begin.as_ref() {
-                Some(key) => format!("{:?}", Vec::<u8>::from(key)),
-                None => "(begin)".to_string(),
-            };
-            let compaction_end_string: String = match manual_compaction.end.as_ref() {
-                Some(key) => format!("{:?}", Vec::<u8>::from(key)),
-                None => "(end)".to_string(),
-            };
-            let manual_end_string: String = if manual_compaction.done {
-                "the specified end key".to_string()
-            } else {
-                format!(
-                    "potentially smaller key {:?}",
-                    Vec::<u8>::from(manual_compaction_end_key.as_deref().unwrap())
-                )
-            };
-            log::info!(
-                "Manual compaction requested for level {compaction_level} from {start_key} to \
-                {end_key}. Compaction will end at {manual_end_key}.",
-                compaction_level = manual_compaction.level,
-                start_key = compaction_start_string,
-                end_key = compaction_end_string,
-                manual_end_key = manual_end_string
+            CompactionWorker::log_manual_compaction_summary(
+                &manual_compaction,
+                manual_compaction_end_key.as_ref(),
             );
         } else {
             log::info!(
                 "Compaction thread proceeding with normal compaction procedure. Determining if a \
                 size triggered or seek triggered compaction is required."
             );
-            compaction_manifest = db_fields_guard.version_set.pick_compaction();
+            maybe_compaction_manifest = db_fields_guard.version_set.pick_compaction();
         }
 
-        // TODO: Actual compaction operations
+        let mut has_compaction_error = false;
+        if let Some(mut compaction_manifest) = maybe_compaction_manifest {
+            if !is_manual_compaction && compaction_manifest.is_trivial_move() {
+                // A trivial move can be performed to complete the compaction i.e. we just need to
+                // move the file to the next level
+                assert!(compaction_manifest.get_compaction_level_files().len() == 1);
+                compaction_manifest.set_change_manifest_for_trivial_move();
+                let apply_result = VersionSet::log_and_apply(
+                    db_fields_guard,
+                    &mut compaction_manifest.get_change_manifest_mut(),
+                );
+                if let Err(error) = apply_result {
+                    log::error!(
+                        "Compaction thread encountered an error while applying a trivial move. \
+                        Error: {error}",
+                        error = &error
+                    );
+                    DB::set_bad_database_state(
+                        db_state,
+                        db_fields_guard,
+                        CompactionWorkerError::VersionManifestError(error).into(),
+                    );
+                    has_compaction_error = true;
+                }
+
+                let file_to_compact = Arc::clone(
+                    compaction_manifest
+                        .get_compaction_level_files()
+                        .first()
+                        .unwrap(),
+                );
+                log::info!(
+                    "Moved file with number {file_num} ({file_size} bytes) to level \
+                    {parent_level}. Level summary: {level_summary}",
+                    file_num = file_to_compact.file_number(),
+                    file_size = file_to_compact.get_file_size(),
+                    parent_level = compaction_manifest.level(),
+                    level_summary = db_fields_guard.version_set.level_summary()
+                );
+            } else {
+                let compaction_result = CompactionWorker::compact_tables(
+                    db_state,
+                    db_fields_guard,
+                    compaction_manifest,
+                );
+
+                match compaction_result {
+                    Ok(mut compaction_state) => {
+                        CompactionWorker::cleanup_compaction(
+                            db_fields_guard,
+                            &mut compaction_state,
+                        );
+                        compaction_state
+                            .compaction_manifest_mut()
+                            .release_inputs(&mut db_fields_guard.version_set);
+                        DB::remove_obsolete_files(
+                            db_fields_guard,
+                            db_state.options.filesystem_provider(),
+                            &db_state.file_name_handler,
+                            &*db_state.table_cache,
+                        )
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "Compaction thread encountered an error while compacting tables. \
+                            Error: {error}",
+                            error = &err
+                        );
+                        DB::set_bad_database_state(db_state, db_fields_guard, err);
+                        has_compaction_error = true;
+                    }
+                }
+            }
+        }
+
+        if has_compaction_error && db_state.is_shutting_down.load(Ordering::Acquire) {
+            log::warn!(
+                "Encountered an error during compaction but ignoring since we are shutting down."
+            );
+        }
 
         if is_manual_compaction {
             /*
@@ -266,7 +327,7 @@ impl CompactionWorker {
             if !manual_compaction_guard.done {
                 // Only part of the range was compacted. Update to the part of the range that has
                 // not been compacted yet.
-                manual_compaction_guard.begin = Some(manual_compaction_end_key.unwrap().clone());
+                manual_compaction_guard.begin = Some(manual_compaction_end_key.unwrap());
             }
         }
     }
@@ -397,6 +458,10 @@ impl CompactionWorker {
             compaction_level = compaction_manifest.level(),
             num_parent_files = compaction_manifest.get_parent_level_files().len(),
             parent_level = compaction_manifest.level() + 1
+        );
+        log::info!(
+            "The level summary prior to table compaction is {level_summary}",
+            level_summary = db_fields_guard.version_set.level_summary()
         );
 
         // Assert invariants
@@ -646,5 +711,53 @@ impl CompactionWorker {
         )?;
 
         Ok(())
+    }
+
+    /// Clean up compaction artifacts that are no longer needed e.g. [`DB::tables_in_use`].
+    fn cleanup_compaction(
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        compaction_state: &mut CompactionState,
+    ) {
+        if compaction_state.has_table_builder() {
+            // A table build may still be in progress in cases like if the database was being shut
+            // down during a compaction
+            compaction_state.table_builder_mut().abandon();
+        }
+
+        // Clear outputs from tables in use
+        for file in compaction_state.get_output_files() {
+            db_fields_guard.tables_in_use.remove(&file.file_number());
+        }
+    }
+
+    /// Log a summary of changes that will be performed as part of a manual compaction
+    fn log_manual_compaction_summary(
+        manual_compaction_config: &ManualCompactionConfiguration,
+        manual_compaction_end_key: Option<&InternalKey>,
+    ) {
+        let compaction_start_string: String = match manual_compaction_config.begin.as_ref() {
+            Some(key) => format!("{:?}", Vec::<u8>::from(key)),
+            None => "(begin)".to_string(),
+        };
+        let compaction_end_string: String = match manual_compaction_config.end.as_ref() {
+            Some(key) => format!("{:?}", Vec::<u8>::from(key)),
+            None => "(end)".to_string(),
+        };
+        let manual_end_string: String = if manual_compaction_config.done {
+            "the specified end key".to_string()
+        } else {
+            format!(
+                "potentially smaller key {:?}",
+                Vec::<u8>::from(manual_compaction_end_key.unwrap())
+            )
+        };
+        log::info!(
+            "Manual compaction requested for level {compaction_level} from {start_key} to \
+            {end_key}. Compaction will end at {manual_end_key}.",
+            compaction_level = manual_compaction_config.level,
+            start_key = compaction_start_string,
+            end_key = compaction_end_string,
+            manual_end_key = manual_end_string
+        );
     }
 }
