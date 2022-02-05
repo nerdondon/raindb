@@ -2,8 +2,8 @@
 This module contains implementations of keys used to index values in the RainDB. There are two main
 keys that are used:
 
-    1. Internal keys for tracking and looking up values in the database
-    1. Metaindex keys that are used for looking up metadata in table files
+1. Internal keys for tracking and looking up values in the database
+1. Metaindex keys that are used for looking up metadata in table files
 
 # More on internal keys
 
@@ -108,6 +108,11 @@ impl InternalKey {
     /// Get a reference to operation tag for this key.
     pub(crate) fn get_operation(&self) -> Operation {
         self.operation
+    }
+
+    /// Get the sequence number for this key.
+    pub(crate) fn get_sequence_number(&self) -> u64 {
+        self.sequence_number
     }
 }
 

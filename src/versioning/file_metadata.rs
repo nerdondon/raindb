@@ -104,6 +104,17 @@ impl FileMetadata {
     }
 
     /**
+    Get a clone of the key range.
+
+    # Panics
+
+    This method will panic if there is no concrete key for the smallest key or for the largest key.
+    */
+    pub(crate) fn clone_key_range(&self) -> Range<InternalKey> {
+        self.smallest_key().clone()..self.largest_key().clone()
+    }
+
+    /**
     Get the minimal key range that covers all entries in the provided list of files.
 
     # Panics

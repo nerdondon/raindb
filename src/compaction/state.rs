@@ -91,6 +91,11 @@ impl CompactionState {
         self.table_builder.as_mut().unwrap()
     }
 
+    /// Get a reference to the current output files.
+    pub(crate) fn get_output_files(&self) -> &[FileMetadata] {
+        &self.output_files
+    }
+
     /// Get the smallest sequence number that can be dropped in a compaction.
     pub(crate) fn get_smallest_snapshot(&self) -> u64 {
         self.smallest_snapshot
