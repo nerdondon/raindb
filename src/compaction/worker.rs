@@ -1,4 +1,5 @@
 use parking_lot::MutexGuard;
+use std::collections::VecDeque;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
@@ -74,22 +75,42 @@ impl CompactionWorker {
             .spawn(move || {
                 log::info!("Compaction thread initializing.");
                 let database_state = db_state;
+                let mut task_queue: VecDeque<TaskKind> = VecDeque::new();
 
                 loop {
                     log::info!("Compaction thread waiting for tasks.");
-                    let task = receiver.recv().unwrap();
+                    let channel_task = receiver.recv().unwrap();
+                    task_queue.push_back(channel_task);
 
-                    match task {
-                        TaskKind::Compaction => {
-                            log::info!("Compaction thread receieved the compaction command.");
-                            CompactionWorker::compaction_task(&database_state);
-                        }
-                        TaskKind::Terminate => {
-                            log::info!(
+                    // FIXME: Just clone sender? Can the holder of the receiver also hold a clone of the sender?
+                    while !task_queue.is_empty() {
+                        let task = task_queue.pop_front().unwrap();
+                        match task {
+                            TaskKind::Compaction => {
+                                log::info!("Compaction thread receieved the compaction command.");
+                                if CompactionWorker::compaction_task(&database_state) {
+                                    task_queue.push_back(TaskKind::Compaction);
+                                }
+                            }
+                            TaskKind::Terminate => {
+                                log::info!(
                                 "Compaction thread receieved the termination command. Shutting \
                                 down the thread."
                             );
-                            break;
+                                break;
+                            }
+                        }
+
+                        // Check the channel for new commands before proceeding with internal
+                        // scheduled events
+                        match receiver.try_recv() {
+                            Ok(new_external_task) => {
+                                // Prioritize external tasks
+                                task_queue.push_front(new_external_task);
+                            }
+                            Err(err) => {
+                                // TODO: Handle if the error is a disconnect vs an empty buffer
+                            }
                         }
                     }
                 }
@@ -123,8 +144,14 @@ impl CompactionWorker {
     The primary entry point to start compaction.
 
     It re-checks some compaction pre-conditions and does some clean-up work at the end.
+
+    This method returns true if an additional compaction task should be scheduled.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `DBImpl::BackgroundCall`.
     */
-    fn compaction_task(db_state: &PortableDatabaseState) {
+    fn compaction_task(db_state: &PortableDatabaseState) -> bool {
         let PortableDatabaseState {
             guarded_db_fields,
             is_shutting_down,
@@ -149,10 +176,18 @@ impl CompactionWorker {
 
         db_fields_guard.background_compaction_scheduled = false;
 
+        background_work_finished_signal.notify_all();
+
         // The previous compaction may have created too many files in a level, so check and
         // schedule a compaction if needed
-        // TODO: CompactionWorker::maybe_schedule_compaction - share with db.rs
-        background_work_finished_signal.notify_all();
+        if DB::should_schedule_compaction(db_state, &mut db_fields_guard) {
+            log::info!(
+                "Determined that another compaction is necessary. Scheduling compaction task."
+            );
+            return true;
+        }
+
+        false
     }
 
     /**

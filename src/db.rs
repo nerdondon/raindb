@@ -592,54 +592,14 @@ impl DB {
                 force_compaction = false;
 
                 log::info!("Attempt to schedule a compaction of the immutable memtable");
-                self.maybe_schedule_compaction(mutex_guard);
+                if DB::should_schedule_compaction(&self.generate_portable_state(), mutex_guard) {
+                    log::info!(
+                        "Determined that compaction is necessary. Scheduling compaction task."
+                    );
+                    self.compaction_worker.schedule_task(TaskKind::Compaction);
+                }
             }
         }
-    }
-
-    /**
-    Schedule a compaction if possible.
-
-    Various conditions are checked to see if a compaction is scheduled. For example, if the
-    database is shutting down, a compaction will not be scheduled.
-
-    # Concurrency
-
-    This method requires the caller to have a lock on the guarded fields.
-    */
-    fn maybe_schedule_compaction(&self, mutex_guard: &mut MutexGuard<GuardedDbFields>) {
-        if mutex_guard.background_compaction_scheduled {
-            log::info!("A background compaction was already initiated.");
-            return;
-        }
-
-        if self.is_shutting_down.load(Ordering::Acquire) {
-            log::info!("The database is shutting down. Will not schedule a background compaction.");
-            return;
-        }
-
-        if mutex_guard.maybe_bad_database_state.is_some() {
-            let background_error = mutex_guard.maybe_bad_database_state.as_ref().unwrap();
-            log::error!(
-                "Detected a sticky background error (potentially from previous compaction \
-                attempts). Error: {}",
-                background_error
-            );
-
-            return;
-        }
-
-        if mutex_guard.maybe_immutable_memtable.is_none()
-            && mutex_guard.maybe_manual_compaction.is_none()
-            && !mutex_guard.version_set.needs_compaction()
-        {
-            log::info!("No compaction work detected.");
-            return;
-        }
-
-        log::info!("Determined that compaction is necessary. Scheduling compaction task.");
-        mutex_guard.background_compaction_scheduled = true;
-        self.compaction_worker.schedule_task(TaskKind::Compaction);
     }
 
     /**
@@ -827,6 +787,55 @@ impl DB {
 
         mutex_guard.maybe_bad_database_state = Some(catastrophic_error);
         db_state.background_work_finished_signal.notify_all();
+    }
+
+    /**
+    Return true if a compaction should be scheduled.
+
+    Various conditions are checked to see if a compaction is scheduled. For example, if the
+    database is shutting down, a compaction will not be scheduled.
+
+    # Legacy
+
+    This is synonomous with LevelDB's `DBImpl::MaybeScheduleCompaction` except that it only checks
+    if a compaction should be scheduled. The caller will handle scheduling the compaction
+    themselves.
+    */
+    pub(crate) fn should_schedule_compaction(
+        db_state: &PortableDatabaseState,
+        mutex_guard: &mut MutexGuard<GuardedDbFields>,
+    ) -> bool {
+        if mutex_guard.background_compaction_scheduled {
+            log::info!("A background compaction was already initiated.");
+            return false;
+        }
+
+        if db_state.is_shutting_down.load(Ordering::Acquire) {
+            log::info!("The database is shutting down. Will not schedule a background compaction.");
+            return false;
+        }
+
+        if mutex_guard.maybe_bad_database_state.is_some() {
+            let background_error = mutex_guard.maybe_bad_database_state.as_ref().unwrap();
+            log::error!(
+                "Detected a sticky background error (potentially from previous compaction \
+                attempts). Error: {}",
+                background_error
+            );
+
+            return false;
+        }
+
+        if mutex_guard.maybe_immutable_memtable.is_none()
+            && mutex_guard.maybe_manual_compaction.is_none()
+            && !mutex_guard.version_set.needs_compaction()
+        {
+            log::info!("No compaction work detected.");
+            return false;
+        }
+
+        mutex_guard.background_compaction_scheduled = true;
+        true
     }
 
     /// Convert the immutable memtable to a table file.
