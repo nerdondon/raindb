@@ -210,9 +210,6 @@ pub struct DB {
     finished.
     */
     background_work_finished_signal: Arc<Condvar>,
-
-    /// Accumulator for compaction operation statistics/metrics per level.
-    compaction_stats: [LevelCompactionStats; MAX_NUM_LEVELS],
 }
 
 /// Public methods
