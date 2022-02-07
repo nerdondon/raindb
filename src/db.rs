@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 use std::time::{self, Instant};
-use std::{io, thread};
+use std::{io, ptr, thread};
 
 use crate::batch::Batch;
 use crate::compaction::{
@@ -241,8 +241,14 @@ impl DB {
 
         // Create WAL
         let wal_file_number = 0;
-        let wal_file_path = file_name_handler.get_wal_file_path(wal_file_number);
-        let wal = LogWriter::new(Arc::clone(&fs), wal_file_path, false)?;
+        /* let wal_file_path = file_name_handler.get_wal_file_path(wal_file_number);
+        let wal = Box::new(UnsafeCell::new(LogWriter::new(
+            Arc::clone(&fs),
+            wal_file_path,
+            false,
+        )?));
+        let wal_ptr = AtomicPtr::new(Box::into_raw(wal)); */
+        let wal_ptr = AtomicPtr::new(ptr::null_mut());
 
         // Create memtable
         let memtable = Box::new(SkipListMemTable::new());
@@ -573,9 +579,15 @@ impl DB {
                 }
 
                 // Replace old WAL state fields with new WAL values
-                let mut new_wal_writer = UnsafeCell::new(maybe_wal_writer.unwrap());
-                self.wal
-                    .store(&mut new_wal_writer as *mut _, Ordering::Release);
+                let new_wal_writer = Box::new(UnsafeCell::new(maybe_wal_writer.unwrap()));
+                let old_wal_ptr = self
+                    .wal
+                    .swap(Box::into_raw(new_wal_writer), Ordering::AcqRel);
+                // Box the old WAL reader again to drop the memory
+                let _old_wal = unsafe {
+                    // SAFETY: The WAL is never null after the database has been initialized.
+                    Box::from_raw(old_wal_ptr)
+                };
                 mutex_guard.curr_wal_file_number = new_wal_number;
 
                 log::info!("Create a new memtable and make it active.");
@@ -1146,5 +1158,15 @@ impl DB {
                 }
             }
         });
+    }
+}
+
+impl Drop for DB {
+    fn drop(&mut self) {
+        // Clean-up WAL pointer
+        let _wal = unsafe {
+            // SAFETY: The WAL pointer is never null after `DB` has been initialized.
+            Box::from_raw(self.wal.load(Ordering::SeqCst))
+        };
     }
 }
