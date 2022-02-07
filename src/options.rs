@@ -75,6 +75,12 @@ pub struct DbOptions {
     **This defaults to an 8 MiB internal cache if not set.**
     */
     block_cache: Arc<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>>,
+
+    /// If true, the database will be created if it is missing.
+    create_if_missing: bool,
+
+    /// If true, an error is raised if the database already exists.
+    error_if_exists: bool,
 }
 
 /// Public methods
@@ -108,6 +114,16 @@ impl DbOptions {
     pub fn block_cache(&self) -> Arc<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>> {
         Arc::clone(&self.block_cache)
     }
+
+    /// Returns true if we should create the database if it is missing.
+    pub fn create_if_missing(&self) -> bool {
+        self.create_if_missing
+    }
+
+    /// Get a reference to the db options's error if exists.
+    pub fn error_if_exists(&self) -> bool {
+        self.error_if_exists
+    }
 }
 
 impl Default for DbOptions {
@@ -125,6 +141,8 @@ impl Default for DbOptions {
             block_cache: Arc::new(LRUCache::<BlockCacheKey, Arc<DataBlockReader>>::new(
                 8 * 1024 * 1024,
             )),
+            create_if_missing: false,
+            error_if_exists: false,
         }
     }
 }
