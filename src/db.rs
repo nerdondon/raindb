@@ -23,7 +23,6 @@ use crate::config::{
 };
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::{FileNameHandler, ParsedFileType};
-use crate::file_names::{DATA_DIR, WAL_DIR};
 use crate::fs::FileSystem;
 use crate::key::InternalKey;
 use crate::logs::LogWriter;
@@ -214,7 +213,8 @@ pub struct DB {
 
 /// Public methods
 impl DB {
-    pub fn open(options: DbOptions) -> RainDBResult<()> {
+    /// Open a database with the specified options.
+    pub fn open(options: DbOptions) -> RainDBResult<DB> {
         log::info!(
             "Initializing raindb with the following options {:#?}",
             options
@@ -222,19 +222,14 @@ impl DB {
 
         let fs = options.filesystem_provider();
         let db_path = options.db_path();
-        let file_name_handler = FileNameHandler::new(db_path.to_string());
+        let file_name_handler = Arc::new(FileNameHandler::new(db_path.to_string()));
 
-        // Create DB root directory
-        log::info!("Creating DB root directory at {}.", &db_path);
-        let root_path = PathBuf::from(&db_path);
-        let mut wal_path = PathBuf::from(&db_path);
-        wal_path.push(WAL_DIR);
-        let mut data_path = PathBuf::from(&db_path);
-        data_path.push(DATA_DIR);
+        log::info!("Creating DB root directory at {}.", db_path);
+        fs.create_dir_all(&file_name_handler.get_db_path())?;
 
-        fs.create_dir_all(&root_path)?;
-        fs.create_dir(&wal_path)?;
-        fs.create_dir(&data_path)?;
+        log::info!("Creating supporting database paths.");
+        fs.create_dir(&file_name_handler.get_wal_dir())?;
+        fs.create_dir(&file_name_handler.get_data_dir())?;
 
         // Create WAL
         let wal_file_number = 0;
@@ -248,17 +243,58 @@ impl DB {
         let wal_ptr = AtomicPtr::new(ptr::null_mut());
 
         // Create memtable
-        let memtable = Box::new(SkipListMemTable::new());
+        let memtable: Arc<Box<dyn MemTable>> = Arc::new(Box::new(SkipListMemTable::new()));
+        let memtable_ptr = ArcSwap::from(memtable);
+
+        // Create table cache
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+
+        // Initialize guarded fields
+        let guarded_fields = Arc::new(Mutex::new(GuardedDbFields {
+            curr_wal_file_number: wal_file_number,
+            background_compaction_scheduled: false,
+            maybe_bad_database_state: None,
+            maybe_manual_compaction: None,
+            writer_queue: VecDeque::new(),
+            maybe_immutable_memtable: None,
+            compaction_stats: Default::default(),
+            version_set: VersionSet::new(options.clone(), Arc::clone(&table_cache)),
+            tables_in_use: HashSet::new(),
+            snapshots: SnapshotList::new(),
+        }));
+
+        // Set up database fields that should also be portable
+        let is_shutting_down = Arc::new(AtomicBool::new(false));
+        let has_immutable_memtable = Arc::new(AtomicBool::new(false));
+        let background_work_finished_signal = Arc::new(Condvar::new());
 
         // Start compaction service
+        let portable_state = PortableDatabaseState {
+            options: options.clone(),
+            file_name_handler: Arc::clone(&file_name_handler),
+            table_cache: Arc::clone(&table_cache),
+            guarded_db_fields: Arc::clone(&guarded_fields),
+            is_shutting_down: Arc::clone(&is_shutting_down),
+            has_immutable_memtable: Arc::clone(&has_immutable_memtable),
+            background_work_finished_signal: Arc::clone(&background_work_finished_signal),
+        };
+        let compaction_worker = CompactionWorker::new(portable_state)?;
 
-        /* Ok(DB {
+        let db = DB {
             options,
-            wal,
-            memtable,
+            db_lock: None,
+            memtable_ptr,
+            wal: wal_ptr,
+            table_cache,
+            guarded_fields,
             file_name_handler,
-        }) */
-        Ok(())
+            is_shutting_down,
+            has_immutable_memtable,
+            compaction_worker,
+            background_work_finished_signal,
+        };
+
+        Ok(db)
     }
 
     pub fn get(&self, read_options: ReadOptions, key: &Vec<u8>) {
