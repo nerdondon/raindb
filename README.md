@@ -29,16 +29,21 @@ See the [docs](./docs) folder for more information on architecture and design.
 
 ## Pedigree
 
-The work here builds heavily on the existing work of [LevelDB](https://github.com/golang/leveldb)
-and [RocksDB](https://github.com/facebook/rocksdb). A big thank you goes to the creators for making
-so much of their design documentation available along side the code itself. Because of the heavy
-basis in these projects, some of the options and documentation is pulled from these projects.
+The work here builds heavily on the existing work of [LevelDB](https://github.com/golang/leveldb). A
+big thank you goes to the creators for making so much of their design documentation available along
+side the code itself. Because of the heavy basis in these projects, some of the options and
+documentation is pulled from these projects.
 
 Inspiration was also drawn from the [Go port of LevelDB](https://github.com/golang/leveldb) and
 [dermesser's Rust port](https://github.com/dermesser/leveldb-rs).
 
+A `Legacy` heading will be present in doc comments where tactical decisions were made to differ from
+LevelDB. This can include name changes so that parallels can still be drawn between RainDB and
+LevelDB.
+
 ### Other art
 
+- [RocksDB](https://github.com/facebook/rocksdb)
 - [Pebble (Go)](https://github.com/cockroachdb/pebble)
 - [kezhuw/leveldb (Go)](https://github.com/kezhuw/leveldb)
 
