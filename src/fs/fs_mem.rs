@@ -8,7 +8,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+use super::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile, UnlockableFile};
+use super::FileLock;
 
 /// File system implementation that is backed by memory.
 pub struct InMemoryFileSystem {
@@ -139,6 +140,10 @@ impl FileSystem for InMemoryFileSystem {
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         self.open_mem_file(path)?.len()
+    }
+
+    fn lock_file(&self, path: &Path) -> io::Result<super::FileLock> {
+        Ok(FileLock::new(Box::new(self.open_mem_file(path)?)))
     }
 }
 
@@ -297,5 +302,12 @@ impl RandomAccessFile for LockableInMemoryFile {
         let mut file = self.0.write();
         file.contents.extend_from_slice(buf);
         Ok(buf.len())
+    }
+}
+
+impl UnlockableFile for LockableInMemoryFile {
+    fn unlock(&self) -> io::Result<()> {
+        // Treat as a no-op
+        Ok(())
     }
 }

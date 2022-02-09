@@ -9,7 +9,7 @@ Rust [`std::fs`] library which already abstracts POSIX and Windows file system o
 */
 
 mod traits;
-pub use self::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+pub use self::traits::{FileLock, FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
 
 mod fs_disk;
 pub use self::fs_disk::{OsFileSystem, TmpFileSystem};
