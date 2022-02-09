@@ -142,6 +142,14 @@ impl FileNameHandler {
         buf
     }
 
+    /// Resolve the path to the LOCK file.
+    pub(crate) fn get_lock_file_path(&self) -> PathBuf {
+        let mut buf = PathBuf::from(&self.db_path);
+        buf.set_file_name(LOCK_FILE);
+
+        buf
+    }
+
     /**
     Attempts to determine the RainDB file type and file number (if any) from the provided path.
 

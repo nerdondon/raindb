@@ -74,10 +74,59 @@ pub trait FileSystem: Send + Sync {
 
     /// Get the size of the file or directory at the specified path.
     fn get_file_size(&self, path: &Path) -> Result<u64>;
+
+    /**
+    Place an exclusive lock on the file at the specified path.
+
+    This lock can only be relied on to be advisory. For POSIX, an `flock()` is used.
+
+    # Legacy
+
+    The use of the `flock` instead of `fcntl` in POSIX environments differs from LevelDB (uses
+    `fcntl`). This is primarily because of laziness (can't say I'm not honest) since the `fs2`
+    crate from Rust uses `flock`. I have a blog post [here] with some notes about the differences.
+
+    [here]: https://www.nerdondon.com/posts/2021-10-17-flock-vs-fcntl/
+    */
+    fn lock_file(&self, path: &Path) -> Result<FileLock>;
 }
 
 impl Debug for dyn FileSystem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.get_name())
     }
+}
+
+/**
+An opaque handle for locked files.
+
+The underlying file will be dropped when the handle is dropped.
+*/
+pub struct FileLock {
+    inner: Box<dyn UnlockableFile>,
+}
+
+impl FileLock {
+    /// Create a new instance of [`FileLock`].
+    pub fn new(file: Box<dyn UnlockableFile>) -> Self {
+        Self { inner: file }
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        if let Err(unlock_error) = self.inner.unlock() {
+            log::error!(
+                "There was an error trying to release the database lock during shutdown. Error: \
+                {error}",
+                error = unlock_error
+            );
+        }
+    }
+}
+
+/// A file that can be unlocked.
+pub trait UnlockableFile {
+    /// Unlock the file.
+    fn unlock(&self) -> Result<()>;
 }

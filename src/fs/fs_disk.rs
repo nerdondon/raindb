@@ -2,13 +2,15 @@
 This module contains file system wrappers for disk-based file systems.
 */
 
+use fs2::FileExt;
 use parking_lot::Mutex;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-use super::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+use super::traits::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile, UnlockableFile};
+use super::FileLock;
 
 impl ReadonlyRandomAccessFile for File {
     #[cfg(target_family = "windows")]
@@ -35,6 +37,12 @@ impl RandomAccessFile for File {
         // Seek to the end first
         self.seek(SeekFrom::End(0))?;
         self.write(buf)
+    }
+}
+
+impl UnlockableFile for File {
+    fn unlock(&self) -> io::Result<()> {
+        fs2::FileExt::unlock(self)
     }
 }
 
@@ -114,6 +122,18 @@ impl FileSystem for OsFileSystem {
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         Ok(self.open_disk_file(path)?.metadata()?.len())
+    }
+
+    fn lock_file(&self, path: &Path) -> io::Result<FileLock> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        file.lock_exclusive()?;
+
+        Ok(FileLock::new(Box::new(file)))
     }
 }
 
@@ -218,6 +238,18 @@ impl FileSystem for TmpFileSystem {
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         Ok(self.open_tmp_file(path)?.metadata()?.len())
+    }
+
+    fn lock_file(&self, path: &Path) -> io::Result<FileLock> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        file.lock_exclusive()?;
+
+        Ok(FileLock::new(Box::new(file)))
     }
 }
 
