@@ -11,6 +11,7 @@ use crate::compaction::CompactionWorkerError;
 use crate::tables::errors::BuilderError;
 use crate::tables::errors::ReadError;
 use crate::versioning;
+use crate::versioning::errors::RecoverError;
 
 // TODO: consider using snafu (https://docs.rs/snafu/0.6.10/snafu/guide/index.html) to have less boilerplate
 
@@ -47,6 +48,9 @@ pub enum RainDBError {
     /// Variant for errors encountered while reading from a version.
     VersionRead(versioning::errors::ReadError),
 
+    /// Variant for errors encountered while recovering verison state from persistent storage.
+    VersionRecovery(versioning::errors::RecoverError),
+
     /// Variant for errors encountered during compaction.
     Compaction(CompactionWorkerError),
 
@@ -72,6 +76,7 @@ impl fmt::Display for RainDBError {
             RainDBError::TableBuild(base_err) => write!(f, "{}", base_err),
             RainDBError::Write(base_err) => write!(f, "{}", base_err),
             RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
+            RainDBError::VersionRecovery(base_err) => write!(f, "{}", base_err),
             RainDBError::Compaction(base_err) => write!(f, "{}", base_err),
             RainDBError::KeyParsing(base_err) => write!(f, "{}", base_err),
             RainDBError::PathResolution(base_err) => write!(f, "{}", base_err),
@@ -107,6 +112,12 @@ impl From<BuilderError> for RainDBError {
 impl From<CompactionWorkerError> for RainDBError {
     fn from(err: CompactionWorkerError) -> Self {
         RainDBError::Compaction(err)
+    }
+}
+
+impl From<RecoverError> for RainDBError {
+    fn from(err: RecoverError) -> Self {
+        RainDBError::VersionRecovery(err)
     }
 }
 

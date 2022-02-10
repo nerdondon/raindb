@@ -13,6 +13,9 @@ pub type ReadResult<T> = Result<T, ReadError>;
 /// Alias for a [`Result`] that wraps [`WriteError`].
 pub type WriteResult<T> = Result<T, WriteError>;
 
+/// Alias for a [`Result`] that wraps [`RecoverError`].
+pub type RecoverResult<T> = Result<T, RecoverError>;
+
 /// Errors that can result from a read operation.
 #[derive(Clone, Debug)]
 pub enum ReadError {
@@ -74,5 +77,61 @@ pub enum ManifestWriteErrorKind {
 impl From<LogIOError> for WriteError {
     fn from(err: LogIOError) -> Self {
         WriteError::ManifestWrite(ManifestWriteErrorKind::LogIO(err))
+    }
+}
+
+/// Errors that can result from a recovery operation.
+#[derive(Clone, Debug)]
+pub enum RecoverError {
+    /// Variant for issues reading and parsing the CURRENT file.
+    CurrentFileRead(CurrentFileReadErrorKind),
+
+    /// Variant for issues reading the manifest file.
+    ManifestRead(LogIOError),
+
+    /**
+    Variant for parsing issues with [`VersionChangeManifest`].
+
+    [`VersionChangeManifest`]: super::version_manifest::VersionChangeManifest
+    */
+    ManifestParse(String),
+
+    /// Variant for issues where manifest values are parsed correctly but do not have valid data.
+    ManifestCorruption(String),
+}
+
+/// Enum to describe various kinds of errors when reading the CURRENT file
+#[derive(Clone, Debug)]
+pub enum CurrentFileReadErrorKind {
+    /// Variant for IO errors reading the file from disk.
+    IO(DBIOError),
+
+    /// Variant for CURRENT file parsing errors.
+    Parse(String),
+}
+
+impl std::error::Error for RecoverError {}
+
+impl fmt::Display for RecoverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RecoverError::CurrentFileRead(base_err) => {
+                write!(f, "{base_err:?}", base_err = base_err)
+            }
+            RecoverError::ManifestRead(base_err) => {
+                write!(f, "{base_err}", base_err = base_err)
+            }
+            RecoverError::ManifestParse(base_err) => {
+                write!(
+                    f,
+                    "There was an error parsing the manifest record read from disk. Error: \
+                    {base_err}",
+                    base_err = base_err
+                )
+            }
+            RecoverError::ManifestCorruption(base_err) => {
+                write!(f, "{base_err}", base_err = base_err)
+            }
+        }
     }
 }
