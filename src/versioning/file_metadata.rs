@@ -7,7 +7,7 @@ use integer_encoding::VarIntWriter;
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
 use crate::key::InternalKey;
 use crate::utils::comparator::Comparator;
-use crate::utils::write_io::WriteHelpers;
+use crate::utils::io::WriteHelpers;
 
 /// Metadata about an SSTable file.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
