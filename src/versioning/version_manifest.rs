@@ -1,11 +1,13 @@
-use integer_encoding::VarIntWriter;
+use integer_encoding::{VarInt, VarIntReader, VarIntWriter};
 use std::collections::HashSet;
 use std::io::Write;
 use std::ops::Range;
 
+use crate::config::MAX_NUM_LEVELS;
 use crate::key::InternalKey;
-use crate::utils::io::WriteHelpers;
+use crate::utils::io::{ReadHelpers, WriteHelpers};
 
+use super::errors::{RecoverError, RecoverResult};
 use super::file_metadata::FileMetadata;
 
 /// Represents a file to be deleted at a specified level.
@@ -113,12 +115,32 @@ impl VersionChangeManifest {
     /// Mark the specified file to be deleted in at the specified level.
     pub(crate) fn remove_file(&mut self, level: usize, file_number: u64) {
         self.deleted_files
-            .insert(DeletedFile { level, file_number });
+            .insert(DeletedFile::new(level, file_number));
     }
 
     /// Add a compaction pointer to the change manifest.
     pub(crate) fn add_compaction_pointer(&mut self, level: usize, key: InternalKey) {
         self.compaction_pointers.push((level, key));
+    }
+}
+
+/// Private methods
+impl VersionChangeManifest {
+    /// Parse a level from the provided byte buffer.
+    fn parse_level(buf: &[u8]) -> Option<ParseLevelResult> {
+        match u32::decode_var(buf) {
+            Some((level, bytes_read)) => {
+                if (level as usize) < MAX_NUM_LEVELS {
+                    Some(ParseLevelResult {
+                        level: level as usize,
+                        bytes_read,
+                    })
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
     }
 }
 
@@ -137,11 +159,21 @@ impl Default for VersionChangeManifest {
     }
 }
 
+/// An aggregate value returned from attempts to parse a level from a buffer.
+struct ParseLevelResult {
+    /// The parsed level.
+    level: usize,
+
+    /// The number of bytes read from the input buffer to parse the level.
+    bytes_read: usize,
+}
+
 /**
 Tags to mark fields in the manifest serialization format.
 
 These tags are written to disk and should not be changed.
 */
+#[derive(Debug)]
 #[repr(u32)]
 enum ManifestFieldTags {
     Comparator = 1,
@@ -157,6 +189,32 @@ enum ManifestFieldTags {
     */
     LargeValueRef = 8,
     PrevWALNumber = 9,
+}
+
+impl TryFrom<u32> for ManifestFieldTags {
+    type Error = RecoverError;
+
+    fn try_from(value: u32) -> RecoverResult<ManifestFieldTags> {
+        let tag = match value {
+            1 => ManifestFieldTags::Comparator,
+            2 => ManifestFieldTags::CurrentWALNumber,
+            3 => ManifestFieldTags::CurrentFileNumber,
+            4 => ManifestFieldTags::PrevSequenceNumber,
+            5 => ManifestFieldTags::CompactionPointer,
+            6 => ManifestFieldTags::DeletedFile,
+            7 => ManifestFieldTags::NewFile,
+            8 => ManifestFieldTags::LargeValueRef,
+            9 => ManifestFieldTags::PrevWALNumber,
+            _ => {
+                return Err(RecoverError::ManifestParse(format!(
+                    "Found an unknown tag. The value received was {}",
+                    value
+                )))
+            }
+        };
+
+        Ok(tag)
+    }
 }
 
 impl From<&VersionChangeManifest> for Vec<u8> {
@@ -213,5 +271,128 @@ impl From<&VersionChangeManifest> for Vec<u8> {
         }
 
         buf
+    }
+}
+
+impl TryFrom<&[u8]> for VersionChangeManifest {
+    type Error = RecoverError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        let mut version_manifest = VersionChangeManifest::default();
+        // Store the field tag if there were issues parsing the field value
+        let mut maybe_err_tag: Option<ManifestFieldTags> = None;
+        let mut index: usize = 0;
+        while maybe_err_tag.is_none() && !value.is_empty() {
+            match u32::decode_var(&value[index..]) {
+                Some((tag, tag_bytes_read)) => {
+                    index += tag_bytes_read;
+                    match ManifestFieldTags::try_from(tag)? {
+                        ManifestFieldTags::Comparator => {
+                            maybe_err_tag = Some(ManifestFieldTags::Comparator);
+                        }
+                        ManifestFieldTags::CurrentWALNumber => {
+                            match u64::decode_var(&value[index..]) {
+                                Some((field_val, value_bytes_read)) => {
+                                    version_manifest.wal_file_number = Some(field_val);
+                                    index += value_bytes_read;
+                                }
+                                None => {
+                                    maybe_err_tag = Some(ManifestFieldTags::CurrentWALNumber);
+                                }
+                            }
+                        }
+                        ManifestFieldTags::CurrentFileNumber => {
+                            match u64::decode_var(&value[index..]) {
+                                Some((field_val, value_bytes_read)) => {
+                                    version_manifest.curr_file_number = Some(field_val);
+                                    index += value_bytes_read;
+                                }
+                                None => {
+                                    maybe_err_tag = Some(ManifestFieldTags::CurrentFileNumber);
+                                }
+                            }
+                        }
+                        ManifestFieldTags::PrevSequenceNumber => {
+                            match u64::decode_var(&value[index..]) {
+                                Some((field_val, value_bytes_read)) => {
+                                    version_manifest.prev_sequence_number = Some(field_val);
+                                    index += value_bytes_read;
+                                }
+                                None => {
+                                    maybe_err_tag = Some(ManifestFieldTags::PrevSequenceNumber);
+                                }
+                            }
+                        }
+                        ManifestFieldTags::CompactionPointer => {
+                            if let Some(ParseLevelResult {
+                                level,
+                                bytes_read: level_bytes_read,
+                            }) = VersionChangeManifest::parse_level(&value[index..])
+                            {
+                                index += level_bytes_read;
+
+                                continue;
+                            }
+
+                            maybe_err_tag = Some(ManifestFieldTags::CompactionPointer);
+                        }
+                        ManifestFieldTags::DeletedFile => match u64::decode_var(&value[index..]) {
+                            Some((field_val, value_bytes_read)) => {
+                                index += value_bytes_read;
+                            }
+                            None => {
+                                maybe_err_tag = Some(ManifestFieldTags::DeletedFile);
+                            }
+                        },
+                        ManifestFieldTags::NewFile => match u64::decode_var(&value[index..]) {
+                            Some((field_val, value_bytes_read)) => {
+                                index += value_bytes_read;
+                            }
+                            None => {
+                                maybe_err_tag = Some(ManifestFieldTags::NewFile);
+                            }
+                        },
+                        ManifestFieldTags::LargeValueRef => {
+                            maybe_err_tag = Some(ManifestFieldTags::Comparator);
+                        }
+                        ManifestFieldTags::PrevWALNumber => {
+                            match u64::decode_var(&value[index..]) {
+                                Some((field_val, value_bytes_read)) => {
+                                    version_manifest.prev_wal_file_number = Some(field_val);
+                                    index += value_bytes_read;
+                                }
+                                None => {
+                                    maybe_err_tag = Some(ManifestFieldTags::PrevWALNumber);
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(RecoverError::ManifestParse(format!(
+                                "Found an unexpected tag: {tag}. There is no handler for this tag \
+                                type. Read {total_bytes_read} bytes.",
+                                tag = tag,
+                                total_bytes_read = index
+                            )));
+                        }
+                    }
+                }
+                None => {
+                    return Err(RecoverError::ManifestParse(format!(
+                        "Failed to parse the field tag. Read {} bytes.",
+                        index
+                    )));
+                }
+            }
+        }
+
+        if let Some(err_tag) = maybe_err_tag {
+            return Err(RecoverError::ManifestParse(format!(
+                "Failed to parse the value for the field: {field_tag:?}. Read {bytes_read} bytes.",
+                field_tag = err_tag,
+                bytes_read = index
+            )));
+        }
+
+        Ok(version_manifest)
     }
 }
