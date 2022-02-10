@@ -4,7 +4,7 @@ use std::io::Write;
 use std::ops::Range;
 
 use crate::key::InternalKey;
-use crate::utils::write_io::WriteHelpers;
+use crate::utils::io::WriteHelpers;
 
 use super::file_metadata::FileMetadata;
 
