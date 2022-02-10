@@ -1,13 +1,15 @@
 use std::cmp::Ordering;
+use std::io::Read;
 use std::ops::Range;
 use std::sync::Arc;
+use std::{io, u8};
 
-use integer_encoding::VarIntWriter;
+use integer_encoding::{VarIntReader, VarIntWriter};
 
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
 use crate::key::InternalKey;
 use crate::utils::comparator::Comparator;
-use crate::utils::io::WriteHelpers;
+use crate::utils::io::{ReadHelpers, WriteHelpers};
 
 /// Metadata about an SSTable file.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -175,6 +177,36 @@ impl FileMetadata {
 
         smallest..largest
     }
+
+    /// Deserialize the contents of the provided reader to a [`FileMetadata`] instance.
+    pub(crate) fn deserialize<R: Read>(reader: &mut R) -> io::Result<FileMetadata> {
+        let file_number = reader.read_varint::<u64>()?;
+        let mut file = FileMetadata::new(file_number);
+        let smallest_key = match InternalKey::try_from(reader.read_length_prefixed_slice()?) {
+            Ok(key) => key,
+            Err(base_err) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    base_err.to_string(),
+                ))
+            }
+        };
+        let largest_key = match InternalKey::try_from(reader.read_length_prefixed_slice()?) {
+            Ok(key) => key,
+            Err(base_err) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    base_err.to_string(),
+                ))
+            }
+        };
+
+        file.set_file_size(reader.read_varint::<u64>()?);
+        file.set_smallest_key(Some(smallest_key));
+        file.set_largest_key(Some(largest_key));
+
+        Ok(file)
+    }
 }
 
 /// Comparator that orders [`FileMetadata`] instances by their `smallest_key` field.
@@ -208,5 +240,13 @@ impl From<&FileMetadata> for Vec<u8> {
             .unwrap();
 
         buf
+    }
+}
+
+impl TryFrom<&[u8]> for FileMetadata {
+    type Error = io::Error;
+
+    fn try_from(mut value: &[u8]) -> Result<Self, Self::Error> {
+        FileMetadata::deserialize(&mut value)
     }
 }
