@@ -202,7 +202,7 @@ impl LogWriter {
 
     /// Append `data` to the log.
     pub fn append(&mut self, data: &[u8]) -> LogIOResult<()> {
-        let mut data_to_write = &data[..];
+        let mut data_to_write = data;
         let mut is_first_data_chunk = true;
 
         while !data_to_write.is_empty() {
@@ -319,8 +319,7 @@ impl LogReader {
     Construct a new [`LogReader`].
 
     * `fs`- The wrapped file system to use for I/O.
-    * `db_path` - The absolute path where the database files reside.
-    * `file_number` - The file number of the log.
+    * `log_file_path` - The absolute path to the log file.
     * `initial_block_offset` - An initial offset to start reading the log file from.
     */
     pub fn new<P: AsRef<Path>>(
@@ -342,9 +341,16 @@ impl LogReader {
         Ok(reader)
     }
 
-    /// Read a record from the log file.
+    /**
+    Read a record from the log file.
+
+    If the end of the log file has been reached, this method will return an empty [`Vec`].
+    */
     pub fn read_record(&mut self) -> LogIOResult<Vec<u8>> {
-        self.current_cursor_position += self.seek_to_initial_block()? as usize;
+        if self.current_cursor_position < self.initial_offset {
+            self.current_cursor_position += self.seek_to_initial_block()? as usize;
+        }
+
         // A buffer consolidating all of the fragments retrieved from the log file.
         let mut data_buffer: Vec<u8> = vec![];
 
