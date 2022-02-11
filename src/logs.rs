@@ -351,6 +351,12 @@ impl LogReader {
             self.current_cursor_position += self.seek_to_initial_block()? as usize;
         }
 
+        if self.current_cursor_position > 0
+            && (self.current_cursor_position as u64) == self.log_file.len()?
+        {
+            return Ok(vec![]);
+        }
+
         // A buffer consolidating all of the fragments retrieved from the log file.
         let mut data_buffer: Vec<u8> = vec![];
 
