@@ -362,6 +362,66 @@ impl DB {
     }
 
     /**
+    Initialize fields and database structures for a new database.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `DBImpl::NewDB`.
+    */
+    fn initialize_as_new_db(&mut self) -> RainDBResult<()> {
+        let new_db_manifest = VersionChangeManifest {
+            curr_file_number: Some(1),
+            prev_sequence_number: Some(0),
+            ..VersionChangeManifest::default()
+        };
+
+        let manifest_file_number = 1;
+        let manifest_path = self
+            .file_name_handler
+            .get_manifest_file_path(manifest_file_number);
+        let mut manifest_writer = LogWriter::new(
+            self.options.filesystem_provider(),
+            manifest_path.clone(),
+            false,
+        )?;
+        match manifest_writer.append(&Vec::<u8>::from(&new_db_manifest)) {
+            Ok(_) => {
+                DB::set_current_file(
+                    self.options.filesystem_provider(),
+                    &self.file_name_handler,
+                    manifest_file_number,
+                )?;
+            }
+            Err(error) => {
+                log::error!(
+                    "There was an error writing database state to the manifest file at \
+                    {manifest_path:?}. Stopping database initialization and attempting to clean \
+                    up. Error: {error}",
+                    manifest_path = &manifest_path,
+                    error = &error
+                );
+
+                let cleanup_result = self
+                    .options
+                    .filesystem_provider()
+                    .remove_file(&manifest_path);
+                if let Err(cleanup_err) = cleanup_result {
+                    log::error!(
+                        "Failed to clean up manifest file. Ignoring and returning original \
+                        manifest log error. The error encountered during clean-up was \
+                        {cleanup_err}",
+                        cleanup_err = cleanup_err
+                    );
+                }
+
+                return Err(error.into());
+            }
+        }
+
+        Ok(())
+    }
+
+    /**
     Apply changes contained in the write batch. The requesting thread is queued if there are
     multiple write requests.
 
