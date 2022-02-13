@@ -77,7 +77,7 @@ pub(crate) struct VersionSet {
     versions: LinkedList<Version>,
 
     /// The most up to date version.
-    current_version: Option<SharedNode<Version>>,
+    current_version: SharedNode<Version>,
 
     /// Per-level keys at which the next compaction at that level should start.
     compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS],
@@ -98,24 +98,34 @@ pub(crate) struct VersionSet {
 /// Public methods
 impl VersionSet {
     /// Create a new instance of [`VersionSet`].
-    pub fn new(options: DbOptions, table_cache: TableCache) -> Self {
+    pub fn new(options: DbOptions, table_cache: Arc<TableCache>) -> Self {
         let filesystem_provider = options.filesystem_provider();
-        let versions = LinkedList::<Version>::new();
         let file_name_handler = Arc::new(FileNameHandler::new(options.db_path().to_string()));
+
+        let mut versions = LinkedList::<Version>::new();
+        let prev_sequence_number: u64 = 0;
+        let curr_wal_number: u64 = 0;
+        let base_version = Version::new(
+            options.clone(),
+            &table_cache,
+            prev_sequence_number,
+            curr_wal_number,
+        );
+        let current_version = versions.push(base_version);
 
         Self {
             options,
             filesystem_provider,
             file_name_handler,
-            table_cache: Arc::new(table_cache),
+            table_cache,
             curr_file_number: 1,
             // This will be updated by [`VersionSet::recover`]
             manifest_file_number: 0,
-            prev_sequence_number: 0,
-            curr_wal_number: 0,
+            prev_sequence_number,
+            curr_wal_number,
             prev_wal_number: None,
             versions,
-            current_version: None,
+            current_version,
             compaction_pointers: Default::default(),
             maybe_manifest_file: None,
         }
@@ -125,8 +135,11 @@ impl VersionSet {
     pub fn num_files_at_level(&self, level: usize) -> usize {
         // We have a shared reference to `self` so the `current_version` field cannot have been
         // uninstalled or released.
-        let current_version = self.current_version.as_ref().unwrap();
-        let num_files = current_version.read().element.num_files_at_level(level);
+        let num_files = self
+            .current_version
+            .read()
+            .element
+            .num_files_at_level(level);
 
         num_files
     }
@@ -193,8 +206,7 @@ impl VersionSet {
     pub fn needs_compaction(&self) -> bool {
         // We have a shared reference to `self` so the `current_version` field cannot have been
         // uninstalled or released.
-        let curr_version_handle = self.current_version.as_ref().unwrap();
-        let curr_version = &curr_version_handle.read().element;
+        let curr_version = &self.current_version.read().element;
         if curr_version.get_size_compaction_metadata().is_some()
             && curr_version
                 .get_size_compaction_metadata()
@@ -240,7 +252,8 @@ impl VersionSet {
     (re-)opened.
     */
     pub fn get_current_version(&self) -> SharedNode<Version> {
-        self.current_version.as_ref().unwrap().clone()
+        Arc::clone(&self.current_version)
+    }
     }
 
     /**
@@ -559,7 +572,7 @@ impl VersionSet {
         }
 
         if change_manifest.prev_wal_file_number.is_none() {
-            change_manifest.prev_wal_file_number = version_set.prev_wal_number.clone();
+            change_manifest.prev_wal_file_number = version_set.prev_wal_number;
         }
 
         log::info!(
@@ -572,7 +585,7 @@ impl VersionSet {
         change_manifest.prev_sequence_number = Some(version_set.prev_sequence_number);
         let current_version = version_set.get_current_version();
         let mut version_builder = VersionBuilder::new(current_version);
-        version_builder.accumulate_changes(&change_manifest);
+        version_builder.accumulate_changes(change_manifest);
         let mut new_version = version_builder.apply_changes(&mut version_set.compaction_pointers);
         new_version.finalize();
 
