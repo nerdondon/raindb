@@ -33,6 +33,9 @@ pub enum RainDBError {
     /// Variant for errors stemming from log file operations.
     Log(LogIOError),
 
+    /// Variant for errors stemming from database recovery operations.
+    Recovery(String),
+
     /// Variant for errors stemming from operating on the table cache.
     TableCache(String),
 
@@ -48,7 +51,7 @@ pub enum RainDBError {
     /// Variant for errors encountered while reading from a version.
     VersionRead(versioning::errors::ReadError),
 
-    /// Variant for errors encountered while recovering verison state from persistent storage.
+    /// Variant for errors encountered while recovering version state from persistent storage.
     VersionRecovery(versioning::errors::RecoverError),
 
     /// Variant for errors encountered during compaction.
@@ -71,6 +74,7 @@ impl fmt::Display for RainDBError {
         match self {
             RainDBError::IO(base_err) => write!(f, "{}", base_err),
             RainDBError::Log(base_err) => write!(f, "{}", base_err),
+            RainDBError::Recovery(base_err) => write!(f, "{}", base_err),
             RainDBError::TableCache(base_err) => write!(f, "{}", base_err),
             RainDBError::TableRead(base_err) => write!(f, "{}", base_err),
             RainDBError::TableBuild(base_err) => write!(f, "{}", base_err),
@@ -192,11 +196,17 @@ pub struct DBIOError {
 
 /// Crate-only methods
 impl DBIOError {
+    /// Create a new instance of [`DBIOError`].
     pub(crate) fn new(error_kind: io::ErrorKind, custom_message: String) -> Self {
         Self {
             error_kind,
             custom_message,
         }
+    }
+
+    /// Get the [`io::ErrorKind`].
+    pub(crate) fn kind(&self) -> io::ErrorKind {
+        self.error_kind
     }
 }
 

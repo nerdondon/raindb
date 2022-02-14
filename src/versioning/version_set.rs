@@ -1,5 +1,7 @@
 use std::collections::HashSet;
+use std::io;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, MutexGuard};
@@ -7,16 +9,19 @@ use parking_lot::{Mutex, MutexGuard};
 use crate::compaction::manifest::CompactionManifest;
 use crate::config::MAX_NUM_LEVELS;
 use crate::db::GuardedDbFields;
-use crate::file_names::FileNameHandler;
+use crate::errors::LogIOError;
+use crate::file_names::{FileNameHandler, ParsedFileType};
 use crate::fs::FileSystem;
 use crate::key::InternalKey;
-use crate::logs::LogWriter;
+use crate::logs::{LogReader, LogWriter};
 use crate::table_cache::TableCache;
 use crate::utils::linked_list::{LinkedList, SharedNode};
-use crate::versioning::errors::{ManifestWriteErrorKind, WriteError};
+use crate::versioning::errors::{
+    CurrentFileReadErrorKind, ManifestWriteErrorKind, RecoverError, WriteError,
+};
 use crate::{DbOptions, DB};
 
-use super::errors::WriteResult;
+use super::errors::{RecoverResult, WriteResult};
 use super::file_metadata::FileMetadata;
 use super::version::{Version, VersionBuilder};
 use super::VersionChangeManifest;
@@ -150,6 +155,13 @@ impl VersionSet {
         self.curr_file_number
     }
 
+    // Mark the specified file number as used`.
+    pub fn mark_file_number_used(&mut self, file_number: u64) {
+        if self.curr_file_number <= file_number {
+            self.curr_file_number = file_number;
+        }
+    }
+
     /**
     Reuse a file number.
 
@@ -254,6 +266,176 @@ impl VersionSet {
     pub fn get_current_version(&self) -> SharedNode<Version> {
         Arc::clone(&self.current_version)
     }
+
+    /**
+    Load version information saved stored in the manifest file on persistent storage.
+
+    Returns true if the existing manifest file was reused.
+    */
+    pub fn recover(&mut self) -> RecoverResult<bool> {
+        let filesystem = self.options.filesystem_provider();
+        let current_file_path = self.file_name_handler.get_current_file_path();
+        let mut current_file = match filesystem.open_file(&current_file_path) {
+            Ok(file) => file,
+            Err(err) => {
+                return Err(RecoverError::CurrentFileRead(CurrentFileReadErrorKind::IO(
+                    err.into(),
+                )))
+            }
+        };
+        let mut current_file_contents = String::new();
+        if let Err(read_err) = current_file.read_to_string(&mut current_file_contents) {
+            return Err(RecoverError::CurrentFileRead(
+                CurrentFileReadErrorKind::Parse(read_err.to_string()),
+            ));
+        }
+
+        if current_file_contents.is_empty() || !current_file_contents.ends_with('\n') {
+            let error_msg = format!(
+                "The CURRENT file ({file_size} bytes) was either empty or did not have a newline \
+                at the end.",
+                file_size = current_file_contents.len()
+            );
+            log::error!("{}", &error_msg);
+
+            return Err(RecoverError::CurrentFileRead(
+                CurrentFileReadErrorKind::Parse(error_msg),
+            ));
+        }
+
+        current_file_contents.truncate(current_file_contents.len() - 1);
+        let manifest_file_number = match current_file_contents.parse::<u64>() {
+            Ok(file_num) => file_num,
+            Err(parse_err) => {
+                let err_msg = format!(
+                    "There was an error parsing the file number from the CURRENT file. Error: \
+                    {err}",
+                    err = parse_err
+                );
+                log::error!("{}", &err_msg);
+                return Err(RecoverError::CurrentFileRead(
+                    CurrentFileReadErrorKind::Parse(err_msg),
+                ));
+            }
+        };
+        let manifest_file_path = self
+            .file_name_handler
+            .get_manifest_file_path(manifest_file_number);
+        let manifest_reader_result =
+            LogReader::new(Arc::clone(&filesystem), &manifest_file_path, 0);
+        if let Err(LogIOError::IO(manifest_read_err)) = &manifest_reader_result {
+            if manifest_read_err.kind() == io::ErrorKind::NotFound {
+                let err_msg = "The CURRENT file points at a non-existent manifest file.";
+                log::error!("{}", err_msg);
+                return Err(RecoverError::CurrentFileRead(
+                    CurrentFileReadErrorKind::Parse(err_msg.to_string()),
+                ));
+            }
+        }
+        let mut manifest_reader = match manifest_reader_result {
+            Ok(reader) => reader,
+            Err(error) => return Err(RecoverError::ManifestRead(error)),
+        };
+
+        // Aggregate state from manifest file to apply back to the version set
+        let mut maybe_curr_file_num: Option<u64> = None;
+        let mut maybe_prev_sequence: Option<u64> = None;
+        let mut maybe_curr_wal_num: Option<u64> = None;
+        let mut maybe_prev_wal_num: Option<u64> = None;
+        let mut version_builder = VersionBuilder::new(self.get_current_version());
+
+        let mut manifest_record: Vec<u8> = vec![];
+        let mut maybe_manifest_read_error: Option<RecoverError> = None;
+        let mut manifest_records_read: usize = 0;
+        match manifest_reader.read_record() {
+            Ok(record) => manifest_record = record,
+            Err(log_err) => maybe_manifest_read_error = Some(RecoverError::ManifestRead(log_err)),
+        }
+
+        while maybe_manifest_read_error.is_none() && !manifest_record.is_empty() {
+            manifest_records_read += 1;
+            match VersionChangeManifest::try_from(manifest_record.as_slice()) {
+                Err(err) => {
+                    maybe_manifest_read_error = Some(err);
+                    break;
+                }
+                Ok(version_manifest) => {
+                    version_builder.accumulate_changes(&version_manifest);
+
+                    // Update aggregate state
+                    if version_manifest.wal_file_number.is_some() {
+                        maybe_curr_wal_num = version_manifest.wal_file_number;
+                    }
+
+                    if version_manifest.prev_wal_file_number.is_some() {
+                        maybe_prev_wal_num = version_manifest.prev_wal_file_number
+                    }
+
+                    if version_manifest.curr_file_number.is_some() {
+                        maybe_curr_file_num = version_manifest.curr_file_number
+                    }
+
+                    if version_manifest.prev_sequence_number.is_some() {
+                        maybe_prev_sequence = version_manifest.prev_sequence_number
+                    }
+                }
+            }
+        }
+
+        if maybe_manifest_read_error.is_none() {
+            if maybe_curr_file_num.is_none() {
+                maybe_manifest_read_error = Some(RecoverError::ManifestParse(
+                    "The current file number was not found in any manifest entries.".to_string(),
+                ));
+            } else if maybe_curr_wal_num.is_none() {
+                maybe_manifest_read_error = Some(RecoverError::ManifestParse(
+                    "The current WAL file number was not found in any manifest entries."
+                        .to_string(),
+                ));
+            } else if maybe_prev_sequence.is_none() {
+                maybe_manifest_read_error = Some(RecoverError::ManifestParse(
+                    "The most recently used sequence number was not found in any manifest entries."
+                        .to_string(),
+                ));
+            }
+
+            if maybe_prev_wal_num.is_none() {
+                maybe_prev_wal_num = Some(0);
+            }
+
+            self.mark_file_number_used(maybe_prev_wal_num.clone().unwrap());
+            self.mark_file_number_used(maybe_curr_wal_num.clone().unwrap_or(0));
+        }
+
+        if let Some(read_err) = maybe_manifest_read_error {
+            log::error!(
+                "There was an error loading database state from disk. Read {num_records_read} \
+                manifest records. Error {manifest_read_error}",
+                num_records_read = manifest_records_read,
+                manifest_read_error = &read_err
+            );
+
+            return Err(read_err);
+        }
+
+        let mut recovered_version = version_builder.apply_changes(&mut self.compaction_pointers);
+        recovered_version.finalize();
+        self.append_new_version(recovered_version);
+
+        self.curr_file_number = maybe_curr_file_num.unwrap();
+        self.manifest_file_number = self.get_new_file_number();
+        self.prev_sequence_number = maybe_prev_sequence.unwrap();
+        self.curr_wal_number = maybe_curr_wal_num.unwrap();
+        self.prev_wal_number = maybe_prev_wal_num;
+
+        // Drop the manifest reader (and therefore the underlying file handle) before attempting to
+        // reuse the existing manifest file
+        drop(manifest_reader);
+        if self.maybe_reuse_manifest(&manifest_file_path) {
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     /**
@@ -287,8 +469,7 @@ impl VersionSet {
                     version_set.prev_sequence_number
                 );
 
-                let version_handle = version_set.versions.push(new_version);
-                version_set.current_version = Some(version_handle);
+                version_set.append_new_version(new_version);
                 version_set.curr_wal_number = change_manifest.wal_file_number.unwrap();
                 version_set.prev_wal_number = change_manifest.prev_wal_file_number;
             }
@@ -533,8 +714,66 @@ impl VersionSet {
     }
 }
 
+/// Crate-only methods
+impl VersionSet {
+    /// Add a new version to the version set.
+    fn append_new_version(&mut self, new_version: Version) {
+        self.current_version = self.versions.push(new_version);
+    }
+}
+
 /// Private methods
 impl VersionSet {
+    /**
+    If possible, reuse the existing manifest file. Returns true if the manifest was reused.
+
+    # Panics
+
+    This method will panic if the version set is already using a manifest file.
+    */
+    fn maybe_reuse_manifest(&mut self, manifest_path: &Path) -> bool {
+        log::info!(
+            "Checking if the manifest at the provided path can be reused. Provided path: {path:?}",
+            path = manifest_path
+        );
+        if let Ok(ParsedFileType::ManifestFile(_manifest_number)) =
+            FileNameHandler::get_file_type_from_name(manifest_path)
+        {
+            if let Ok(file_size) = self
+                .options
+                .filesystem_provider()
+                .get_file_size(manifest_path)
+            {
+                // Use a new manifest file if the current one is too large
+                if file_size >= self.options.max_file_size() {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        assert!(self.maybe_manifest_file.is_none());
+        log::info!("Attempting to reuse the existing manifest file.");
+        match LogWriter::new(self.options.filesystem_provider(), manifest_path, true) {
+            Ok(manifest_writer) => {
+                self.maybe_manifest_file = Some(Arc::new(Mutex::new(manifest_writer)));
+
+                true
+            }
+            Err(manifest_err) => {
+                log::error!(
+                    "Encountered an error attempting to reuse the existing manifest file. \
+                    Ignoring and signalling creation of new manifest file. Error: {err}",
+                    err = manifest_err
+                );
+                false
+            }
+        }
+    }
+
     /**
     Get a new version by applying the supplied changes to the current version.
 
