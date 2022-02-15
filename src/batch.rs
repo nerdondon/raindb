@@ -8,10 +8,13 @@ number is also associated with the operation. The sequence number is a global, m
 increasing 64-bit unsigned int. It is never reset.
 */
 
-use integer_encoding::{FixedInt, VarInt};
+use integer_encoding::{FixedInt, FixedIntReader, VarInt, VarIntReader};
+use std::io::Read;
 use std::slice::Iter;
 
+use crate::errors::RainDBError;
 use crate::key::Operation;
+use crate::utils::io::ReadHelpers;
 
 /**
 Element of a batch operation.
@@ -63,7 +66,8 @@ impl BatchElement {
 impl BatchElement {
     /// Create a new instance of [`BatchElement`].
     pub(crate) fn new(operation: Operation, user_key: Vec<u8>, value: Option<Vec<u8>>) -> Self {
-        // Size = 1 byte for the operation + size of the user key + size of value + 8 byte sequence number
+        // Size =
+        //  1 byte for the operation + size of the user key + size of value + 8 byte sequence number
         let value_size = value.as_ref().map_or(0, |val| val.len());
         let size = 1 + user_key.len() + value_size + 8;
 
@@ -104,6 +108,25 @@ impl From<&BatchElement> for Vec<u8> {
     }
 }
 
+impl TryFrom<&[u8]> for BatchElement {
+    type Error = RainDBError;
+
+    fn try_from(mut buf: &[u8]) -> Result<Self, Self::Error> {
+        let mut raw_operation: [u8; 1] = [0; 1];
+        buf.read_exact(&mut raw_operation)?;
+        let operation = Operation::try_from(raw_operation[0])?;
+        let user_key = buf.read_length_prefixed_slice()?;
+
+        let value: Option<Vec<u8>> = if operation == Operation::Put {
+            Some(buf.read_length_prefixed_slice()?)
+        } else {
+            None
+        };
+
+        Ok(BatchElement::new(operation, user_key, value))
+    }
+}
+
 /**
 A set of operations to perform atomically.
 
@@ -118,7 +141,7 @@ let batch = Batch::new();
 batch
     .add_put("key".into(), "v1".into())
     .add_delete("key".into())
-    .add_put("key".into(), "v2".into());
+    .add_put("key".into(), "v2".into())
     .add_put("key".into(), "v3".into());
 
 // The value of "key" will be "v3" when the batch is applied to the database.
@@ -162,7 +185,7 @@ impl Batch {
     */
     pub fn add_put(&mut self, key: Vec<u8>, value: Vec<u8>) -> &mut Self {
         let batch_element = BatchElement::new(Operation::Put, key, Some(value));
-        self.operations.push(batch_element);
+        self.add_operation(batch_element);
 
         self
     }
@@ -174,7 +197,7 @@ impl Batch {
     */
     pub fn add_delete(&mut self, key: Vec<u8>) -> &mut Self {
         let batch_element = BatchElement::new(Operation::Delete, key, None);
-        self.operations.push(batch_element);
+        self.add_operation(batch_element);
 
         self
     }
@@ -234,6 +257,11 @@ impl Batch {
         self.operations
             .extend_from_slice(batch_to_append.iter().as_slice());
     }
+
+    /// Append an operation.
+    pub(crate) fn add_operation(&mut self, batch_element: BatchElement) {
+        self.operations.push(batch_element);
+    }
 }
 
 impl From<&Batch> for Vec<u8> {
@@ -248,5 +276,22 @@ impl From<&Batch> for Vec<u8> {
         }
 
         buf
+    }
+}
+
+impl TryFrom<&[u8]> for Batch {
+    type Error = RainDBError;
+
+    fn try_from(mut buf: &[u8]) -> Result<Self, Self::Error> {
+        let mut batch = Batch::new();
+        let starting_seq_num: u64 = buf.read_fixedint()?;
+        batch.set_starting_seq_number(starting_seq_num);
+
+        let num_operations: u32 = buf.read_varint()?;
+        for _ in 0..num_operations {
+            batch.add_operation(BatchElement::try_from(buf)?);
+        }
+
+        Ok(batch)
     }
 }
