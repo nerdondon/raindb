@@ -23,6 +23,14 @@ pub trait MemTable: Send + Sync {
 
     /// Return a [`RainDbIterator`] over the contents of the memtable.
     fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_>;
+
+    /// Returns the number of entries in the memtable.
+    fn len(&self) -> usize;
+
+    /// Returns if the memtable is empty.
+    fn is_empty(&self) -> bool {
+        self.len() < 1
+    }
 }
 
 /// A memtable that is backed by a skiplist.
@@ -63,6 +71,10 @@ impl MemTable for SkipListMemTable {
             store: &self.store,
             current_node: self.store.first_node(),
         })
+    }
+
+    fn len(&self) -> usize {
+        self.store.len()
     }
 }
 
