@@ -343,6 +343,25 @@ impl DB {
         unsafe { &*self.wal.load(Ordering::Acquire) }
     }
 
+    /// Set WAL state fields to provided values.
+    fn set_wal(
+        &self,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        new_wal_number: u64,
+        wal_writer: LogWriter,
+    ) {
+        let new_wal_writer = Box::new(UnsafeCell::new(wal_writer));
+        let old_wal_ptr = self
+            .wal
+            .swap(Box::into_raw(new_wal_writer), Ordering::AcqRel);
+        // Box the old WAL reader again to drop the memory
+        let _old_wal = unsafe {
+            // SAFETY: The WAL is never null after the database has been initialized.
+            Box::from_raw(old_wal_ptr)
+        };
+        db_fields_guard.curr_wal_file_number = new_wal_number;
+    }
+
     /// Get a shared reference to the memtable.
     fn memtable(&self) -> Arc<Box<dyn MemTable>> {
         self.memtable_ptr.load_full()
@@ -419,6 +438,102 @@ impl DB {
         }
 
         Ok(())
+    }
+
+    /**
+    Read and apply transactions recorded in the WAL to the database.
+
+    If `is_last_wal` is true, the method will attempt to reuse the WAL file.
+
+    This method will a tuple with a boolean set to true if a new manifest file should be used for
+    the database after recovery operations are performed and a `u64` of the last maximum sequence
+    seen during log recovery.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `DBImpl::RecoverLogFile`.
+    */
+    fn recover_wal_records(
+        &self,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+        wal_number: u64,
+        is_last_wal: bool,
+        change_manifest: &mut VersionChangeManifest,
+    ) -> RainDBResult<(bool, u64)> {
+        // Get a reader for the log file to recover
+        let wal_path = self.file_name_handler.get_wal_file_path(wal_number);
+        let mut wal_reader = LogReader::new(self.options.filesystem_provider(), &wal_path, 0)?;
+
+        // Read all WAL records and add to a memtable
+        log::info!(
+            "Recovering operations from WAL {wal_path:?}.",
+            wal_path = &wal_path
+        );
+        let mut num_compactions: usize = 0;
+        let mut memtable: Arc<Box<dyn MemTable>> = Arc::new(Box::new(SkipListMemTable::new()));
+        let mut last_sequence_number: u64 = 0;
+        let mut use_new_manifest = false;
+        let db_state = self.generate_portable_state();
+
+        let mut wal_record: Vec<u8> = wal_reader.read_record()?;
+        while !wal_record.is_empty() {
+            if wal_record.len() < 12 {
+                // Ignore transactions that do not contain any operations
+                log::warn!(
+                    "During recovery, found a log record that was too small. Size {record_size}",
+                    record_size = wal_record.len()
+                );
+            }
+
+            let transaction = Batch::try_from(wal_record.as_slice())?;
+            DB::apply_batch_to_memtable(&**memtable, &transaction);
+            let last_transaction_seq_num =
+                transaction.get_starting_seq_number().unwrap() + (transaction.len() as u64) - 1;
+            if last_transaction_seq_num > last_sequence_number {
+                last_sequence_number = last_transaction_seq_num;
+            }
+
+            // Compact the memtable if it gets filled up
+            if memtable.approximate_memory_usage() >= self.options.max_memtable_size() {
+                num_compactions += 1;
+                use_new_manifest = true;
+                DB::write_level0_table(
+                    &db_state,
+                    db_fields_guard,
+                    Arc::clone(&memtable),
+                    None,
+                    change_manifest,
+                )?;
+                memtable = Arc::new(Box::new(SkipListMemTable::new()));
+            }
+
+            wal_record = wal_reader.read_record()?;
+        }
+
+        let mut was_memtable_reused = false;
+        if is_last_wal && num_compactions == 0 {
+            log::info!("Reusing WAL file: {wal_path:?}.", wal_path = &wal_path);
+            drop(wal_reader);
+            if let Ok(wal_writer) =
+                LogWriter::new(self.options.filesystem_provider(), wal_path, true)
+            {
+                self.set_wal(db_fields_guard, wal_number, wal_writer);
+
+                if !memtable.is_empty() {
+                    self.memtable_ptr.store(memtable);
+                    was_memtable_reused = true;
+                    memtable = Arc::new(Box::new(SkipListMemTable::new()));
+                }
+            }
+        }
+
+        if !was_memtable_reused {
+            // The memtable was not reused so compact it
+            use_new_manifest = true;
+            DB::write_level0_table(&db_state, db_fields_guard, memtable, None, change_manifest)?;
+        }
+
+        Ok((use_new_manifest, last_sequence_number))
     }
 
     /**
@@ -503,7 +618,7 @@ impl DB {
                     }
 
                     // Write the changes to the memtable
-                    self.apply_batch_to_memtable(&write_batch);
+                    DB::apply_batch_to_memtable(&**self.memtable(), &write_batch);
 
                     Ok(())
                 },
@@ -516,7 +631,7 @@ impl DB {
                 DB::set_bad_database_state(
                     &self.generate_portable_state(),
                     &mut fields_mutex_guard,
-                    write_result.clone().unwrap_err().into(),
+                    write_result.clone().unwrap_err(),
                 );
             }
 
@@ -672,16 +787,7 @@ impl DB {
                 }
 
                 // Replace old WAL state fields with new WAL values
-                let new_wal_writer = Box::new(UnsafeCell::new(maybe_wal_writer.unwrap()));
-                let old_wal_ptr = self
-                    .wal
-                    .swap(Box::into_raw(new_wal_writer), Ordering::AcqRel);
-                // Box the old WAL reader again to drop the memory
-                let _old_wal = unsafe {
-                    // SAFETY: The WAL is never null after the database has been initialized.
-                    Box::from_raw(old_wal_ptr)
-                };
-                mutex_guard.curr_wal_file_number = new_wal_number;
+                self.set_wal(mutex_guard, new_wal_number, maybe_wal_writer.unwrap());
 
                 log::info!("Create a new memtable and make it active.");
                 let new_memtable: Arc<Box<dyn MemTable>> =
@@ -785,7 +891,7 @@ impl DB {
     }
 
     /// Apply the changes in the provided batch to the memtable.
-    fn apply_batch_to_memtable(&self, batch: &Batch) {
+    fn apply_batch_to_memtable(memtable: &dyn MemTable, batch: &Batch) {
         let mut curr_sequence_num = batch.get_starting_seq_number().unwrap();
         for batch_element in batch.iter() {
             let internal_key = InternalKey::new(
@@ -794,7 +900,7 @@ impl DB {
                 batch_element.get_operation(),
             );
             let value = batch_element.get_value().map_or(vec![], |val| val.to_vec());
-            self.memtable().insert(internal_key, value);
+            memtable.insert(internal_key, value);
 
             curr_sequence_num += 1;
         }
@@ -948,7 +1054,7 @@ impl DB {
         db_state: &PortableDatabaseState,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
         memtable: Arc<Box<dyn MemTable>>,
-        base_version: &SharedNode<Version>,
+        maybe_base_version: Option<&SharedNode<Version>>,
         change_manifest: &mut VersionChangeManifest,
     ) -> RainDBResult<()> {
         // Actual work starts here so get a timer for metric gathering purposes
@@ -986,10 +1092,13 @@ impl DB {
         if file_metadata.get_file_size() > 0 {
             let smallest_user_key = file_metadata.smallest_key().get_user_key();
             let largest_user_key = file_metadata.largest_key().get_user_key();
-            file_level = base_version
-                .read()
-                .element
-                .pick_level_for_memtable_output(smallest_user_key, largest_user_key);
+            if let Some(base_version) = maybe_base_version.as_ref() {
+                file_level = base_version
+                    .read()
+                    .element
+                    .pick_level_for_memtable_output(smallest_user_key, largest_user_key)
+            };
+
             // TODO: Just clone the file metadata and pass that in. make a From method for the upcoming Compaction metadata struct to file metadata so the method is reusable.
             change_manifest.add_file(
                 file_level,

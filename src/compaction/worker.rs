@@ -388,7 +388,7 @@ impl CompactionWorker {
             db_state,
             db_fields_guard,
             Arc::clone(&immutable_memtable),
-            &base_version,
+            Some(&base_version),
             &mut change_manifest,
         );
         db_fields_guard.version_set.release_version(base_version);
