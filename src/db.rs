@@ -25,14 +25,14 @@ use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::{FileNameHandler, ParsedFileType};
 use crate::fs::FileSystem;
 use crate::key::InternalKey;
-use crate::logs::LogWriter;
+use crate::logs::{LogReader, LogWriter};
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::snapshots::SnapshotList;
 use crate::table_cache::TableCache;
 use crate::tables::{Table, TableBuilder};
 use crate::utils::linked_list::SharedNode;
 use crate::versioning::file_metadata::FileMetadata;
-use crate::versioning::version::Version;
+use crate::versioning::version::{SeekChargeMetadata, Version};
 use crate::versioning::{VersionChangeManifest, VersionSet};
 use crate::writers::Writer;
 use crate::{DbOptions, RainDbIterator, ReadOptions, WriteOptions};
@@ -441,13 +441,107 @@ impl DB {
     }
 
     /**
+    Recover state from any WAL files that were not recorded to the manifest yet.
+
+    Newer WAL files may have been added in previous runs of the database without having been
+    registered in the manifest file yet.
+
+    This method returns a tuple of a [`VersionChangeManifest`] with changes recovered from disk and
+    a boolean set to true if recovery operations have changes to be saved.
+    */
+    fn recover_unrecorded_logs(
+        &self,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+    ) -> RainDBResult<(VersionChangeManifest, bool)> {
+        let min_log_num = db_fields_guard.version_set.get_curr_wal_number();
+        let potential_log_files = self.get_all_db_files()?;
+
+        let mut expected_files = db_fields_guard.version_set.get_live_files();
+        let mut logs_to_recover: Vec<u64> = Vec::with_capacity(expected_files.len());
+        for file_path in potential_log_files {
+            match FileNameHandler::get_file_type_from_name(&file_path) {
+                Ok(file_kind) => match file_kind {
+                    ParsedFileType::CurrentFile | ParsedFileType::DBLockFile => continue,
+                    ParsedFileType::TableFile(file_num)
+                    | ParsedFileType::ManifestFile(file_num)
+                    | ParsedFileType::TempFile(file_num) => {
+                        expected_files.remove(&file_num);
+                    }
+                    ParsedFileType::WriteAheadLog(file_num) => {
+                        expected_files.remove(&file_num);
+                        if file_num >= min_log_num {
+                            logs_to_recover.push(file_num);
+                        }
+                    }
+                },
+                Err(parse_err) => {
+                    log::warn!(
+                        "Encountered an unexpected file type when finding WAL files to \
+                        recover. Error: {err}",
+                        err = parse_err
+                    );
+                }
+            }
+        }
+
+        if !expected_files.is_empty() {
+            let err_msg = format!(
+                "During recovery, we found that there are {num_missing_files} missing files \
+                (i.e. not recorded in the version set's live file state). For example, \
+                {missing_file_path:?}",
+                num_missing_files = expected_files.len(),
+                missing_file_path = self
+                    .file_name_handler
+                    .get_table_file_path(*expected_files.iter().next().unwrap())
+            );
+            log::error!("{}", &err_msg);
+            return Err(RainDBError::Recovery(err_msg));
+        }
+
+        // Recover the logs in chronological order i.e. smallest file num to largest
+        logs_to_recover.sort_unstable();
+
+        // Aggregate changes to apply to the version set later
+        let mut version_change_manifest = VersionChangeManifest::default();
+        let num_wal_files = logs_to_recover.len();
+        let mut use_new_manifest = false;
+        let mut max_sequence_num_seen: u64 = 0;
+        for (log_idx, log_num) in logs_to_recover.into_iter().enumerate() {
+            let is_last_wal = log_idx == (num_wal_files - 1);
+            let (new_manifest, last_sequence_seen) = self.recover_wal_records(
+                db_fields_guard,
+                log_num,
+                is_last_wal,
+                &mut version_change_manifest,
+            )?;
+            use_new_manifest = use_new_manifest || new_manifest;
+
+            if last_sequence_seen > max_sequence_num_seen {
+                max_sequence_num_seen = last_sequence_seen;
+            }
+
+            // The previous database instance may not have updated the manifest file after
+            // allocating this log number, so we manaully update the file number counter in the
+            // version set.
+            db_fields_guard.version_set.mark_file_number_used(log_num);
+        }
+
+        if db_fields_guard.version_set.get_prev_sequence_number() < max_sequence_num_seen {
+            db_fields_guard
+                .version_set
+                .set_prev_sequence_number(max_sequence_num_seen);
+        }
+
+        Ok((version_change_manifest, use_new_manifest))
+    }
+
+    /**
     Read and apply transactions recorded in the WAL to the database.
 
     If `is_last_wal` is true, the method will attempt to reuse the WAL file.
 
-    This method will a tuple with a boolean set to true if a new manifest file should be used for
-    the database after recovery operations are performed and a `u64` of the last maximum sequence
-    seen during log recovery.
+    This method will a tuple with a boolean set to true if recovery operations have changes to be
+    saved and the maximum sequence number seen during log recovery.
 
     # Legacy
 
@@ -1360,6 +1454,17 @@ impl DB {
                 }
             }
         });
+    }
+
+    /// Return a flattened list of paths to all files under the database root.
+    fn get_all_db_files(&self) -> RainDBResult<Vec<PathBuf>> {
+        let filesystem = self.options.filesystem_provider();
+        let root_files = filesystem.list_dir(&self.file_name_handler.get_db_path())?;
+        let wal_files = filesystem.list_dir(&self.file_name_handler.get_wal_dir())?;
+        let data_files = filesystem.list_dir(&self.file_name_handler.get_data_dir())?;
+        let all_files = [root_files, wal_files, data_files].concat();
+
+        Ok(all_files)
     }
 }
 
