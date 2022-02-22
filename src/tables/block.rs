@@ -7,7 +7,7 @@ use crate::config::SIZE_OF_U32_BYTES;
 use crate::iterator::RainDbIterator;
 use crate::key::{InternalKey, RainDbKeyType};
 
-use super::errors::{ReadError, TableResult};
+use super::errors::{ReadError, TableReadResult};
 
 /// A block where the keys of entries are RainDB internal keys.
 pub type DataBlockReader = BlockReader<InternalKey>;
@@ -81,7 +81,7 @@ where
     K: RainDbKeyType,
 {
     /// Create a new instance of a [`BlockReader`].
-    pub(crate) fn new(raw_data: Vec<u8>) -> TableResult<Self> {
+    pub(crate) fn new(raw_data: Vec<u8>) -> TableReadResult<Self> {
         if raw_data.len() < SIZE_OF_U32_BYTES {
             return Err(ReadError::FailedToParse(
                 "Failed to parse restart points. The buffer is too small.".to_string(),
@@ -150,7 +150,7 @@ where
     fn deserialize_entries(
         buf: &[u8],
         restart_point_offsets: Vec<u32>,
-    ) -> TableResult<(Vec<BlockEntry<K>>, Vec<usize>)> {
+    ) -> TableReadResult<(Vec<BlockEntry<K>>, Vec<usize>)> {
         let mut block_entries: Vec<BlockEntry<K>> = vec![];
         let mut restart_point_indexes: Vec<usize> = vec![];
         let mut restart_offsets_index = 0;
@@ -259,7 +259,7 @@ where
     fn deserialize_restart_offsets(
         buf: &[u8],
         expected_num_restart_points: u32,
-    ) -> TableResult<Vec<u32>> {
+    ) -> TableReadResult<Vec<u32>> {
         if (buf.len() % SIZE_OF_U32_BYTES) != 0 {
             let error_msg = format!(
                 "Failed to parse the restart point offsets in the block. The buffer is not evenly divisible into {} bytes.",

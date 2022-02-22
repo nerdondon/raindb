@@ -1,7 +1,7 @@
 use integer_encoding::VarInt;
 use std::convert::TryFrom;
 
-use super::errors::{ReadError, TableResult};
+use super::errors::{ReadError, TableReadResult};
 
 /**
 The maximum encoded size that a `BlockHandle` can be.
@@ -48,7 +48,7 @@ impl BlockHandle {
     Returns a tuple of the deserialized block handle and the length of the range within the
     buffer that contained the block handle.
     */
-    pub fn deserialize(buf: &[u8]) -> TableResult<(BlockHandle, usize)> {
+    pub fn deserialize(buf: &[u8]) -> TableReadResult<(BlockHandle, usize)> {
         let maybe_decoded_offset = u64::decode_var(buf);
         if maybe_decoded_offset.is_none() {
             return Err(ReadError::FailedToParse(
@@ -74,7 +74,7 @@ impl BlockHandle {
 impl TryFrom<&[u8]> for BlockHandle {
     type Error = ReadError;
 
-    fn try_from(value: &[u8]) -> TableResult<BlockHandle> {
+    fn try_from(value: &[u8]) -> TableReadResult<BlockHandle> {
         let (handle, _bytes_read) = BlockHandle::deserialize(value)?;
         Ok(handle)
     }
@@ -83,7 +83,7 @@ impl TryFrom<&[u8]> for BlockHandle {
 impl TryFrom<&Vec<u8>> for BlockHandle {
     type Error = ReadError;
 
-    fn try_from(value: &Vec<u8>) -> TableResult<BlockHandle> {
+    fn try_from(value: &Vec<u8>) -> TableReadResult<BlockHandle> {
         let (handle, _bytes_read) = BlockHandle::deserialize(value)?;
         Ok(handle)
     }
