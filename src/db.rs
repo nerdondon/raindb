@@ -23,7 +23,7 @@ use crate::config::{
 };
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::{FileNameHandler, ParsedFileType};
-use crate::fs::FileSystem;
+use crate::fs::{FileLock, FileSystem};
 use crate::key::InternalKey;
 use crate::logs::{LogReader, LogWriter};
 use crate::memtable::{MemTable, SkipListMemTable};
@@ -159,6 +159,9 @@ pub(crate) struct GuardedDbFields {
 pub struct DB {
     /// Options for configuring the operation of the database.
     options: DbOptions,
+
+    /// A lock over the persistent (i.e. on disk) state of the database.
+    db_lock: Option<FileLock>,
 
     /**
     An in-memory table of key-value pairs to support quick access to recently changed values.
@@ -378,6 +381,88 @@ impl DB {
             has_immutable_memtable: Arc::clone(&self.has_immutable_memtable),
             background_work_finished_signal: Arc::clone(&self.background_work_finished_signal),
         }
+    }
+
+    /**
+    Recover database state from persistent storage. This method should only be called on database
+    initialization.
+
+    This may do a significant amount of work to recover recently logged updates (e.g. in the WAL or
+    a manifest file).
+
+    This method returns a tuple of a [`VersionChangeManifest`] with changes recovered from disk and
+    a boolean set to true if recovery operations have changes to be saved.
+
+    # Panics
+
+    This method panics if this client has already obtained a database lock.
+    */
+    fn recover(
+        &self,
+        db_fields_guard: &mut MutexGuard<GuardedDbFields>,
+    ) -> RainDBResult<(VersionChangeManifest, bool)> {
+        assert!(self.db_lock.is_none());
+
+        log::info!(
+            "Checking for uncommitted entries of persistent log files as part of initialization."
+        );
+        log::info!("Attempting to acquire database lock.");
+        let filesystem = self.options.filesystem_provider();
+        let lock_file_path = self.file_name_handler.get_lock_file_path();
+        filesystem.lock_file(&lock_file_path)?;
+
+        let current_file_path = self.file_name_handler.get_current_file_path();
+        match filesystem.open_file(&current_file_path) {
+            Err(io_error) => {
+                if let io::ErrorKind::NotFound = io_error.kind() {
+                    if self.options.create_if_missing() {
+                        log::info!(
+                            "Performing new database steps since there was no existing database \
+                            the provided path."
+                        );
+                        self.initialize_as_new_db()?;
+                    }
+                } else {
+                    let error_message =
+                        "There was an error checking for database existence. Ending initialization \
+                        because `DbOptions::create_if_missing` is false.";
+                    log::error!(
+                        "{msg} Error: {error}",
+                        msg = error_message,
+                        error = &io_error
+                    );
+                    return Err(io::Error::new(io_error.kind(), error_message).into());
+                }
+            }
+            Ok(_file) => {
+                if self.options.error_if_exists() {
+                    let error_message = format!(
+                        "The database already exists at the provided path: {db_path}. Ending \
+                        initialization because `DbOptions::error_if_exists` was set to true.",
+                        db_path = self.options.db_path()
+                    );
+                    log::error!("{msg}", msg = &error_message);
+                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, error_message).into());
+                }
+            }
+        }
+
+        /*
+        A new manifest file and version would need to be created if any of the following conditions
+        occurred
+
+        1. The version set recovery operation did NOT reuse an existing manifest file
+        2. Recovery operations caused new files to be added to the database (e.g. compactions
+           occurred during recovery)
+        */
+        let mut create_new_snapshot = !db_fields_guard.version_set.recover()?;
+
+        // Recover any unrecorded WAL files
+        let (version_manifest, should_create_new_snapshot) =
+            self.recover_unrecorded_logs(db_fields_guard)?;
+        create_new_snapshot = create_new_snapshot || should_create_new_snapshot;
+
+        Ok((version_manifest, create_new_snapshot))
     }
 
     /**
