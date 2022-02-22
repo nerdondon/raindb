@@ -18,7 +18,7 @@ use crate::{DbOptions, ReadOptions};
 use super::block::{BlockIter, BlockReader, DataBlockReader, MetaIndexBlockReader, MetaIndexKey};
 use super::block_handle::BlockHandle;
 use super::constants::{BLOCK_DESCRIPTOR_SIZE_BYTES, CRC_CALCULATOR};
-use super::errors::{ReadError, TableResult};
+use super::errors::{ReadError, TableReadResult};
 use super::filter_block::FilterBlockReader;
 use super::footer::{Footer, SIZE_OF_FOOTER_BYTES};
 
@@ -64,7 +64,10 @@ pub(crate) struct Table {
 /// Public methods
 impl Table {
     /// Open a table file and parse some initial information for iterating the file.
-    pub fn open(options: DbOptions, file: Box<dyn ReadonlyRandomAccessFile>) -> TableResult<Table> {
+    pub fn open(
+        options: DbOptions,
+        file: Box<dyn ReadonlyRandomAccessFile>,
+    ) -> TableReadResult<Table> {
         let file_length = file.len()?;
         if file_length < (SIZE_OF_FOOTER_BYTES as u64) {
             return Err(ReadError::FailedToParse(format!(
@@ -129,7 +132,7 @@ impl Table {
         &self,
         read_options: ReadOptions,
         key: &InternalKey,
-    ) -> TableResult<Option<Vec<u8>>> {
+    ) -> TableReadResult<Option<Vec<u8>>> {
         // Search the index block for the offset of a block that may or may not contain the key we
         // are looking for
         let mut index_block_iter = self.index_block.iter();
@@ -196,7 +199,7 @@ impl Table {
     fn get_data_block_reader_from_disk<K: RainDbKeyType>(
         file: &dyn ReadonlyRandomAccessFile,
         block_handle: &BlockHandle,
-    ) -> TableResult<BlockReader<K>> {
+    ) -> TableReadResult<BlockReader<K>> {
         let block_data = Table::read_block_from_disk(file, block_handle)?;
 
         BlockReader::new(block_data)
@@ -209,7 +212,7 @@ impl Table {
     fn read_block_from_disk(
         file: &dyn ReadonlyRandomAccessFile,
         block_handle: &BlockHandle,
-    ) -> TableResult<Vec<u8>> {
+    ) -> TableReadResult<Vec<u8>> {
         // Handy alias to the block size as a `usize`
         let block_data_size: usize = block_handle.get_size() as usize;
         // The total block size is the size on disk plus the descriptor size
@@ -273,7 +276,7 @@ impl Table {
         options: &DbOptions,
         file: &dyn ReadonlyRandomAccessFile,
         metaindex_block: &MetaIndexBlockReader,
-    ) -> TableResult<Option<FilterBlockReader>> {
+    ) -> TableReadResult<Option<FilterBlockReader>> {
         let filter_block_name = filter_policy::get_filter_block_name(options.filter_policy());
         let mut metaindex_block_iter = metaindex_block.iter();
         // Seek to the filter meta block
@@ -303,7 +306,7 @@ impl Table {
         &self,
         read_options: &ReadOptions,
         block_handle: &BlockHandle,
-    ) -> TableResult<Arc<DataBlockReader>> {
+    ) -> TableReadResult<Arc<DataBlockReader>> {
         // Search the block itself for the key by first checking the cache for the block
         match self.get_block_reader_from_cache(block_handle) {
             Some(cache_entry) => Ok(Arc::clone(&cache_entry.get_value())),
@@ -438,7 +441,7 @@ impl TwoLevelIterator {
         }
     }
 
-    fn init_data_block(&mut self) -> TableResult<()> {
+    fn init_data_block(&mut self) -> TableReadResult<()> {
         if !self.index_block_iter.is_valid() {
             self.maybe_data_block_iter = None;
             self.data_block_handle = None;
@@ -463,7 +466,7 @@ impl TwoLevelIterator {
     }
 
     /// Move the index iterator and data iterator forward until we find a non-empty block.
-    fn skip_empty_data_blocks_forward(&mut self) -> TableResult<()> {
+    fn skip_empty_data_blocks_forward(&mut self) -> TableReadResult<()> {
         while self.maybe_data_block_iter.is_none()
             || !self.maybe_data_block_iter.as_mut().unwrap().is_valid()
         {
@@ -495,7 +498,7 @@ impl TwoLevelIterator {
     If a data block is found, this will set the data block iterator to the last entry of the
     data block.
     */
-    fn skip_empty_data_blocks_backward(&mut self) -> TableResult<()> {
+    fn skip_empty_data_blocks_backward(&mut self) -> TableReadResult<()> {
         while self.maybe_data_block_iter.is_none()
             || !self.maybe_data_block_iter.as_ref().unwrap().is_valid()
         {

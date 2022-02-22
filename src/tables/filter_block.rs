@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::filter_policy::FilterPolicy;
 
-use super::errors::{ReadError, TableResult};
+use super::errors::{ReadError, TableReadResult};
 
 /**
 A reader for filter blocks.
@@ -42,7 +42,7 @@ impl FilterBlockReader {
     pub fn new(
         filter_policy: Arc<dyn FilterPolicy>,
         mut filter_data: Vec<u8>,
-    ) -> TableResult<Self> {
+    ) -> TableReadResult<Self> {
         if filter_data.len() < 5 {
             // There should be at least a 1 byte for the range size exponent and 4 bytes for the
             // serialized offset vector
@@ -108,7 +108,7 @@ impl FilterBlockReader {
 /// Private methods
 impl FilterBlockReader {
     /// Deserialize the offsets array.
-    fn deserialize_offsets(raw_offsets: &[u8]) -> TableResult<Vec<u32>> {
+    fn deserialize_offsets(raw_offsets: &[u8]) -> TableReadResult<Vec<u32>> {
         if raw_offsets.len() % 4 != 0 {
             return Err(ReadError::FailedToParse(
                 "Failed to parse the filter block. The offset array was malformed.".to_string(),

@@ -2,7 +2,7 @@ use integer_encoding::FixedInt;
 use std::convert::TryFrom;
 
 use super::block_handle::BlockHandle;
-use super::errors::{FooterError, ReadError, TableResult};
+use super::errors::{FooterError, ReadError, TableReadResult};
 
 /// Result that wraps [`FooterError`].
 type FooterResult<T> = Result<T, FooterError>;
@@ -73,7 +73,7 @@ impl Footer {
 impl TryFrom<&Vec<u8>> for Footer {
     type Error = ReadError;
 
-    fn try_from(value: &Vec<u8>) -> TableResult<Footer> {
+    fn try_from(value: &Vec<u8>) -> TableReadResult<Footer> {
         if value.len() != SIZE_OF_FOOTER_BYTES {
             return Err(ReadError::FailedToParse(
                 "The length of the buffer was not equal to the fixed size of a footer.".to_string(),

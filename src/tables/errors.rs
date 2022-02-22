@@ -10,7 +10,7 @@ use crate::errors::DBIOError;
 use super::footer::SIZE_OF_FOOTER_BYTES;
 
 /// Result that wraps [`ReadError`].
-pub type TableResult<T> = Result<T, ReadError>;
+pub type TableReadResult<T> = Result<T, ReadError>;
 
 /// Errors that can result from a read operation.
 #[derive(Clone, Debug)]
