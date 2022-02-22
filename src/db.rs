@@ -236,13 +236,6 @@ impl DB {
 
         // Create WAL
         let wal_file_number = 0;
-        /* let wal_file_path = file_name_handler.get_wal_file_path(wal_file_number);
-        let wal = Box::new(UnsafeCell::new(LogWriter::new(
-            Arc::clone(&fs),
-            wal_file_path,
-            false,
-        )?));
-        let wal_ptr = AtomicPtr::new(Box::into_raw(wal)); */
         let wal_ptr = AtomicPtr::new(ptr::null_mut());
 
         // Create memtable
@@ -296,6 +289,53 @@ impl DB {
             compaction_worker,
             background_work_finished_signal,
         };
+
+        // Check if records need to be recovered or initialize this as a new database
+        let mut db_fields_guard = db.guarded_fields.lock();
+        let (mut version_change_manifest, create_new_snapshot) =
+            db.recover(&mut db_fields_guard)?;
+        if db.wal.load(Ordering::Acquire).is_null() {
+            assert!(
+                db.memtable().is_empty(),
+                "The memtable must be empty if there is no backing WAL"
+            );
+            log::info!("Creating a new WAL and memtable for the database.");
+
+            let new_wal_number = db_fields_guard.version_set.get_new_file_number();
+            let new_wal_path = db.file_name_handler.get_wal_file_path(new_wal_number);
+            let new_wal_writer =
+                LogWriter::new(db.options.filesystem_provider(), new_wal_path, false)?;
+            version_change_manifest.wal_file_number = Some(new_wal_number);
+            db.set_wal(&mut db_fields_guard, new_wal_number, new_wal_writer);
+        }
+
+        if create_new_snapshot {
+            // Older logs are no longer relevant after recovery operations
+            version_change_manifest.prev_wal_file_number = None;
+            version_change_manifest.wal_file_number = Some(db_fields_guard.curr_wal_file_number);
+            if let Err(version_write_err) =
+                VersionSet::log_and_apply(&mut db_fields_guard, &mut version_change_manifest)
+            {
+                log::error!(
+                    "There was an error applying changes from recovery operations. Error: {err}",
+                    err = &version_write_err
+                );
+                return Err(RainDBError::Recovery(version_write_err.to_string()));
+            }
+        }
+
+        DB::remove_obsolete_files(
+            &mut db_fields_guard,
+            db.options.filesystem_provider(),
+            &db.file_name_handler,
+            &*db.table_cache,
+        );
+        if DB::should_schedule_compaction(&db.generate_portable_state(), &mut db_fields_guard) {
+            log::info!("Determined that compaction is necessary. Scheduling compaction task.");
+            db.compaction_worker.schedule_task(TaskKind::Compaction);
+        }
+
+        MutexGuard::unlock_fair(db_fields_guard);
 
         Ok(db)
     }
@@ -472,7 +512,7 @@ impl DB {
 
     This is synonomous to LevelDB's `DBImpl::NewDB`.
     */
-    fn initialize_as_new_db(&mut self) -> RainDBResult<()> {
+    fn initialize_as_new_db(&self) -> RainDBResult<()> {
         let new_db_manifest = VersionChangeManifest {
             curr_file_number: Some(1),
             prev_sequence_number: Some(0),
