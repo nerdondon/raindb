@@ -7,7 +7,7 @@ use crate::table_cache::TableCache;
 use crate::tables::Table;
 use crate::utils::linked_list::SharedNode;
 use crate::versioning::file_iterators::{FilesEntryIterator, MergingIterator};
-use crate::versioning::file_metadata::FileMetadata;
+use crate::versioning::file_metadata::{FileMetadata, SharedFileMetadata};
 use crate::versioning::version::Version;
 use crate::versioning::{self, VersionChangeManifest, VersionSet};
 use crate::{DbOptions, RainDbIterator, ReadOptions};
@@ -45,7 +45,7 @@ pub(crate) struct CompactionManifest {
 
     This is the `Compaction::inputs_` field in LevelDB.
     */
-    input_files: [Vec<Arc<FileMetadata>>; 2],
+    input_files: [Vec<SharedFileMetadata>; 2],
 
     /**
     Track files from grandparent level that overlap the key space of the current file being built.
@@ -54,7 +54,7 @@ pub(crate) struct CompactionManifest {
     new file should be created for compaction. We do not allow too many overlapping grandparent
     files because that can make future compactions more expensive.
     */
-    overlapping_grandparents: Vec<Arc<FileMetadata>>,
+    overlapping_grandparents: Vec<SharedFileMetadata>,
 
     /**
     The current index into the grandparent files during the generation of new table files.
@@ -119,24 +119,24 @@ impl CompactionManifest {
     }
 
     /// Set files to compact for the manifest's specified `level`.
-    pub(crate) fn set_compaction_level_files(&mut self, files_to_compact: Vec<Arc<FileMetadata>>) {
+    pub(crate) fn set_compaction_level_files(&mut self, files_to_compact: Vec<SharedFileMetadata>) {
         self.input_files[0] = files_to_compact;
     }
 
     /// Get a reference to the set of files involved at the compaction level.
-    pub(crate) fn get_compaction_level_files(&self) -> &[Arc<FileMetadata>] {
+    pub(crate) fn get_compaction_level_files(&self) -> &[SharedFileMetadata] {
         &self.input_files[0]
     }
 
     /// Get a mutable reference to the set of files involved at the compaction level.
-    pub(crate) fn get_mut_compaction_level_files(&mut self) -> &mut Vec<Arc<FileMetadata>> {
+    pub(crate) fn get_mut_compaction_level_files(&mut self) -> &mut Vec<SharedFileMetadata> {
         &mut self.input_files[0]
     }
 
     /**
     Get a reference to the set of files overlapping the compaction key range at the parent level.
     */
-    pub(crate) fn get_parent_level_files(&self) -> &[Arc<FileMetadata>] {
+    pub(crate) fn get_parent_level_files(&self) -> &[SharedFileMetadata] {
         &self.input_files[1]
     }
 
@@ -185,10 +185,10 @@ impl CompactionManifest {
 
         let optional_compaction_level_key_range =
             Some(&compaction_level_key_range.start)..Some(&compaction_level_key_range.end);
-        let parent_level_files: Vec<Arc<FileMetadata>> = input_version
+        let parent_level_files: Vec<SharedFileMetadata> = input_version
             .read()
             .element
-            .get_overlapping_files_strong(self.level + 1, optional_compaction_level_key_range);
+            .get_overlapping_compaction_inputs(self.level + 1, optional_compaction_level_key_range);
         self.input_files[1].extend(parent_level_files);
         CompactionManifest::add_boundary_inputs(
             &input_version.write().element.files[self.level + 1],
@@ -204,8 +204,10 @@ impl CompactionManifest {
         // See if we can grow the number of input files in the compaction level without adding
         // more files from the parent level
         if !self.input_files[1].is_empty() {
-            let mut expanded0_compaction_files =
-                input_version.read().element.get_overlapping_files_strong(
+            let mut expanded0_compaction_files = input_version
+                .read()
+                .element
+                .get_overlapping_compaction_inputs(
                     self.level,
                     Some(&all_files_range.start)..Some(&all_files_range.end),
                 );
@@ -226,10 +228,13 @@ impl CompactionManifest {
             if has_expanded_files && is_expanded_files_less_than_size_limit {
                 let new_compaction_range =
                     FileMetadata::get_key_range_for_files(&expanded0_compaction_files);
-                let expanded1_files = input_version.read().element.get_overlapping_files_strong(
-                    self.level + 1,
-                    Some(&new_compaction_range.start)..Some(&new_compaction_range.end),
-                );
+                let expanded1_files = input_version
+                    .read()
+                    .element
+                    .get_overlapping_compaction_inputs(
+                        self.level + 1,
+                        Some(&new_compaction_range.start)..Some(&new_compaction_range.end),
+                    );
                 CompactionManifest::add_boundary_inputs(
                     &input_version.write().element.files[self.level],
                     &mut expanded0_compaction_files,
@@ -270,8 +275,10 @@ impl CompactionManifest {
 
         // Compute the set of grandparent files that overlap this compaction
         if self.level + 2 < MAX_NUM_LEVELS {
-            self.overlapping_grandparents =
-                input_version.read().element.get_overlapping_files_strong(
+            self.overlapping_grandparents = input_version
+                .read()
+                .element
+                .get_overlapping_compaction_inputs(
                     self.level + 2,
                     Some(&all_files_range.start)..Some(&all_files_range.end),
                 );
@@ -357,7 +364,7 @@ impl CompactionManifest {
                                 error = error
                             );
 
-                            return Err(error);
+                            return Err(error.into());
                         }
                     }
                 }
@@ -388,7 +395,7 @@ impl CompactionManifest {
         // Scan to find the earliest grandparent file with a key range that overlaps the provided
         // key.
         while self.grandparent_index < self.overlapping_grandparents.len()
-            && key > self.overlapping_grandparents[self.grandparent_index].largest_key()
+            && key > &self.overlapping_grandparents[self.grandparent_index].largest_key()
         {
             if self.is_overlappping {
                 self.current_overlapping_bytes +=
@@ -458,7 +465,7 @@ impl CompactionManifest {
     In order to be considered a trivial move, there can only be one file in the compaction level.
     */
     pub(crate) fn set_change_manifest_for_trivial_move(&mut self) {
-        let file_to_compact = Arc::clone(self.get_compaction_level_files().first().unwrap());
+        let file_to_compact = self.get_compaction_level_files().first().unwrap().clone();
         self.change_manifest.add_file(
             self.level,
             file_to_compact.file_number(),
@@ -504,8 +511,8 @@ impl CompactionManifest {
     - `compaction_files` - A subset of `level_files` that will actually be compacted
     */
     fn add_boundary_inputs(
-        level_files: &[Arc<FileMetadata>],
-        compaction_files: &mut Vec<Arc<FileMetadata>>,
+        level_files: &[SharedFileMetadata],
+        compaction_files: &mut Vec<SharedFileMetadata>,
     ) {
         let maybe_largest_key = CompactionManifest::find_largest_key(compaction_files);
         if maybe_largest_key.is_none() {
@@ -521,27 +528,27 @@ impl CompactionManifest {
             }
 
             let smallest_boundary_file = maybe_smallest_boundary_file.unwrap();
-            compaction_files.push(Arc::clone(&smallest_boundary_file));
+            compaction_files.push(smallest_boundary_file.clone());
             // Use the reference stored that was just pushed to tie the reference to the lifetime
             // of `compaction_files`
-            largest_key = compaction_files.last().unwrap().largest_key();
+            largest_key = &compaction_files.last().unwrap().largest_key();
         }
     }
 
     /// Find the largest key stored in the provided files.
-    fn find_largest_key(files: &mut Vec<Arc<FileMetadata>>) -> Option<&InternalKey> {
+    fn find_largest_key(files: &mut Vec<SharedFileMetadata>) -> Option<&InternalKey> {
         if files.is_empty() {
             return None;
         }
 
         let mut largest_key = files[0].largest_key();
         for file in files.iter() {
-            if file.largest_key() > largest_key {
+            if *file.largest_key() > *largest_key {
                 largest_key = file.largest_key();
             }
         }
 
-        Some(largest_key)
+        Some(&largest_key)
     }
 
     /**
@@ -549,20 +556,21 @@ impl CompactionManifest {
     contains the same user key.
     */
     fn find_smallest_boundary_file(
-        level_files: &[Arc<FileMetadata>],
+        level_files: &[SharedFileMetadata],
         target_key: &InternalKey,
-    ) -> Option<Arc<FileMetadata>> {
-        let mut smallest_boundary_file: Option<Arc<FileMetadata>> = None;
+    ) -> Option<SharedFileMetadata> {
+        let mut smallest_boundary_file: Option<SharedFileMetadata> = None;
         for file in level_files {
-            if file.smallest_key() > target_key
+            if &*file.smallest_key() > target_key
                 && file.smallest_key().get_user_key() == target_key.get_user_key()
             {
                 if let Some(current_boundary_key) = smallest_boundary_file
                     .as_ref()
                     .map(|boundary_file| boundary_file.smallest_key())
+                    .as_deref()
                 {
-                    if file.smallest_key() < current_boundary_key {
-                        smallest_boundary_file = Some(Arc::clone(file));
+                    if *file.smallest_key() < *current_boundary_key {
+                        smallest_boundary_file = Some(file.clone());
                     }
                 }
             }
