@@ -22,7 +22,7 @@ use crate::versioning::errors::{
 use crate::{DbOptions, DB};
 
 use super::errors::{RecoverResult, WriteResult};
-use super::file_metadata::FileMetadata;
+use super::file_metadata::{FileMetadata, SharedFileMetadata};
 use super::version::{Version, VersionBuilder};
 use super::VersionChangeManifest;
 
@@ -555,11 +555,11 @@ impl VersionSet {
         level_to_compact: usize,
         key_range: Range<Option<InternalKey>>,
     ) -> Option<CompactionManifest> {
-        let mut compaction_input_files: Vec<Arc<FileMetadata>> = self
+        let mut compaction_input_files: Vec<SharedFileMetadata> = self
             .get_current_version()
             .read()
             .element
-            .get_overlapping_files_strong(
+            .get_overlapping_compaction_inputs(
                 level_to_compact,
                 key_range.start.as_ref()..key_range.end.as_ref(),
             );
@@ -643,12 +643,12 @@ impl VersionSet {
             // Pick the first file that comes after the specified compaction pointer at the level
             for file in current_version.files[level_to_compact].iter() {
                 if self.compaction_pointers[level_to_compact].is_none()
-                    || file.largest_key()
+                    || &*file.largest_key()
                         > self.compaction_pointers[level_to_compact].as_ref().unwrap()
                 {
                     compaction_manifest
                         .get_mut_compaction_level_files()
-                        .push(Arc::clone(file));
+                        .push(file.clone());
                     break;
                 }
             }
@@ -657,17 +657,19 @@ impl VersionSet {
                 // Wrap-around to the beginning of the key space
                 compaction_manifest
                     .get_mut_compaction_level_files()
-                    .push(Arc::clone(&current_version.files[level_to_compact][0]));
+                    .push(current_version.files[level_to_compact][0].clone());
             }
         } else if needs_seek_compaction {
             let seek_compaction_metadata = current_version.get_seek_compaction_metadata().unwrap();
             level_to_compact = seek_compaction_metadata.level_of_file_to_compact;
             compaction_manifest = CompactionManifest::new(&self.options, level_to_compact);
-            compaction_manifest
-                .get_mut_compaction_level_files()
-                .push(Arc::clone(
-                    seek_compaction_metadata.file_to_compact.as_ref().unwrap(),
-                ));
+            compaction_manifest.get_mut_compaction_level_files().push(
+                seek_compaction_metadata
+                    .file_to_compact
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            );
         } else {
             return None;
         }
@@ -679,7 +681,7 @@ impl VersionSet {
             let compaction_level_key_range = FileMetadata::get_key_range_for_files(
                 compaction_manifest.get_compaction_level_files(),
             );
-            let mut new_compaction_files = current_version.get_overlapping_files_strong(
+            let mut new_compaction_files = current_version.get_overlapping_compaction_inputs(
                 level_to_compact,
                 Some(&compaction_level_key_range.start)..Some(&compaction_level_key_range.end),
             );

@@ -13,7 +13,7 @@ use crate::tables::table::TwoLevelIterator;
 use crate::tables::Table;
 use crate::{RainDbIterator, ReadOptions};
 
-use super::file_metadata::FileMetadata;
+use super::file_metadata::SharedFileMetadata;
 
 /**
 Iterates over the entries in an ordered list of files.
@@ -30,7 +30,7 @@ about the potential lifetime and closure issues is mind-numbing.
 */
 pub(crate) struct FilesEntryIterator {
     /// The ordered list of files to iterate.
-    file_list: Vec<Arc<FileMetadata>>,
+    file_list: Vec<SharedFileMetadata>,
 
     /// The current index into the file list that the cursor is at.
     current_file_index: usize,
@@ -49,7 +49,7 @@ pub(crate) struct FilesEntryIterator {
 impl FilesEntryIterator {
     /// Create a new instance of [`FilesEntryIterator`].
     pub(crate) fn new(
-        file_list: Vec<Arc<FileMetadata>>,
+        file_list: Vec<SharedFileMetadata>,
         table_cache: Arc<TableCache>,
         read_options: ReadOptions,
     ) -> Self {
@@ -248,7 +248,12 @@ An iterator that merges the output of a list of iterators sorted order.
 
 This iterator does not do any sort of de-duplication.
 
-A heap is not used to merge the inputs because
+# Legacy
+
+As in LevelDB, a heap is not used to merge the inputs because the number of iterators that would be
+merged by the heap/priority queue is small. The only level where multiple iterators is created is
+level 0 which has a maximum of 12 files. This means that at most 12 + 1 iterator from the parent
+level will need to merged.
 */
 pub(crate) struct MergingIterator {
     /// The underlying iterators.

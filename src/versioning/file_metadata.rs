@@ -1,17 +1,18 @@
 use std::cmp::Ordering;
 use std::io::Read;
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use std::sync::Arc;
 use std::{io, u8};
 
 use integer_encoding::{VarIntReader, VarIntWriter};
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
 use crate::key::InternalKey;
 use crate::utils::comparator::Comparator;
 use crate::utils::io::{ReadHelpers, WriteHelpers};
 
-/// Metadata about an SSTable file.
+/// Metadata about a table file.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct FileMetadata {
     /**
@@ -23,7 +24,7 @@ pub(crate) struct FileMetadata {
     /// The globally increasing, sequential number for on-disk data files.
     file_number: u64,
 
-    /// The size of the SSTable file in bytes.
+    /// The size of a table file in bytes.
     file_size: u64,
 
     /// The smallest internal key served by the table.
@@ -127,18 +128,18 @@ impl FileMetadata {
 
     This synonomous with LevelDB's `VersionSet::GetRange`.
     */
-    pub(crate) fn get_key_range_for_files(files: &[Arc<FileMetadata>]) -> Range<InternalKey> {
+    pub(crate) fn get_key_range_for_files(files: &[SharedFileMetadata]) -> Range<InternalKey> {
         assert!(!files.is_empty());
 
-        let mut smallest: &InternalKey = files[0].smallest_key();
-        let mut largest: &InternalKey = files[0].largest_key();
+        let mut smallest: &InternalKey = &files[0].smallest_key();
+        let mut largest: &InternalKey = &files[0].largest_key();
         for file in files {
-            if file.smallest_key() < smallest {
-                smallest = file.smallest_key();
+            if &*file.smallest_key() < smallest {
+                smallest = &file.smallest_key();
             }
 
-            if file.largest_key() < largest {
-                largest = file.largest_key()
+            if &*file.largest_key() < largest {
+                largest = &file.largest_key()
             }
         }
 
@@ -157,7 +158,7 @@ impl FileMetadata {
     This synonomous with LevelDB's `VersionSet::GetRange2`.
     */
     pub(crate) fn get_key_range_for_multiple_levels(
-        multi_level_files: &[&[Arc<FileMetadata>]],
+        multi_level_files: &[&[SharedFileMetadata]],
     ) -> Range<InternalKey> {
         let first_range = FileMetadata::get_key_range_for_files(multi_level_files[0]);
         let mut smallest = first_range.start;
@@ -248,5 +249,67 @@ impl TryFrom<&[u8]> for FileMetadata {
 
     fn try_from(mut value: &[u8]) -> Result<Self, Self::Error> {
         FileMetadata::deserialize(&mut value)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SharedFileMetadata(Arc<RwLock<FileMetadata>>);
+
+/// Crate-only methods
+impl SharedFileMetadata {
+    /// Create a new instance of [`SharedFileMetadata`].
+    pub(crate) fn new(file: FileMetadata) -> Self {
+        SharedFileMetadata(Arc::new(RwLock::new(file)))
+    }
+
+    /// Get the file size.
+    pub(crate) fn get_file_size(&self) -> u64 {
+        self.0.read().get_file_size()
+    }
+
+    /**
+    Get a reference to the smallest key in the file.
+
+    # Panics
+
+    Panics if the `smallest_key` field is `None`.
+    */
+    pub(crate) fn smallest_key(&self) -> MappedRwLockReadGuard<InternalKey> {
+        RwLockReadGuard::map(self.0.read(), |file| file.smallest_key())
+    }
+
+    /**
+    Get a reference to the largest key in the file.
+
+    # Panics
+
+    Panics if the `largest_key` field is `None`.
+    */
+    pub(crate) fn largest_key(&self) -> MappedRwLockReadGuard<InternalKey> {
+        RwLockReadGuard::map(self.0.read(), |file| file.largest_key())
+    }
+
+    /// Get the file number.
+    pub(crate) fn file_number(&self) -> u64 {
+        self.0.read().file_number()
+    }
+
+    /**
+    Get a clone of the key range.
+
+    # Panics
+
+    This method will panic if there is no concrete key for the smallest key or for the largest key.
+    */
+    pub(crate) fn clone_key_range(&self) -> Range<InternalKey> {
+        self.0.read().clone_key_range()
+    }
+}
+
+impl Deref for SharedFileMetadata {
+    type Target = Arc<RwLock<FileMetadata>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
