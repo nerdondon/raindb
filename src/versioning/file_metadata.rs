@@ -1,10 +1,12 @@
 use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::ops::Range;
 use std::sync::Arc;
 use std::{io, u8};
 
 use integer_encoding::{VarIntReader, VarIntWriter};
+use parking_lot::RwLock;
 
 use crate::config::SEEK_DATA_SIZE_THRESHOLD_KIB;
 use crate::key::InternalKey;
@@ -12,13 +14,16 @@ use crate::utils::comparator::Comparator;
 use crate::utils::io::{ReadHelpers, WriteHelpers};
 
 /// Metadata about an SSTable file.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct FileMetadata {
     /**
     The number of multi-level seeks through this file that are allowed before a compaction is
     triggered.
+
+    This value is wrapped in an [`Arc`] so that we can clone the `FileMetadata`. This value should
+    never be cloned and used separately from this field. The value by itself is meaningless.
     */
-    allowed_seeks: Option<u64>,
+    allowed_seeks: Option<Arc<RwLock<i64>>>,
 
     /// The globally increasing, sequential number for on-disk data files.
     file_number: u64,
@@ -49,13 +54,16 @@ impl FileMetadata {
     /// Set file size.
     pub(crate) fn set_file_size(&mut self, file_size: u64) {
         // Allowed seeks is one seek per a configured number of bytes read in a seek
-        let mut allowed_seeks = file_size / SEEK_DATA_SIZE_THRESHOLD_KIB;
+        let mut allowed_seeks = match i64::try_from(file_size / SEEK_DATA_SIZE_THRESHOLD_KIB) {
+            Ok(val) => val,
+            Err(_) => i64::MAX,
+        };
         if allowed_seeks < 100 {
             allowed_seeks = 100;
         }
 
         self.file_size = file_size;
-        self.allowed_seeks = Some(allowed_seeks);
+        self.allowed_seeks = Some(Arc::new(RwLock::new(allowed_seeks)));
     }
 
     /// Get the file size.
@@ -100,9 +108,22 @@ impl FileMetadata {
         self.file_number
     }
 
-    /// Decrement the number of allowed seeks.
-    pub(crate) fn decrement_allowed_seeks(&mut self) {
-        self.allowed_seeks = self.allowed_seeks.map(|seeks| seeks - 1);
+    /// Get the current number of allowed seeks for this file.
+    pub(crate) fn allowed_seeks(&self) -> i64 {
+        *self.allowed_seeks.as_ref().unwrap().read()
+    }
+
+    /**
+    Decrement the number of allowed seeks by 1.
+
+    # Panics
+
+    This method will panic if the file size and thus the allowed seeks fields have not been fully
+    initialized.
+    */
+    pub(crate) fn decrement_allowed_seeks(&self) {
+        let mut allowed_seeks_guard = self.allowed_seeks.as_ref().unwrap().write();
+        *allowed_seeks_guard -= 1;
     }
 
     /**
@@ -250,3 +271,23 @@ impl TryFrom<&[u8]> for FileMetadata {
         FileMetadata::deserialize(&mut value)
     }
 }
+
+impl Hash for FileMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.file_number.hash(state);
+        self.file_size.hash(state);
+        self.smallest_key.hash(state);
+        self.largest_key.hash(state);
+    }
+}
+
+impl PartialEq for FileMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_number == other.file_number
+            && self.file_size == other.file_size
+            && self.smallest_key == other.smallest_key
+            && self.largest_key == other.largest_key
+    }
+}
+
+impl Eq for FileMetadata {}
