@@ -11,7 +11,7 @@ use crate::utils::linked_list::SharedNode;
 use crate::{compaction, DbOptions};
 
 use super::errors::ReadResult;
-use super::file_metadata::{FileMetadata, FileMetadataBySmallestKey, SharedFileMetadata};
+use super::file_metadata::{FileMetadata, FileMetadataBySmallestKey};
 use super::version_manifest::DeletedFile;
 use super::VersionChangeManifest;
 
@@ -24,7 +24,7 @@ descriptive with respect to what this struct is used for.
 #[derive(Debug)]
 pub(crate) struct SeekChargeMetadata {
     /// The file that will be charged for multi-level seeks.
-    seek_file: Option<SharedFileMetadata>,
+    seek_file: Option<Arc<FileMetadata>>,
 
     /// The level of the file being charged.
     seek_file_level: Option<usize>,
@@ -294,7 +294,7 @@ impl Version {
         &self,
         level: usize,
         key_range: Range<Option<&InternalKey>>,
-    ) -> Vec<SharedFileMetadata> {
+    ) -> Vec<&Arc<FileMetadata>> {
         assert!(level > 0);
         assert!(level <= MAX_NUM_LEVELS);
 
@@ -318,7 +318,7 @@ impl Version {
             if is_file_range_before_target || is_file_range_after_target {
                 index += 1;
             } else {
-                overlapping_files.push(current_file.clone());
+                overlapping_files.push(current_file);
 
                 if level != 0 {
                     continue;
@@ -458,7 +458,7 @@ impl Version {
     */
     fn some_file_overlaps_range(
         disjoint_sorted_files: bool,
-        files: &[SharedFileMetadata],
+        files: &[Arc<FileMetadata>],
         smallest_user_key: &[u8],
         largest_user_key: &[u8],
     ) -> bool {
@@ -542,7 +542,7 @@ pub(crate) struct VersionBuilder {
 
     This is stored in `VersionSet::Builder::LevelState` in LevelDB.
     */
-    added_files: [HashSet<FileMetadata>; MAX_NUM_LEVELS],
+    added_files: [HashSet<Arc<FileMetadata>>; MAX_NUM_LEVELS],
 
     /// Aggregated per-level keys at which the next compaction at that level should start.
     compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS],
@@ -592,7 +592,7 @@ impl VersionBuilder {
 
         // Record new files
         for (level, file) in &change_manifest.new_files {
-            let new_file = file.clone();
+            let new_file = Arc::new(file.clone());
             self.deleted_files[*level].remove(&new_file.file_number());
             self.added_files[*level].insert(new_file);
         }
@@ -636,9 +636,9 @@ impl VersionBuilder {
         let base = &self.base_version.read().element;
         let mut new_version = base.new_from_current();
         for level in 0..MAX_NUM_LEVELS {
-            let mut level_added_files: Vec<FileMetadata> = self.added_files[level]
+            let mut level_added_files: Vec<Arc<FileMetadata>> = self.added_files[level]
                 .iter()
-                .map(|file| file.clone())
+                .map(|file| Arc::clone(file))
                 .collect();
             level_added_files.sort_by(|a, b| FileMetadataBySmallestKey::compare(a, b));
 
@@ -646,8 +646,7 @@ impl VersionBuilder {
             // through this builder, but we do it again just to ensure this is the case.
             // The clone should be cheap since we are just cloning references.
             let mut sorted_base_files = base.files[level].clone();
-            sorted_base_files
-                .sort_by(|a, b| FileMetadataBySmallestKey::compare(&*a.read(), &*b.read()));
+            sorted_base_files.sort_by(|a, b| FileMetadataBySmallestKey::compare(a, b));
 
             // Merge added files and remove deleted files similar to merge algorithm in merge sort
             let mut added_files_idx = 0;
@@ -659,34 +658,24 @@ impl VersionBuilder {
             {
                 let added_file = &level_added_files[added_files_idx];
                 let base_file = &sorted_base_files[base_files_idx];
-                if FileMetadataBySmallestKey::compare(&*base_file.read(), &added_file)
-                    == Ordering::Less
-                {
-                    self.maybe_add_file(&mut new_version, level, base_file.clone());
+                if FileMetadataBySmallestKey::compare(&*base_file, &added_file) == Ordering::Less {
+                    self.maybe_add_file(&mut new_version, level, Arc::clone(base_file));
                     base_files_idx += 1;
                 } else {
-                    self.maybe_add_file(
-                        &mut new_version,
-                        level,
-                        SharedFileMetadata::new(added_file.clone()),
-                    );
+                    self.maybe_add_file(&mut new_version, level, Arc::clone(added_file));
                     added_files_idx += 1;
                 }
             }
 
             while base_files_idx < sorted_base_files.len() {
                 let base_file = &sorted_base_files[base_files_idx];
-                self.maybe_add_file(&mut new_version, level, base_file.clone());
+                self.maybe_add_file(&mut new_version, level, Arc::clone(base_file));
                 base_files_idx += 1;
             }
 
             while added_files_idx < level_added_files.len() {
                 let added_file = &level_added_files[added_files_idx];
-                self.maybe_add_file(
-                    &mut new_version,
-                    level,
-                    SharedFileMetadata::new(added_file.clone()),
-                );
+                self.maybe_add_file(&mut new_version, level, Arc::clone(added_file));
                 added_files_idx += 1;
             }
 
@@ -695,7 +684,7 @@ impl VersionBuilder {
                 for file_idx in 1..new_version.files[level].len() {
                     let prev_key_range_end = new_version.files[level][file_idx - 1].largest_key();
                     let curr_key_range_start = new_version.files[level][file_idx].smallest_key();
-                    if *prev_key_range_end >= *curr_key_range_start {
+                    if prev_key_range_end >= curr_key_range_start {
                         panic!("There was an overlapping key-range in level {} while applying changes for a new version", level);
                     }
                 }
@@ -722,7 +711,7 @@ impl VersionBuilder {
 
     This method will panic if the file to be added overlaps the previous file's key range.
     */
-    fn maybe_add_file(&self, version: &mut Version, level: usize, file: SharedFileMetadata) {
+    fn maybe_add_file(&self, version: &mut Version, level: usize, file: Arc<FileMetadata>) {
         if self.deleted_files[level].contains(&file.file_number()) {
             // Don't add the file if it is marked for deletion
             return;
@@ -732,7 +721,7 @@ impl VersionBuilder {
         if level > 0 && !files.is_empty() {
             let last_file = files.last().unwrap();
             assert!(
-                *last_file.largest_key() < *file.smallest_key(),
+                last_file.largest_key() < file.smallest_key(),
                 "Attempting to add file number {} to level {} created an overlap with file number {}.",
                 file.file_number(),
                 level,

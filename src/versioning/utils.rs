@@ -1,12 +1,17 @@
 //! Contains utilities used for various versioning operations.
 
+use std::sync::Arc;
+
 use crate::key::InternalKey;
 
-use super::file_metadata::SharedFileMetadata;
+use super::file_metadata::FileMetadata;
 
 /// Sums the file sizes for the specified vector of file metadata.
-pub(crate) fn sum_file_sizes(files: &[SharedFileMetadata]) -> u64 {
-    files.iter().map(|metadata| metadata.get_file_size()).sum()
+pub(crate) fn sum_file_sizes<F: AsRef<FileMetadata>>(files: &[F]) -> u64 {
+    files
+        .iter()
+        .map(|metadata| metadata.as_ref().get_file_size())
+        .sum()
 }
 
 /**
@@ -26,7 +31,7 @@ its largest key is greater than or equal the target). Otherwise returns `None`.
 This is synonomous with LevelDB's `leveldb::FindFile` method.
 */
 pub(crate) fn find_file_with_upper_bound_range(
-    files: &[SharedFileMetadata],
+    files: &[Arc<FileMetadata>],
     target_user_key: &InternalKey,
 ) -> Option<usize> {
     let mut left: usize = 0;
@@ -35,7 +40,7 @@ pub(crate) fn find_file_with_upper_bound_range(
         let mid: usize = (left + right) / 2;
         let file = &files[mid];
 
-        if &*file.largest_key() < target_user_key {
+        if file.largest_key() < target_user_key {
             // The largest key in the file at mid is less than the target, so the set of files
             // at or before mid are not interesting.
             left = mid + 1;
