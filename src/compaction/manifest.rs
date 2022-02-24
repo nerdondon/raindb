@@ -188,7 +188,10 @@ impl CompactionManifest {
         let parent_level_files: Vec<Arc<FileMetadata>> = input_version
             .read()
             .element
-            .get_overlapping_files_strong(self.level + 1, optional_compaction_level_key_range);
+            .get_overlapping_compaction_inputs_strong(
+                self.level + 1,
+                optional_compaction_level_key_range,
+            );
         self.input_files[1].extend(parent_level_files);
         CompactionManifest::add_boundary_inputs(
             &input_version.write().element.files[self.level + 1],
@@ -204,8 +207,10 @@ impl CompactionManifest {
         // See if we can grow the number of input files in the compaction level without adding
         // more files from the parent level
         if !self.input_files[1].is_empty() {
-            let mut expanded0_compaction_files =
-                input_version.read().element.get_overlapping_files_strong(
+            let mut expanded0_compaction_files = input_version
+                .read()
+                .element
+                .get_overlapping_compaction_inputs_strong(
                     self.level,
                     Some(&all_files_range.start)..Some(&all_files_range.end),
                 );
@@ -226,10 +231,13 @@ impl CompactionManifest {
             if has_expanded_files && is_expanded_files_less_than_size_limit {
                 let new_compaction_range =
                     FileMetadata::get_key_range_for_files(&expanded0_compaction_files);
-                let expanded1_files = input_version.read().element.get_overlapping_files_strong(
-                    self.level + 1,
-                    Some(&new_compaction_range.start)..Some(&new_compaction_range.end),
-                );
+                let expanded1_files = input_version
+                    .read()
+                    .element
+                    .get_overlapping_compaction_inputs_strong(
+                        self.level + 1,
+                        Some(&new_compaction_range.start)..Some(&new_compaction_range.end),
+                    );
                 CompactionManifest::add_boundary_inputs(
                     &input_version.write().element.files[self.level],
                     &mut expanded0_compaction_files,
@@ -270,8 +278,10 @@ impl CompactionManifest {
 
         // Compute the set of grandparent files that overlap this compaction
         if self.level + 2 < MAX_NUM_LEVELS {
-            self.overlapping_grandparents =
-                input_version.read().element.get_overlapping_files_strong(
+            self.overlapping_grandparents = input_version
+                .read()
+                .element
+                .get_overlapping_compaction_inputs_strong(
                     self.level + 2,
                     Some(&all_files_range.start)..Some(&all_files_range.end),
                 );

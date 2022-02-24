@@ -559,7 +559,7 @@ impl VersionSet {
             .get_current_version()
             .read()
             .element
-            .get_overlapping_files_strong(
+            .get_overlapping_compaction_inputs_strong(
                 level_to_compact,
                 key_range.start.as_ref()..key_range.end.as_ref(),
             );
@@ -679,10 +679,11 @@ impl VersionSet {
             let compaction_level_key_range = FileMetadata::get_key_range_for_files(
                 compaction_manifest.get_compaction_level_files(),
             );
-            let mut new_compaction_files = current_version.get_overlapping_files_strong(
-                level_to_compact,
-                Some(&compaction_level_key_range.start)..Some(&compaction_level_key_range.end),
-            );
+            let mut new_compaction_files = current_version
+                .get_overlapping_compaction_inputs_strong(
+                    level_to_compact,
+                    Some(&compaction_level_key_range.start)..Some(&compaction_level_key_range.end),
+                );
 
             // We clear the current set of compaction files first. This is ok because the previous
             // call to get overlapping files will include the original file. This is just a simple
