@@ -289,11 +289,12 @@ impl CompactionWorker {
                     has_compaction_error = true;
                 }
 
-                let file_to_compact = compaction_manifest
-                    .get_compaction_level_files()
-                    .first()
-                    .unwrap()
-                    .clone();
+                let file_to_compact = Arc::clone(
+                    compaction_manifest
+                        .get_compaction_level_files()
+                        .first()
+                        .unwrap(),
+                );
                 log::info!(
                     "Moved file with number {file_num} ({file_size} bytes) to level \
                     {parent_level}. Level summary: {level_summary}",
