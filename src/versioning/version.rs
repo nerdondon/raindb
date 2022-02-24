@@ -258,8 +258,8 @@ impl Version {
             }
 
             if level + 2 < MAX_NUM_LEVELS {
-                let files_overlapping_range: Vec<&Arc<FileMetadata>> =
-                    self.get_overlapping_files(level + 2, Some(&start_key)..Some(&end_key));
+                let files_overlapping_range = self
+                    .get_overlapping_compaction_inputs(level + 2, Some(&start_key)..Some(&end_key));
 
                 let total_overlapping_file_size =
                     super::utils::sum_file_sizes(&files_overlapping_range);
@@ -281,6 +281,9 @@ impl Version {
     /**
     Get table files at the specified level that overlap the specified key range.
 
+    This differs from just getting files overlapping a key range in that, this method will expand
+    the key range if there are overlapping files in level zero.
+
     # Panics
 
     This method can only be called on levels greater than zero and below the maximum number of
@@ -290,7 +293,7 @@ impl Version {
 
     This is synonomous to LevelDB's `Version::GetOverlappingInputs` method.
     */
-    pub(crate) fn get_overlapping_files(
+    pub(crate) fn get_overlapping_compaction_inputs(
         &self,
         level: usize,
         key_range: Range<Option<&InternalKey>>,
@@ -345,12 +348,12 @@ impl Version {
     The same as [`Version::get_overlapping_files`] but returns owned references instead of a
     reference to the `Arc`.
     */
-    pub(crate) fn get_overlapping_files_strong(
+    pub(crate) fn get_overlapping_compaction_inputs_strong(
         &self,
         level: usize,
         key_range: Range<Option<&InternalKey>>,
     ) -> Vec<Arc<FileMetadata>> {
-        self.get_overlapping_files(level, key_range)
+        self.get_overlapping_compaction_inputs(level, key_range)
             .into_iter()
             .map(|file| Arc::clone(file))
             .collect()
