@@ -230,12 +230,10 @@ impl VersionSet {
             return true;
         }
 
-        if curr_version.get_seek_compaction_metadata().is_some()
-            && curr_version
-                .get_seek_compaction_metadata()
-                .unwrap()
-                .file_to_compact
-                .is_some()
+        if curr_version
+            .get_seek_compaction_metadata()
+            .file_to_compact
+            .is_some()
         {
             // There is a file to compact due to too many seeks.
             return true;
@@ -660,7 +658,7 @@ impl VersionSet {
                     .push(Arc::clone(&current_version.files[level_to_compact][0]));
             }
         } else if needs_seek_compaction {
-            let seek_compaction_metadata = current_version.get_seek_compaction_metadata().unwrap();
+            let seek_compaction_metadata = current_version.get_seek_compaction_metadata();
             level_to_compact = seek_compaction_metadata.level_of_file_to_compact;
             compaction_manifest = CompactionManifest::new(&self.options, level_to_compact);
             compaction_manifest
