@@ -719,7 +719,10 @@ impl VersionSet {
 impl VersionSet {
     /// Add a new version to the version set.
     fn append_new_version(&mut self, new_version: Version) {
+        let old_version = self.get_current_version();
         self.current_version = self.versions.push(new_version);
+
+        self.release_version(old_version);
     }
 }
 
