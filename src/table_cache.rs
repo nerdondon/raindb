@@ -5,10 +5,10 @@ This module provides a thread-safe table cache.
 use std::fmt;
 use std::sync::Arc;
 
-use crate::errors::RainDBResult;
 use crate::file_names::FileNameHandler;
 use crate::fs::FileSystem;
 use crate::key::InternalKey;
+use crate::tables::errors::TableReadResult;
 use crate::tables::Table;
 use crate::utils::cache::LRUCache;
 use crate::DbOptions;
@@ -53,10 +53,10 @@ impl TableCache {
         read_options: ReadOptions,
         file_number: u64,
         key: &InternalKey,
-    ) -> RainDBResult<Option<Vec<u8>>> {
+    ) -> TableReadResult<Option<Vec<u8>>> {
         let table = self.find_table(file_number)?;
 
-        Ok(table.get(read_options, key)?)
+        table.get(read_options, key)
     }
 
     /// Remove the cached table reader for the given file number.
@@ -65,7 +65,7 @@ impl TableCache {
     }
 
     /// Get a reference to a cache entry of a table reader.
-    pub fn find_table(&self, file_number: u64) -> RainDBResult<Arc<Table>> {
+    pub fn find_table(&self, file_number: u64) -> TableReadResult<Arc<Table>> {
         // Check the cache for if there is already a reader and return that if there is
         let maybe_cached_table = self.cache.get(&file_number);
         if let Some(cache_entry) = maybe_cached_table {
