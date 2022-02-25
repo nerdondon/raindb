@@ -130,7 +130,7 @@ impl Table {
     */
     pub fn get(
         &self,
-        read_options: ReadOptions,
+        read_options: &ReadOptions,
         key: &InternalKey,
     ) -> TableReadResult<Option<Vec<u8>>> {
         // Search the index block for the offset of a block that may or may not contain the key we
@@ -160,7 +160,7 @@ impl Table {
             return Err(ReadError::KeyNotFound);
         }
 
-        let block_reader = self.get_block_reader(&read_options, &block_handle)?;
+        let block_reader = self.get_block_reader(read_options, &block_handle)?;
 
         // We have the block reader, now use the iterator to try to find the value for the key.
         let mut block_reader_iter = block_reader.iter();
