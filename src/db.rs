@@ -1181,7 +1181,7 @@ impl DB {
                         .filesystem_provider()
                         .remove_file(&table_file_name)?;
 
-                    return Err(error);
+                    return Err(error.into());
                 }
             }
 

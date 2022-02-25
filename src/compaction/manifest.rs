@@ -367,7 +367,7 @@ impl CompactionManifest {
                                 error = error
                             );
 
-                            return Err(error);
+                            return Err(error.into());
                         }
                     }
                 }

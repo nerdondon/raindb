@@ -50,7 +50,7 @@ impl TableCache {
     /// Get the value for the key stored in the specified table file.
     pub fn get(
         &self,
-        read_options: ReadOptions,
+        read_options: &ReadOptions,
         file_number: u64,
         key: &InternalKey,
     ) -> TableReadResult<Option<Vec<u8>>> {
