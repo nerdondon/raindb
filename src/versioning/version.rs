@@ -101,7 +101,7 @@ pub(crate) struct Version {
 
     This is updated as read requests are serviced.
     */
-    seek_compaction_metadata: Option<SeekCompactionMetadata>,
+    seek_compaction_metadata: SeekCompactionMetadata,
 
     /**
     Metadata used for scoring the necessity of compacting a version based on the size of files
@@ -141,7 +141,7 @@ impl Version {
         Self {
             db_options,
             table_cache: Arc::clone(table_cache),
-            seek_compaction_metadata: None,
+            seek_compaction_metadata: SeekCompactionMetadata::default(),
             size_compaction_metadata: None,
             files,
             last_sequence_number,
@@ -179,8 +179,8 @@ impl Version {
     }
 
     /// Get a reference to the version's seek compaction metadata.
-    pub(crate) fn get_seek_compaction_metadata(&self) -> Option<&SeekCompactionMetadata> {
-        self.seek_compaction_metadata.as_ref()
+    pub(crate) fn get_seek_compaction_metadata(&self) -> &SeekCompactionMetadata {
+        &self.seek_compaction_metadata
     }
 
     /// Get a reference to the version's size compaction metadata.
@@ -191,7 +191,7 @@ impl Version {
     /// Set the version's seek compaction metadata.
     pub(crate) fn set_seek_compaction_metadata(
         &mut self,
-        seek_compaction_metadata: Option<SeekCompactionMetadata>,
+        seek_compaction_metadata: SeekCompactionMetadata,
     ) {
         self.seek_compaction_metadata = seek_compaction_metadata;
     }
@@ -217,7 +217,7 @@ impl Version {
     /// Clones the current version while resetting compaction metadata.
     pub(crate) fn new_from_current(&self) -> Version {
         let mut new_version = self.clone();
-        new_version.set_seek_compaction_metadata(None);
+        new_version.set_seek_compaction_metadata(SeekCompactionMetadata::default());
         new_version.set_size_compaction_metadata(None);
 
         new_version
@@ -421,9 +421,9 @@ impl Version {
 
     /// Returns true if the version requires a seek triggered compaction.
     pub(crate) fn requires_seek_compaction(&self) -> bool {
-        let maybe_seek_metadata = self.get_seek_compaction_metadata();
-
-        maybe_seek_metadata.is_some() && maybe_seek_metadata.unwrap().file_to_compact.is_some()
+        self.get_seek_compaction_metadata()
+            .file_to_compact
+            .is_some()
     }
 }
 
