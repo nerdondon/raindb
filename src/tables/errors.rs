@@ -29,6 +29,9 @@ pub enum ReadError {
 
     /// Variant for errors reading the filter block.
     FilterBlock(String),
+
+    /// Variant for if a key is not found in the table.
+    KeyNotFound,
 }
 
 impl std::error::Error for ReadError {}
@@ -51,6 +54,7 @@ impl fmt::Display for ReadError {
             }
             ReadError::IO(base_err) => write!(f, "{}", base_err),
             ReadError::FilterBlock(base_err) => write!(f, "Failed attempting to read the filter block. Continuing without filters. Original error: {}", base_err),
+            ReadError::KeyNotFound => write!(f, "The specified key was not found."),
         }
     }
 }

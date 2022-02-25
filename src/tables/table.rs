@@ -157,7 +157,7 @@ impl Table {
         {
             // The key was not found in the filter so it is not in the block and hence not in the
             // table
-            return Ok(None);
+            return Err(ReadError::KeyNotFound);
         }
 
         let block_reader = self.get_block_reader(&read_options, &block_handle)?;
@@ -173,7 +173,7 @@ impl Table {
 
                 Ok(Some(value.clone()))
             }
-            None => Ok(None),
+            None => Err(ReadError::KeyNotFound),
         }
     }
 
