@@ -6,9 +6,12 @@ implementations for common errors to enable error propagation.
 use std::fmt;
 
 use crate::errors::{DBIOError, LogIOError};
+use crate::tables;
+
+use super::version::SeekChargeMetadata;
 
 /// Alias for a [`Result`] that wraps [`ReadError`].
-pub type ReadResult<T> = Result<T, ReadError>;
+pub(crate) type ReadResult<T> = Result<T, ReadError>;
 
 /// Alias for a [`Result`] that wraps [`WriteError`].
 pub type WriteResult<T> = Result<T, WriteError>;
@@ -18,12 +21,9 @@ pub type RecoverResult<T> = Result<T, RecoverError>;
 
 /// Errors that can result from a read operation.
 #[derive(Clone, Debug)]
-pub enum ReadError {
-    /// Variant for keys not found in the version.
-    KeyNotFound,
-
-    /// Variant for not having any versions.
-    NoVersionsFound,
+pub(crate) enum ReadError {
+    /// Variant for errors that occur when attempting to read a table.
+    TableRead((tables::errors::ReadError, Option<SeekChargeMetadata>)),
 }
 
 impl std::error::Error for ReadError {}
@@ -31,11 +31,12 @@ impl std::error::Error for ReadError {}
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReadError::KeyNotFound => {
-                write!(f, "The key was not found in this version.")
-            }
-            ReadError::NoVersionsFound => {
-                write!(f, "No versions were initialized in the version set.")
+            ReadError::TableRead((base_err, _)) => {
+                write!(
+                    f,
+                    "The key was not found in this version. Table read error: {}",
+                    base_err
+                )
             }
         }
     }

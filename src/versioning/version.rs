@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
@@ -8,9 +8,9 @@ use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
 use crate::table_cache::TableCache;
 use crate::utils::comparator::Comparator;
 use crate::utils::linked_list::SharedNode;
-use crate::{compaction, DbOptions};
+use crate::{compaction, tables, DbOptions, ReadOptions};
 
-use super::errors::ReadResult;
+use super::errors::{ReadError, ReadResult};
 use super::file_metadata::{FileMetadata, FileMetadataBySmallestKey};
 use super::version_manifest::DeletedFile;
 use super::VersionChangeManifest;
@@ -21,7 +21,7 @@ Metadata required to charge a file for a multi-level disk seek.
 This is analogous to [`Version::GetStats`] in LevelDB. The name used in RainDB attempts to be more
 descriptive with respect to what this struct is used for.
 */
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct SeekChargeMetadata {
     /// The file that will be charged for multi-level seeks.
     seek_file: Option<Arc<FileMetadata>>,
@@ -30,7 +30,7 @@ pub(crate) struct SeekChargeMetadata {
     seek_file_level: Option<usize>,
 }
 
-/// Public methods
+/// Crate-only methods
 impl SeekChargeMetadata {
     /// Create a new instance of [`SeekChargeMetadata`].
     pub fn new() -> Self {
@@ -39,14 +39,25 @@ impl SeekChargeMetadata {
             seek_file_level: None,
         }
     }
+
+    /// Get a strong reference to the file being charged.
+    pub(crate) fn seek_file(&self) -> Option<&Arc<FileMetadata>> {
+        self.seek_file.as_ref()
+    }
+
+    /// Get the level of the file being charged.
+    pub(crate) fn seek_file_level(&self) -> usize {
+        self.seek_file_level.unwrap()
+    }
 }
 
+/// Represents the response from a `Version::get` operation.
 pub(crate) struct GetResponse {
-    /// The found value.
-    value: Vec<u8>,
+    /// The found value, if any.
+    pub(crate) value: Option<Vec<u8>>,
 
     /// The seek charge metadata that should be applied.
-    charge_metadata: SeekChargeMetadata,
+    pub(crate) charge_metadata: SeekChargeMetadata,
 }
 
 /**
@@ -77,6 +88,15 @@ pub(crate) struct SeekCompactionMetadata {
 
     /// The level of the next file to compact.
     pub(crate) level_of_file_to_compact: usize,
+}
+
+impl Default for SeekCompactionMetadata {
+    fn default() -> Self {
+        Self {
+            file_to_compact: None,
+            level_of_file_to_compact: 0,
+        }
+    }
 }
 
 /// Version contains information that represents a point in time state of the database.
@@ -157,8 +177,49 @@ impl Version {
 
     Returns an `GetResponse` struct containing the found value and seek charge metadata.
     */
-    pub(crate) fn get(&self) -> ReadResult<GetResponse> {
-        todo!("working on it!");
+    pub(crate) fn get(
+        &self,
+        read_options: &ReadOptions,
+        key: &InternalKey,
+    ) -> ReadResult<GetResponse> {
+        let files_per_level = self.get_overlapping_files(key);
+
+        // Keep some state for charging seeks
+        let mut last_file_read: Option<&Arc<FileMetadata>> = None;
+        let mut last_level_read: usize;
+        let mut seek_charge_metadata = SeekChargeMetadata::new();
+
+        for (level, files) in files_per_level.iter().enumerate() {
+            last_level_read = level;
+            for file in files {
+                if seek_charge_metadata.seek_file.is_none() && last_file_read.is_some() {
+                    // There was more than one disk seek for this get operation. Charge the first
+                    // file read.
+                    seek_charge_metadata.seek_file = last_file_read.take().cloned();
+                    seek_charge_metadata.seek_file_level = Some(last_level_read);
+                }
+
+                last_file_read = Some(file);
+
+                match self.table_cache.get(read_options, file.file_number(), key) {
+                    Ok(maybe_val) => {
+                        return Ok(GetResponse {
+                            value: maybe_val,
+                            charge_metadata: seek_charge_metadata,
+                        })
+                    }
+                    Err(tables::errors::ReadError::KeyNotFound) => continue,
+                    Err(base_err) => {
+                        return Err(ReadError::TableRead((base_err, Some(seek_charge_metadata))))
+                    }
+                };
+            }
+        }
+
+        Ok(GetResponse {
+            value: None,
+            charge_metadata: seek_charge_metadata,
+        })
     }
 
     /**
