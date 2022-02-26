@@ -278,6 +278,46 @@ impl Version {
         level
     }
 
+    /// Get files that overlap the provided key.
+    pub(crate) fn get_overlapping_files(
+        &self,
+        target_key: &InternalKey,
+    ) -> [Vec<Arc<FileMetadata>>; MAX_NUM_LEVELS] {
+        let target_user_key = target_key.get_user_key();
+        let mut files: [Vec<Arc<FileMetadata>>; MAX_NUM_LEVELS] = Default::default();
+
+        // Get level zero files with key ranges that might include the specified key in order from
+        // newest file to oldest
+        for file in self.files[0].iter() {
+            if file.smallest_key().get_user_key() <= target_user_key
+                || file.largest_key().get_user_key() >= target_user_key
+            {
+                files[0].push(file.clone());
+            }
+        }
+        files[0].sort_by_key(|f| Reverse(f.file_number()));
+
+        // Levels greater than zero do not have files with overlapping key ranges so we can just
+        // binary search for the file containing the target key in its key range
+        for level in 1..MAX_NUM_LEVELS {
+            let level_files = &self.files[level];
+            if level_files.is_empty() {
+                continue;
+            }
+
+            let maybe_file_index =
+                super::utils::find_file_with_upper_bound_range(level_files, target_key);
+            if let Some(file_index) = maybe_file_index {
+                let file = &level_files[file_index];
+                if file.smallest_key().get_user_key() <= target_user_key {
+                    files[level].push(file.clone());
+                }
+            }
+        }
+
+        files
+    }
+
     /**
     Get table files at the specified level that overlap the specified key range.
 
