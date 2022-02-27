@@ -225,13 +225,26 @@ impl Version {
     /**
     Apply the charging metadata to the current state.
 
-    # Concurrency
-    An external lock is required to be held before exercising this method.
-
     Returns true if a new compaction may need to be triggered, false otherwise.
+
+    # Concurrency
+
+    An external lock is required to be held before exercising this method.
     */
-    pub(crate) fn update_stats(&self, charging_metadata: SeekChargeMetadata) -> ReadResult<bool> {
-        todo!("working on it!");
+    pub(crate) fn update_stats(&mut self, charging_metadata: &SeekChargeMetadata) -> bool {
+        if let Some(file_to_charge) = charging_metadata.seek_file.as_ref() {
+            file_to_charge.decrement_allowed_seeks();
+
+            if file_to_charge.allowed_seeks() <= 0
+                && self.seek_compaction_metadata.file_to_compact.is_none()
+            {
+                self.seek_compaction_metadata.file_to_compact = Some(Arc::clone(file_to_charge));
+                self.seek_compaction_metadata.level_of_file_to_compact =
+                    charging_metadata.seek_file_level.unwrap();
+            }
+        }
+
+        false
     }
 
     /// Return the number of table files at the specified level.
