@@ -136,7 +136,7 @@ where
 
     `restart_point_offsets` are the offsets to the restart points within the raw buffer.
 
-    A block is layed out in the following format on disk:
+    A block is laid out in the following format on disk:
 
     * key_num_shared_bytes: varint32
     * key_num_unshared_bytes: varint32
