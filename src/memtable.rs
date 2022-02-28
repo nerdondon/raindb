@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nerdondon_hopscotch::concurrent_skiplist::{ConcurrentSkipList, SkipNode};
 
-use crate::errors::RainDBError;
+use crate::errors::{RainDBError, RainDBResult};
 use crate::key::InternalKey;
 use crate::RainDbIterator;
 
@@ -17,9 +17,10 @@ pub trait MemTable: Send + Sync {
     /**
     Get the `value` for the given `key`.
 
-    Returns `None` if the `key` does not exist in the memtable.
+    Returns [`RainDBError::KeyNotFound`] if the `key` does not exist in the memtable. It returns
+    `None` if the key was found but was tagged as deleted.
     */
-    fn get(&self, key: &InternalKey) -> Option<&Vec<u8>>;
+    fn get(&self, key: &InternalKey) -> RainDBResult<Option<&Vec<u8>>>;
 
     /// Return a [`RainDbIterator`] over the contents of the memtable.
     fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_>;
@@ -62,8 +63,26 @@ impl MemTable for SkipListMemTable {
         unsafe { self.store.insert(key, value) }
     }
 
-    fn get(&self, key: &InternalKey) -> Option<&Vec<u8>> {
-        self.store.get(key)
+    fn get(&self, key: &InternalKey) -> RainDBResult<Option<&Vec<u8>>> {
+        // The key has a sequence number that serves as an upper bound on the recency of values that
+        // should be considered valid to return i.e. keys with a sequence number higher than
+        // provided are not valid.
+        let mut iter = self.iter();
+        iter.seek(key).unwrap();
+
+        if iter.is_valid() {
+            // We only need to check the user key since the call to `seek()` above should have
+            // skipped sequence numbers more recent than we want
+            let (current_key, _current_val) = iter.current().unwrap();
+            if current_key.get_user_key() == key.get_user_key() {
+                match current_key.get_operation() {
+                    crate::Operation::Put => return Ok(self.store.get(current_key)),
+                    crate::Operation::Delete => return Ok(None),
+                }
+            }
+        }
+
+        Err(RainDBError::KeyNotFound)
     }
 
     fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_> {
