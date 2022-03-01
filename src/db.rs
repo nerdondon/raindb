@@ -340,8 +340,100 @@ impl DB {
         Ok(db)
     }
 
-    pub fn get(&self, read_options: ReadOptions, key: &Vec<u8>) {
-        todo!("working on it!")
+    /**
+    Return the value stored at the specified `key` if it exists. Otherwise returns
+    [`RainDBError::KeyNotFound`].
+    */
+    pub fn get(&self, read_options: ReadOptions, key: &[u8]) -> RainDBResult<Vec<u8>> {
+        let mut db_fields_guard = self.guarded_fields.lock();
+        let snapshot: u64 = if let Some(snapshot_handle) = read_options.snapshot.as_ref() {
+            snapshot_handle.sequence_number()
+        } else {
+            db_fields_guard.version_set.get_prev_sequence_number()
+        };
+        let maybe_immutable_memtable = db_fields_guard.maybe_immutable_memtable.clone();
+        let current_version = db_fields_guard.version_set.get_current_version();
+
+        // Unlock mutex while reading from memtable or files
+        let mut maybe_seek_charge: Option<SeekChargeMetadata> = None;
+        let get_result = parking_lot::MutexGuard::unlocked_fair(
+            &mut db_fields_guard,
+            || -> RainDBResult<Option<Vec<u8>>> {
+                let internal_key = InternalKey::new_for_seeking(key.to_vec(), snapshot);
+
+                // Check the memtable first
+                if let Ok(maybe_value) = self.memtable().get(&internal_key) {
+                    match maybe_value {
+                        Some(value) => return Ok(Some(value.clone())),
+                        None => {
+                            // The value was deleted, as opposed to not found, so we stop
+                            // processing
+                            return Ok(None);
+                        }
+                    }
+                }
+
+                // Check the immutable memtable (i.e. the memtable pending compaction) if there is
+                // one
+                if let Some(immutable_memtable) = maybe_immutable_memtable {
+                    if let Ok(maybe_value) = immutable_memtable.get(&internal_key) {
+                        match maybe_value {
+                            Some(value) => return Ok(Some(value.clone())),
+                            None => {
+                                // The value was deleted, as opposed to not found, so we stop
+                                // processing
+                                return Ok(None);
+                            }
+                        }
+                    }
+                }
+
+                // Check table files on disk
+                match current_version
+                    .read()
+                    .element
+                    .get(&read_options, &internal_key)
+                {
+                    Ok(get_response) => {
+                        maybe_seek_charge = Some(get_response.charge_metadata);
+
+                        Ok(get_response.value)
+                    }
+                    Err(versioning::errors::ReadError::TableRead((base_err, seek_charge))) => {
+                        maybe_seek_charge = seek_charge;
+
+                        Err(base_err.into())
+                    }
+                }
+            },
+        );
+
+        if let Some(seek_charge) = maybe_seek_charge {
+            let is_ready_for_compaction =
+                current_version.write().element.update_stats(&seek_charge);
+            let db_state = self.generate_portable_state();
+            if is_ready_for_compaction
+                && DB::should_schedule_compaction(&db_state, &mut db_fields_guard)
+            {
+                log::info!(
+                    "Determined that a version is ready for compaction after too many seeks for \
+                    charged to file number {file_num} at level {level}. The file's allowed seeks \
+                    was at {allowed_seeks}.",
+                    file_num = seek_charge.seek_file().unwrap().file_number(),
+                    level = seek_charge.seek_file_level(),
+                    allowed_seeks = seek_charge.seek_file().unwrap().allowed_seeks()
+                );
+                self.compaction_worker.schedule_task(TaskKind::Compaction);
+            }
+        }
+
+        db_fields_guard.version_set.release_version(current_version);
+
+        match get_result {
+            Ok(Some(value)) => Ok(value),
+            Ok(None) => Err(RainDBError::KeyNotFound),
+            Err(read_err) => Err(read_err),
+        }
     }
 
     pub fn put(
