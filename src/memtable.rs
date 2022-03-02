@@ -1,4 +1,3 @@
-use std::ptr::NonNull;
 use std::sync::Arc;
 
 use nerdondon_hopscotch::concurrent_skiplist::{ConcurrentSkipList, SkipNode};
@@ -89,7 +88,10 @@ impl MemTable for SkipListMemTable {
     fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_> {
         Box::new(SkipListMemTableIter {
             store: Arc::clone(&self.store),
-            current_node: NonNull::new(&mut self.store.first_node() as *mut _).unwrap(),
+            current_entry: self.store.first_node().map(|node| {
+                let (key, value) = node.get_entry();
+                (key.clone(), value.clone())
+            }),
         })
     }
 
@@ -101,54 +103,65 @@ impl MemTable for SkipListMemTable {
 /**
 Holds iterator state for the skip list memtable.
 
-# Safety
-
-This is a self-referential structure that holds a pointer (`current_node`) back to a node stored in
-the memtable. It is safe for us to dereference the pointer even if the iterator or underlying
-skiplist gets moved around because the skiplist is heap allocated (through the [`Arc`]).
-
 # Design
 
 We are back here again at the same self-referential struct issue we "fixed" in commit `789eff9`.
-I'm trying to work around this by keeping raw pointers and this is incredibly painful. Another
-workaround is to keep the key of the current node and reacquire the current node each time it is
-needed but this is an annoying performance penalty. This seems like such a common pattern but there
-seem to be so little simple answers. Rust ergonomics just break down so completely and I'm left
-questioning are my safety arguments correct? Why were the invariants so easy to maintain in C++?
+I've tried to work around this by keeping raw pointers and this was incredibly painful. Tried
+looking at pinning to be more explicit about invariants but it's also a headache and is not much of
+a mechanism over raw pointers. Another workaround is to keep the key of the current node and
+reacquire the current node each time it is needed. This is ostensibly less performant but who knows.
+This seems like such a common pattern but there seem to be so little simple answers. Rust
+ergonomics just break down so completely and I'm left questioning if my safety arguments are
+correct. Why were the invariants so easy to maintain in C++?
 */
-struct SkipListMemTableIter<'a> {
+struct SkipListMemTableIter {
     /// A reference to the skip list backing the memtable.
     store: Arc<ConcurrentSkipList<InternalKey, Vec<u8>>>,
 
     /// The key-value pair that was found last.
-    current_node: NonNull<Option<&'a SkipNode<InternalKey, Vec<u8>>>>,
+    current_entry: Option<(InternalKey, Vec<u8>)>,
 }
 
-impl<'a> RainDbIterator for SkipListMemTableIter<'a> {
+/// Private methods
+impl SkipListMemTableIter {
+    /// Get an owned key-value pair from a skip node.
+    fn owned_entry_from_node(node: &SkipNode<InternalKey, Vec<u8>>) -> (InternalKey, Vec<u8>) {
+        let (key, value) = node.get_entry();
+        (key.clone(), value.clone())
+    }
+}
+
+impl RainDbIterator for SkipListMemTableIter {
     type Key = InternalKey;
     type Error = RainDBError;
 
     fn is_valid(&self) -> bool {
-        unsafe {
-            // SAFETY: Nodes in ConcurrentSkipList are heap allocated so should not move
-            self.current_node.as_ref().is_some()
-        }
+        self.current_entry.is_some()
     }
 
     fn seek(&mut self, target: &Self::Key) -> Result<(), Self::Error> {
-        self.current_node = NonNull::new(&mut self.store.find_greater_or_equal_node(target) as *mut _).unwrap();
+        self.current_entry = self
+            .store
+            .find_greater_or_equal_node(target)
+            .map(SkipListMemTableIter::owned_entry_from_node);
 
         Ok(())
     }
 
     fn seek_to_first(&mut self) -> Result<(), Self::Error> {
-        self.current_node = NonNull::new(&mut self.store.first_node() as *mut _).unwrap();
+        self.current_entry = self
+            .store
+            .first_node()
+            .map(SkipListMemTableIter::owned_entry_from_node);
 
         Ok(())
     }
 
     fn seek_to_last(&mut self) -> Result<(), Self::Error> {
-        self.current_node = NonNull::new(&mut self.store.last_node() as *mut _).unwrap();
+        self.current_entry = self
+            .store
+            .last_node()
+            .map(SkipListMemTableIter::owned_entry_from_node);
 
         Ok(())
     }
@@ -158,7 +171,12 @@ impl<'a> RainDbIterator for SkipListMemTableIter<'a> {
             return None;
         }
 
-        self.current_node = self.current_node.and_then(|node| node.next());
+        self.current_entry = self.current_entry.take().and_then(|(key, _value)| {
+            self.store
+                .find_greater_or_equal_node(&key)
+                .and_then(|node| node.next())
+                .map(SkipListMemTableIter::owned_entry_from_node)
+        });
         self.current()
     }
 
@@ -176,12 +194,17 @@ impl<'a> RainDbIterator for SkipListMemTableIter<'a> {
             return None;
         }
 
-        let (curr_key, _) = self.current_node.unwrap().get_entry();
-        self.current_node = NonNull::new(&mut self.store.find_less_than_node(curr_key);
+        let (curr_key, _) = self.current_entry.take().unwrap();
+        self.current_entry = self
+            .store
+            .find_less_than_node(&curr_key)
+            .map(SkipListMemTableIter::owned_entry_from_node);
         self.current()
     }
 
     fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
-        self.current_node.map(|node| node.get_entry())
+        self.current_entry
+            .as_ref()
+            .map(|(key_ref, value_ref)| (key_ref, value_ref))
     }
 }
