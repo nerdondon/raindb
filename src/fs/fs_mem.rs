@@ -138,6 +138,44 @@ impl FileSystem for InMemoryFileSystem {
         }
     }
 
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        let files = self.files.write();
+        if files
+            .keys()
+            .filter(|key| key.starts_with(path))
+            .cloned()
+            .next()
+            .is_some()
+        {
+            // There are still files in the "directory" so throw and error like the disk
+            // implementation would
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "The directory was not empty.",
+            ));
+        }
+
+        // The in-memory file system does not have a concrete representation for a directory so
+        // deletion is just a no-op
+        Ok(())
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        let mut files = self.files.write();
+        // Iterate the file system map and get all keys that begin with the specified path
+        let children: Vec<PathBuf> = files
+            .keys()
+            .filter(|key| key.starts_with(path))
+            .cloned()
+            .collect();
+
+        for child_path in children {
+            files.remove(&child_path);
+        }
+
+        Ok(())
+    }
+
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         self.open_mem_file(path)?.len()
     }

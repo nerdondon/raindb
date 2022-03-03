@@ -72,6 +72,21 @@ pub trait FileSystem: Send + Sync {
     /// Remove a file from the filesystem.
     fn remove_file(&self, path: &Path) -> Result<()>;
 
+    /**
+    Remove a directory.
+
+    This will throw if the directory is not empty. This is a thin abstraction over
+    [`std::fs::remove_dir`].
+    */
+    fn remove_dir(&self, path: &Path) -> Result<()>;
+
+    /**
+    Remove a directory and its contents.
+
+    This is a thin abstraction over [`std::fs::remove_dir_all`].
+    */
+    fn remove_dir_all(&self, path: &Path) -> Result<()>;
+
     /// Get the size of the file or directory at the specified path.
     fn get_file_size(&self, path: &Path) -> Result<u64>;
 

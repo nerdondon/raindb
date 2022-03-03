@@ -120,6 +120,14 @@ impl FileSystem for OsFileSystem {
         fs::remove_file(path)
     }
 
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        fs::remove_dir(path)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        fs::remove_dir_all(path)
+    }
+
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         Ok(self.open_disk_file(path)?.metadata()?.len())
     }
@@ -234,6 +242,14 @@ impl FileSystem for TmpFileSystem {
 
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path)
+    }
+
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        fs::remove_dir(path)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        fs::remove_dir_all(path)
     }
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
