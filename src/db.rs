@@ -459,8 +459,120 @@ impl DB {
         self.apply_changes(write_options, Some(write_batch))
     }
 
-    pub fn close(&self) {
-        todo!("working on it!")
+    /// Destroy the contents of the database. **Be very careful using this method.**
+    pub fn destroy_database(options: DbOptions) -> RainDBResult<()> {
+        let fs = options.filesystem_provider();
+        let db_path = options.db_path();
+        let file_name_handler = FileNameHandler::new(db_path.to_string());
+        log::info!("Destroying the database at {db_path}.", db_path = db_path);
+
+        log::info!("Checking access to database folder.");
+        if let Err(io_err) = fs.list_dir(&file_name_handler.get_db_path()) {
+            log::error!(
+                "There was an error listing files in the database folder. Error: {io_err}",
+                io_err = io_err
+            );
+
+            return Err(RainDBError::Destruction(io_err.to_string()));
+        }
+
+        log::info!("Attempting to acquire database lock.");
+        let lock_file_path = file_name_handler.get_lock_file_path();
+        let db_lock = match fs.lock_file(&lock_file_path) {
+            Ok(lock) => lock,
+            Err(err) => {
+                log::error!(
+                    "There was an error acquiring a lock on the database. Error: {err}",
+                    err = err
+                );
+
+                return Err(RainDBError::Destruction(err.to_string()));
+            }
+        };
+
+        log::info!("Deleting the WAL directory.");
+        if let Err(io_err) = fs.remove_dir_all(&file_name_handler.get_wal_dir()) {
+            log::error!(
+                "There was an error deleting the write-ahead log directory at {wal_dir_path:?}. \
+                Error: {io_err}",
+                wal_dir_path = file_name_handler.get_wal_dir(),
+                io_err = io_err
+            );
+
+            return Err(RainDBError::Destruction(io_err.to_string()));
+        }
+
+        log::info!("Deleting the table file directory.");
+        if let Err(io_err) = fs.remove_dir_all(&file_name_handler.get_data_dir()) {
+            log::error!(
+                "There was an error deleting the table file directory at {table_dir_path:?}. \
+                Error: {io_err}",
+                table_dir_path = file_name_handler.get_data_dir(),
+                io_err = io_err
+            );
+
+            return Err(RainDBError::Destruction(io_err.to_string()));
+        }
+
+        log::info!(
+            "Deleting all files except the database lock file in the database root directory."
+        );
+        let mut maybe_deletion_err: Option<io::Error> = None;
+        for file_path in fs.list_dir(&file_name_handler.get_db_path())? {
+            match FileNameHandler::get_file_type_from_name(&file_path) {
+                Ok(ParsedFileType::DBLockFile) => {
+                    log::debug!("Ignoring database lock file for now.");
+                }
+                Ok(_) => {
+                    log::debug!(
+                        "Attempting to delete file at {file_path:?}",
+                        file_path = file_path
+                    );
+                    if let Err(io_err) = fs.remove_file(&file_path) {
+                        log::error!(
+                            "Encountered an error deleting {file_path:?}. Ignoring the error. \
+                            Error: {io_err}",
+                            file_path = file_path,
+                            io_err = &io_err
+                        );
+                        maybe_deletion_err = Some(io_err);
+                    }
+                }
+                Err(parse_err) => {
+                    log::error!(
+                        "Could not parse the file at {file_path:?}. Ignoring it. Error: \
+                        {parse_err}",
+                        file_path = file_path,
+                        parse_err = parse_err
+                    );
+                }
+            }
+        }
+
+        drop(db_lock);
+
+        log::info!("Deleting database lock file.");
+        if let Err(io_err) = fs.remove_file(&file_name_handler.get_lock_file_path()) {
+            log::error!(
+                "There was an error deleting the database lock file. Error: {io_err}",
+                io_err = io_err
+            );
+
+            return Err(RainDBError::Destruction(io_err.to_string()));
+        }
+
+        if let Some(deletion_err) = maybe_deletion_err {
+            return Err(RainDBError::Destruction(deletion_err.to_string()));
+        } else if let Err(io_err) = fs.remove_dir(&file_name_handler.get_db_path()) {
+            log::error!(
+                "There was an error deleting the database root directory. Error: {io_err}",
+                io_err = io_err
+            );
+
+            return Err(RainDBError::Destruction(io_err.to_string()));
+        }
+
+        Ok(())
     }
 }
 

@@ -48,9 +48,6 @@ pub enum RainDBError {
     /// Variant for errors encountered while servicing a write request.
     Write(String),
 
-    /// Variant for errors encountered while reading from a version.
-    VersionRead(versioning::errors::ReadError),
-
     /// Variant for errors encountered while recovering version state from persistent storage.
     VersionRecovery(versioning::errors::RecoverError),
 
@@ -62,6 +59,12 @@ pub enum RainDBError {
 
     /// Variant used for path/file name resolution errors.
     PathResolution(String),
+
+    /// Variant used for `get` operations that did not find a key.
+    KeyNotFound,
+
+    /// Variant used to indicate that there was an issue destroying the database.
+    Destruction(String),
 
     /// Variant used for one off situations. This should be used sparingly.
     Other(String),
@@ -79,11 +82,18 @@ impl fmt::Display for RainDBError {
             RainDBError::TableRead(base_err) => write!(f, "{}", base_err),
             RainDBError::TableBuild(base_err) => write!(f, "{}", base_err),
             RainDBError::Write(base_err) => write!(f, "{}", base_err),
-            RainDBError::VersionRead(base_err) => write!(f, "{}", base_err),
             RainDBError::VersionRecovery(base_err) => write!(f, "{}", base_err),
             RainDBError::Compaction(base_err) => write!(f, "{}", base_err),
             RainDBError::KeyParsing(base_err) => write!(f, "{}", base_err),
             RainDBError::PathResolution(base_err) => write!(f, "{}", base_err),
+            RainDBError::KeyNotFound => {
+                write!(f, "The specified key could not be found in the database.")
+            }
+            RainDBError::Destruction(base_err) => write!(
+                f,
+                "Failed to delete the database due to the following error: {}",
+                base_err
+            ),
             RainDBError::Other(base_err) => write!(f, "{}", base_err),
         }
     }
