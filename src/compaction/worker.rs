@@ -62,10 +62,10 @@ pub(crate) struct CompactionWorker {
     task_sender: mpsc::Sender<TaskKind>,
 }
 
-/// Public methods
+/// Crate-only methods
 impl CompactionWorker {
     /// Create a new instance of [`CompactionWorker`].
-    pub fn new(db_state: PortableDatabaseState) -> CompactionWorkerResult<Self> {
+    pub(crate) fn new(db_state: PortableDatabaseState) -> CompactionWorkerResult<Self> {
         // Create a channel for sending tasks
         let (task_sender, receiver) = mpsc::channel();
 
@@ -94,9 +94,9 @@ impl CompactionWorker {
                             }
                             TaskKind::Terminate => {
                                 log::info!(
-                                "Compaction thread receieved the termination command. Shutting \
-                                down the thread."
-                            );
+                                    "Compaction thread receieved the termination command. \
+                                    Shutting down the thread."
+                                );
                                 break;
                             }
                         }
@@ -108,7 +108,7 @@ impl CompactionWorker {
                                 // Prioritize external tasks
                                 task_queue.push_front(new_external_task);
                             }
-                            Err(err) => {
+                            Err(_err) => {
                                 // TODO: Handle if the error is a disconnect vs an empty buffer
                             }
                         }
@@ -132,9 +132,24 @@ impl CompactionWorker {
     }
 
     /// Schedule a task in the background thread.
-    pub fn schedule_task(&self, task_kind: TaskKind) {
+    pub(crate) fn schedule_task(&self, task_kind: TaskKind) {
         // TODO: restart the compaction thread on error
         self.task_sender.send(task_kind).unwrap();
+    }
+
+    /**
+    Stop the worker thread if it has not been terminated already. Returns a join handle if the
+    thread is running; otherwise, `None`.
+
+    This method should only be called when the database client is being dropped.
+    */
+    pub(crate) fn stop_worker_thread(&mut self) -> Option<JoinHandle<()>> {
+        if let Some(compaction_thread_handle) = self.maybe_background_compaction_handle.take() {
+            self.schedule_task(TaskKind::Terminate);
+            return Some(compaction_thread_handle);
+        }
+
+        None
     }
 }
 
