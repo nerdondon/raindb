@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 use std::time::{self, Instant};
-use std::{io, ptr, thread};
+use std::{io, panic, ptr, thread};
 
 use crate::batch::Batch;
 use crate::compaction::{
@@ -1799,10 +1799,46 @@ impl DB {
 
 impl Drop for DB {
     fn drop(&mut self) {
+        let mut db_fields_guard = self.guarded_fields.lock();
+
+        log::info!(
+            "Setting the database to shutdown and waiting for any in progress compaction work to \
+            finish."
+        );
+        self.is_shutting_down.store(true, Ordering::Release);
+        while db_fields_guard.background_compaction_scheduled {
+            log::info!("Detected pending background work. Waiting for it to finish.");
+            self.background_work_finished_signal
+                .wait(&mut db_fields_guard);
+
+            log::info!("Checking for more background work.");
+        }
+
+        log::info!("No more background work detected. Proceeding with shutdown.");
+        drop(db_fields_guard);
+
+        // Drop the database lock
+        self.db_lock.take();
+
         // Clean-up WAL pointer
         let _wal = unsafe {
             // SAFETY: The WAL pointer is never null after `DB` has been initialized.
             Box::from_raw(self.wal.load(Ordering::SeqCst))
         };
+
+        log::info!("Terminating the compaction worker background thread.");
+        if let Some(compaction_worker_join_handle) = Arc::get_mut(&mut self.compaction_worker)
+            .unwrap()
+            .stop_worker_thread()
+        {
+            if let Err(thread_panic_val) = compaction_worker_join_handle.join() {
+                log::error!(
+                    "The compaction worker thread panicked while exiting unwinding the \
+                    stack with the panicked value."
+                );
+
+                panic::resume_unwind(thread_panic_val);
+            }
+        }
     }
 }
