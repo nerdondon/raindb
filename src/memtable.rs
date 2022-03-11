@@ -23,7 +23,7 @@ pub trait MemTable: Send + Sync {
     fn get(&self, key: &InternalKey) -> RainDBResult<Option<&Vec<u8>>>;
 
     /// Return a [`RainDbIterator`] over the contents of the memtable.
-    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_>;
+    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>;
 
     /// Returns the number of entries in the memtable.
     fn len(&self) -> usize;
@@ -85,7 +85,7 @@ impl MemTable for SkipListMemTable {
         Err(RainDBError::KeyNotFound)
     }
 
-    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError> + '_> {
+    fn iter(&self) -> Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>> {
         Box::new(SkipListMemTableIter {
             store: Arc::clone(&self.store),
             current_entry: self.store.first_node().map(|node| {
