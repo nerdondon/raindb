@@ -166,13 +166,11 @@ impl CompactionManifest {
     /**
     Fill out other compaction input fields based on the currently provided set of inputs.
 
+    Returns the key that the next compaction for this level should start at.
+
     # Legacy
 
     This is synonomous to LeveDB's `VersionSet::SetupOtherInputs`.
-
-    # Return
-
-    This method returns the key that the next compaction for this level should start at.
     */
     pub(crate) fn finalize_compaction_inputs(&mut self) -> InternalKey {
         let input_version = self.maybe_input_version.as_ref().unwrap();
@@ -314,6 +312,7 @@ impl CompactionManifest {
 
     /**
     Create an iterator that will yield entries in the files participating in the compaction.
+
     # Legacy
 
     This is synonomous with LevelDB's `VersionSet::MakeInputIterator`. Unlike LevelDB, we return
