@@ -4,13 +4,16 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::config::{L0_COMPACTION_TRIGGER, MAX_MEM_COMPACT_LEVEL, MAX_NUM_LEVELS};
+use crate::errors::{RainDBError, RainDBResult};
 use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
 use crate::table_cache::TableCache;
+use crate::tables::Table;
 use crate::utils::comparator::Comparator;
 use crate::utils::linked_list::SharedNode;
-use crate::{compaction, tables, DbOptions, ReadOptions};
+use crate::{compaction, tables, DbOptions, RainDbIterator, ReadOptions};
 
 use super::errors::{ReadError, ReadResult};
+use super::file_iterators::FilesEntryIterator;
 use super::file_metadata::{FileMetadata, FileMetadataBySmallestKey};
 use super::version_manifest::DeletedFile;
 use super::VersionChangeManifest;
@@ -538,6 +541,47 @@ impl Version {
         self.get_seek_compaction_metadata()
             .file_to_compact
             .is_some()
+    }
+
+    /**
+    Get a list of iterators that will yield the on-disk contents of a version when concatentated.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `Version::AddIterators`.
+    */
+    pub(crate) fn get_representative_iterators(
+        &self,
+        read_options: &ReadOptions,
+    ) -> RainDBResult<Vec<Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>>> {
+        let initial_capacity = self.files[0].len() + MAX_NUM_LEVELS - 1;
+        let mut iterators: Vec<Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>> =
+            Vec::with_capacity(initial_capacity);
+
+        // Add iterators for all level 0 files since level 0 can have overlapping key ranges
+        for file in self.files[0].iter() {
+            let table = self.table_cache.find_table(file.file_number())?;
+            let table_iter = Box::new(Table::iter_with(table, read_options.clone()));
+            iterators.push(table_iter);
+        }
+
+        // For levels greater than 0, use a concatenating iterator to walk through the
+        // non-overlapping files in the level.
+        for level in 1..MAX_NUM_LEVELS {
+            let level_files = &self.files[level];
+            if level_files.is_empty() {
+                continue;
+            }
+
+            let file_list_iter = Box::new(FilesEntryIterator::new(
+                level_files.clone(),
+                Arc::clone(&self.table_cache),
+                read_options.clone(),
+            ));
+            iterators.push(file_list_iter);
+        }
+
+        Ok(iterators)
     }
 }
 
