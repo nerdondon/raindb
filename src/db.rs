@@ -35,7 +35,7 @@ use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::{SeekChargeMetadata, Version};
 use crate::versioning::{VersionChangeManifest, VersionSet};
 use crate::writers::Writer;
-use crate::{DbOptions, RainDbIterator, ReadOptions, WriteOptions};
+use crate::{DbOptions, RainDbIterator, ReadOptions, Snapshot, WriteOptions};
 
 /**
 Database state property bag that can be shared via closures and sent to other threds.
@@ -338,6 +338,24 @@ impl DB {
         MutexGuard::unlock_fair(db_fields_guard);
 
         Ok(db)
+    }
+
+    /**
+    Get a handle to the current state of the database.
+
+    Get requests and iterators created with this snapshot will have a stable view of the database
+    state. Callers *must* call [`DB::release_snapshot`] when the snapshot is no longer needed.
+    */
+    pub fn get_snapshot(&self) -> Snapshot {
+        let mut db_fields_guard = self.guarded_fields.lock();
+        let latest_sequence_num = db_fields_guard.version_set.get_prev_sequence_number();
+        db_fields_guard.snapshots.new_snapshot(latest_sequence_num)
+    }
+
+    /// Release a previously acquired snapshot.
+    pub fn release_snapshot(&self, snapshot: Snapshot) {
+        let mut db_fields_guard = self.guarded_fields.lock();
+        db_fields_guard.snapshots.delete_snapshot(snapshot)
     }
 
     /**
