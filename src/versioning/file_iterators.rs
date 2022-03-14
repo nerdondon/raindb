@@ -269,6 +269,8 @@ pub(crate) struct MergingIterator {
     this behavior.
     */
     errors: Vec<Option<RainDBError>>,
+
+    cleanup_callbacks: Vec<Box<dyn FnOnce()>>,
 }
 
 /// Crate-only methods
@@ -288,6 +290,7 @@ impl MergingIterator {
             direction: IterationDirection::Forward,
             current_iterator_index: None,
             errors,
+            cleanup_callbacks: vec![],
         }
     }
 
@@ -303,6 +306,11 @@ impl MergingIterator {
         }
 
         None
+    }
+
+    /// Register a closure that is called when the iterator is dropped.
+    pub(crate) fn register_cleanup_method(&mut self, cleanup: Box<dyn FnOnce()>) {
+        self.cleanup_callbacks.push(cleanup);
     }
 }
 
@@ -527,5 +535,14 @@ impl RainDbIterator for MergingIterator {
         }
 
         None
+    }
+}
+
+impl Drop for MergingIterator {
+    fn drop(&mut self) {
+        // Call cleanup closures
+        for callback in self.cleanup_callbacks.drain(..) {
+            callback();
+        }
     }
 }
