@@ -355,7 +355,15 @@ impl Version {
         level
     }
 
-    /// Get files that overlap the provided key.
+    /**
+    Get files that overlap the provided key.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `Version::ForEachOverlapping` but inverts the iteration i.e.
+    the results are externally iterated by the caller. Much of LevelDB relies on internal iteration,
+    but if felt more ergnomic to have a inverted relationship in RainDB.
+    */
     pub(crate) fn get_overlapping_files(
         &self,
         target_key: &InternalKey,
