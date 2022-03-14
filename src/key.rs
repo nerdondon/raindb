@@ -105,6 +105,11 @@ impl InternalKey {
         self.user_key.as_slice()
     }
 
+    /// Return the user key as a reference to the vector.
+    pub(crate) fn get_user_key_as_vec(&self) -> &Vec<u8> {
+        &self.user_key
+    }
+
     /// Get a reference to operation tag for this key.
     pub(crate) fn get_operation(&self) -> Operation {
         self.operation
@@ -113,6 +118,17 @@ impl InternalKey {
     /// Get the sequence number for this key.
     pub(crate) fn get_sequence_number(&self) -> u64 {
         self.sequence_number
+    }
+
+    /**
+    Get the approximate size of the key when serialized.
+
+    This is determined by the following formula:
+
+    size = size of user key + 8 bytes for the sequence number + 1 byte for the operation
+    */
+    pub(crate) fn get_approximate_size(&self) -> usize {
+        self.user_key.len() + 8 + 1
     }
 }
 
