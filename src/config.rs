@@ -115,6 +115,14 @@ TODO: Make allowed_seeks tunable (https://github.com/google/leveldb/issues/229)
 pub(crate) const SEEK_DATA_SIZE_THRESHOLD_KIB: u64 = 16 * 1024;
 
 /**
+The approximate period in bytes between sampling the data read during iteration.
+
+Samples are used to update read statistics for a level and help to determine if a compaction should
+be scheduled.
+*/
+pub(crate) const ITERATION_READ_BYTES_PERIOD: u64 = 1 * 1024 * 1024;
+
+/**
 The compression types available for blocks within a table file.
 
 # LevelDB's analysis
