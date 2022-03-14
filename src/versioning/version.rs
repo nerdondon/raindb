@@ -591,6 +591,44 @@ impl Version {
 
         Ok(iterators)
     }
+
+    /**
+    Record a read statistics for the specified key.
+
+    Returns true if a compaction should be scheduled.
+    */
+    pub(crate) fn record_read_sample(&mut self, key: &InternalKey) -> bool {
+        let files_per_level = self.get_overlapping_files(key);
+
+        // Keep some state for charging seeks
+        let mut seek_charge_metadata = SeekChargeMetadata::new();
+        let mut num_files_with_key: usize = 0;
+
+        for (level, files) in files_per_level.iter().enumerate() {
+            for file in files {
+                num_files_with_key += 1;
+
+                if num_files_with_key == 1 {
+                    // Remember the first file with the key
+                    seek_charge_metadata.seek_file = Some(Arc::clone(file));
+                    seek_charge_metadata.seek_file_level = Some(level);
+                }
+
+                if num_files_with_key > 1 {
+                    // Stop iteration after on the second file containing the key
+                    break;
+                }
+            }
+        }
+
+        // We proceed to update stats only if there are at least 2 matches because we are trying
+        // to flatten the search
+        if num_files_with_key >= 2 {
+            return self.update_stats(&seek_charge_metadata);
+        }
+
+        false
+    }
 }
 
 /// Private methods
