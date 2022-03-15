@@ -154,9 +154,6 @@ impl TryFrom<&Vec<u8>> for BlockRecord {
 
 /** Handles all write activity to a log file. */
 pub(crate) struct LogWriter {
-    /** A wrapper around a particular file system to use. */
-    fs: Arc<dyn FileSystem>,
-
     /// The path to the log file.
     log_file_path: PathBuf,
 
@@ -193,7 +190,6 @@ impl LogWriter {
         }
 
         Ok(LogWriter {
-            fs,
             log_file_path: log_file_path.as_ref().to_path_buf(),
             log_file,
             current_cursor_position: block_offset,
@@ -287,9 +283,6 @@ impl fmt::Debug for LogWriter {
 
 /** Handles all read activity to a log file. */
 pub(crate) struct LogReader {
-    /** A wrapper around a particular file system to use. */
-    fs: Arc<dyn FileSystem>,
-
     /** The underlying file representing the log. */
     log_file: Box<dyn ReadonlyRandomAccessFile>,
 
@@ -331,7 +324,6 @@ impl LogReader {
         let log_file = fs.open_file(log_file_path.as_ref())?;
 
         let reader = Self {
-            fs,
             log_file,
             log_file_path: log_file_path.as_ref().to_path_buf(),
             initial_offset: initial_block_offset,
@@ -408,9 +400,9 @@ impl LogReader {
     }
 
     /**
-    Read the physical record from the file system and parse it into a [`BlockRecord`](BlockRecord).
+    Read the physical record from the file system and parse it into a [`BlockRecord`].
 
-    Returns the parsed [`BlockRecord`](BlockRecord).
+    Returns the parsed [`BlockRecord`].
     */
     fn read_physical_record(&mut self) -> LogIOResult<BlockRecord> {
         // Read the header
@@ -419,10 +411,14 @@ impl LogReader {
         if header_bytes_read < HEADER_LENGTH_BYTES {
             // The end of the file was reached before we were able to read a full header. This
             // can occur if the log writer died in the middle of writing the record.
+            let err_msg = format!(
+                "Unexpectedly reached the end of the log file at {log_file_path:?} while \
+                attempting to read a header.",
+                log_file_path = self.log_file_path
+            );
             return Err(LogIOError::IO(DBIOError::new(
                 ErrorKind::UnexpectedEof,
-                "Unexpectedly reached the end of the file while attempting to read a header."
-                    .to_string(),
+                err_msg,
             )));
         }
 
@@ -435,10 +431,14 @@ impl LogReader {
         if data_bytes_read < (data_length as usize) {
             // The end of the file was reached before we were able to read a full data chunk. This
             // can occur if the log writer died in the middle of writing the record.
+            let err_msg = format!(
+                "Unexpectedly reached the end of the log file at {log_file_path:?} while \
+                attempting to read the data chunk.",
+                log_file_path = self.log_file_path
+            );
             return Err(LogIOError::IO(DBIOError::new(
                 ErrorKind::UnexpectedEof,
-                "Unexpectedly reached the end of the file while attempting to read the data chunk."
-                    .to_string(),
+                err_msg,
             )));
         }
 
