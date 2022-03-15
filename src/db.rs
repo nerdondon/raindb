@@ -1874,6 +1874,31 @@ impl DB {
 
         Ok(all_files)
     }
+
+    /// Force the compaction of the current memtable.
+    fn force_memtable_compaction(&self) -> RainDBResult<()> {
+        // Force a compaction by calling `apply_changes` with no batch
+        self.apply_changes(WriteOptions::default(), None)?;
+
+        let mut db_fields_guard = self.guarded_fields.lock();
+        // Wait until the forced compaction completes
+        while db_fields_guard.maybe_immutable_memtable.is_some()
+            && db_fields_guard.maybe_bad_database_state.is_none()
+        {
+            self.background_work_finished_signal
+                .wait(&mut db_fields_guard);
+        }
+
+        if db_fields_guard.maybe_immutable_memtable.is_some() {
+            return Err(db_fields_guard
+                .maybe_bad_database_state
+                .as_ref()
+                .unwrap()
+                .clone());
+        }
+
+        Ok(())
+    }
 }
 
 impl Drop for DB {
