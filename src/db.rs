@@ -24,16 +24,17 @@ use crate::config::{
 use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::{FileNameHandler, ParsedFileType};
 use crate::fs::{FileLock, FileSystem};
-use crate::key::InternalKey;
+use crate::iterator::DatabaseIterator;
 use crate::logs::{LogReader, LogWriter};
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::snapshots::SnapshotList;
 use crate::table_cache::TableCache;
 use crate::tables::{Table, TableBuilder};
 use crate::utils::linked_list::SharedNode;
+use crate::versioning::file_iterators::MergingIterator;
 use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::{SeekChargeMetadata, Version};
-use crate::versioning::{VersionChangeManifest, VersionSet};
+use crate::versioning::{self, VersionChangeManifest, VersionSet};
 use crate::writers::Writer;
 use crate::{DbOptions, RainDbIterator, ReadOptions, Snapshot, WriteOptions};
 
@@ -153,6 +154,9 @@ pub(crate) struct GuardedDbFields {
 
     /// A list of snapshots currently in use.
     pub(crate) snapshots: SnapshotList,
+
+    /// Seed used for determining when to send read samples for statistics updates.
+    read_sampling_seed: u64,
 }
 
 /// The primary database object that exposes the public API.
@@ -205,7 +209,7 @@ pub struct DB {
 
     This is used to schedule compaction related tasks on a background thread.
     */
-    compaction_worker: CompactionWorker,
+    compaction_worker: Arc<CompactionWorker>,
 
     /**
     A condition variable used to notify parked threads that background work (e.g. compaction) has
@@ -257,6 +261,7 @@ impl DB {
             version_set: VersionSet::new(options.clone(), Arc::clone(&table_cache)),
             tables_in_use: HashSet::new(),
             snapshots: SnapshotList::new(),
+            read_sampling_seed: 0,
         }));
 
         // Set up database fields that should also be portable
@@ -274,7 +279,7 @@ impl DB {
             has_immutable_memtable: Arc::clone(&has_immutable_memtable),
             background_work_finished_signal: Arc::clone(&background_work_finished_signal),
         };
-        let compaction_worker = CompactionWorker::new(portable_state)?;
+        let compaction_worker = Arc::new(CompactionWorker::new(portable_state)?);
 
         let db = DB {
             options,
@@ -475,6 +480,62 @@ impl DB {
     */
     pub fn apply(&self, write_options: WriteOptions, write_batch: Batch) -> RainDBResult<()> {
         self.apply_changes(write_options, Some(write_batch))
+    }
+
+    /// Returns an iterator over the contents of the database.
+    pub fn new_iterator(&self, read_options: ReadOptions) -> RainDBResult<DatabaseIterator> {
+        let mut db_fields_guard = self.guarded_fields.lock();
+        let snapshot: u64 = if let Some(snapshot_handle) = read_options.snapshot.as_ref() {
+            snapshot_handle.sequence_number()
+        } else {
+            db_fields_guard.version_set.get_prev_sequence_number()
+        };
+
+        // Collect child iterators that represent the complete state of the database
+        let mut db_iterators: Vec<Box<dyn RainDbIterator<Key = InternalKey, Error = RainDBError>>> =
+            vec![];
+        let memtable_iter = self.memtable().iter();
+        db_iterators.push(memtable_iter);
+
+        if db_fields_guard.maybe_immutable_memtable.is_some() {
+            let immutable_memtable_iter = db_fields_guard
+                .maybe_immutable_memtable
+                .as_ref()
+                .unwrap()
+                .iter();
+            db_iterators.push(immutable_memtable_iter);
+        }
+
+        let current_version = db_fields_guard.version_set.get_current_version();
+        let mut version_iterators = current_version
+            .read()
+            .element
+            .get_representative_iterators(&read_options)?;
+        db_iterators.append(&mut version_iterators);
+
+        let mut db_state_iterator = MergingIterator::new(db_iterators);
+        let db_state = self.generate_portable_state();
+        db_state_iterator.register_cleanup_method(Box::new(move || {
+            // Ensure that the version is released from the version set after use
+            db_state
+                .guarded_db_fields
+                .lock()
+                .version_set
+                .release_version(current_version);
+        }));
+
+        let read_sampling_seed = db_fields_guard.read_sampling_seed;
+        db_fields_guard.read_sampling_seed += 1;
+
+        let client_iter = DatabaseIterator::new(
+            self.generate_portable_state(),
+            db_state_iterator,
+            snapshot,
+            read_sampling_seed,
+            Arc::clone(&self.compaction_worker),
+        );
+
+        Ok(client_iter)
     }
 
     /// Destroy the contents of the database. **Be very careful using this method.**
