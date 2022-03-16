@@ -6,6 +6,7 @@ use arc_swap::ArcSwap;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::cell::UnsafeCell;
 use std::collections::{HashSet, VecDeque};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -25,6 +26,7 @@ use crate::errors::{RainDBError, RainDBResult};
 use crate::file_names::{FileNameHandler, ParsedFileType};
 use crate::fs::{FileLock, FileSystem};
 use crate::iterator::DatabaseIterator;
+use crate::key::{InternalKey, MAX_SEQUENCE_NUMBER};
 use crate::logs::{LogReader, LogWriter};
 use crate::memtable::{MemTable, SkipListMemTable};
 use crate::snapshots::SnapshotList;
@@ -36,7 +38,7 @@ use crate::versioning::file_metadata::FileMetadata;
 use crate::versioning::version::{SeekChargeMetadata, Version};
 use crate::versioning::{self, VersionChangeManifest, VersionSet};
 use crate::writers::Writer;
-use crate::{DbOptions, RainDbIterator, ReadOptions, Snapshot, WriteOptions};
+use crate::{DbOptions, Operation, RainDbIterator, ReadOptions, Snapshot, WriteOptions};
 
 /**
 Database state property bag that can be shared via closures and sent to other threds.
@@ -1898,6 +1900,62 @@ impl DB {
         }
 
         Ok(())
+    }
+
+    /**
+    Force the compaction of the specified level for the specified user key range.
+
+    # Panics
+
+    This method will panic if it is given an invalid level. The level provided cannot be the last
+    level because there is no next level to compact to.
+    */
+    fn force_level_compaction(&self, level: usize, key_range: &Range<Option<&[u8]>>) {
+        assert!(level + 1 < MAX_NUM_LEVELS);
+
+        let manual_compaction = ManualCompactionConfiguration {
+            level,
+            done: false,
+            begin: key_range.start.map(|user_key| {
+                InternalKey::new_for_seeking(user_key.to_vec(), MAX_SEQUENCE_NUMBER)
+            }),
+            end: key_range.end.map(|user_key| {
+                InternalKey::new(user_key.to_vec(), 0, Operation::try_from(0).unwrap())
+            }),
+        };
+        let wrapped_manual_compaction = Arc::new(Mutex::new(manual_compaction));
+        let mut db_fields_guard = self.guarded_fields.lock();
+        let db_state = self.generate_portable_state();
+
+        while !wrapped_manual_compaction.lock().done
+            && !self.is_shutting_down.load(Ordering::Acquire)
+            && db_fields_guard.maybe_bad_database_state.is_none()
+        {
+            if db_fields_guard.maybe_manual_compaction.is_none() {
+                // A manual compaction is not already being processed
+                db_fields_guard.maybe_manual_compaction =
+                    Some(Arc::clone(&wrapped_manual_compaction));
+
+                if DB::should_schedule_compaction(&db_state, &mut db_fields_guard) {
+                    self.compaction_worker.schedule_task(TaskKind::Compaction);
+                }
+            } else {
+                // A compaction is already in progress or the database is still processing this
+                // compaction request and just temporarily unlocked state
+                self.background_work_finished_signal
+                    .wait(&mut db_fields_guard);
+            }
+        }
+
+        if db_fields_guard.maybe_manual_compaction.is_some()
+            & Arc::ptr_eq(
+                &wrapped_manual_compaction,
+                db_fields_guard.maybe_manual_compaction.as_ref().unwrap(),
+            )
+        {
+            log::warn!("A manual compaction was canceled early for an unknown reason.");
+            db_fields_guard.maybe_manual_compaction.take();
+        }
     }
 }
 
