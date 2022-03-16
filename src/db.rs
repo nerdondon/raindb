@@ -655,6 +655,44 @@ impl DB {
 
         Ok(())
     }
+
+    /**
+    Compact the underlying storage for the key range specified.
+
+    This operation will remove deleted or overwritten versions for a key and will rearrange how
+    data is stored in order to reduce the cost of operations for accessing the data.
+
+    `None` on either end of the key range will signify an open end to the range e.g. `None` at the
+    start of the range will signify intent to compact all keys from the start of the database's
+    key range.
+    */
+    pub fn compact_range(&self, key_range: Range<Option<&[u8]>>) {
+        let mut max_level_with_files_for_compaction: usize = 1;
+        {
+            let db_fields_guard = self.guarded_fields.lock();
+            let current_version = db_fields_guard.version_set.get_current_version();
+            for level in 1..MAX_NUM_LEVELS {
+                if current_version.read().element.has_overlap_in_level(
+                    level,
+                    key_range.start,
+                    key_range.end,
+                ) {
+                    max_level_with_files_for_compaction = level;
+                }
+            }
+        }
+
+        if let Err(compaction_err) = self.force_memtable_compaction() {
+            log::warn!(
+                "There was a background error detected during forced memtable compaction. Error: \
+                {compaction_err}"
+            );
+        }
+
+        for level in 0..max_level_with_files_for_compaction {
+            self.force_level_compaction(level, &key_range);
+        }
+    }
 }
 
 /// Private methods
