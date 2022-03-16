@@ -301,6 +301,28 @@ impl Version {
     }
 
     /**
+    Returns true if and only if some file in the specified level overlaps some part of the
+    range covered by the provided user keys.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `Version::OverlapInLevel`.
+    */
+    pub(crate) fn has_overlap_in_level(
+        &self,
+        level: usize,
+        smallest_user_key: Option<&[u8]>,
+        largest_user_key: Option<&[u8]>,
+    ) -> bool {
+        Version::some_file_overlaps_range(
+            level > 0,
+            &self.files[level],
+            smallest_user_key,
+            largest_user_key,
+        )
+    }
+
+    /**
     Return the level at which we should place a new memtable compaction result that covers the
     range from `smallest_user_key` to `largest_user_key`.
     */
@@ -310,7 +332,7 @@ impl Version {
         largest_user_key: &[u8],
     ) -> usize {
         let mut level: usize = 0;
-        if self.has_overlap_in_level(0, smallest_user_key, largest_user_key) {
+        if self.has_overlap_in_level(0, Some(smallest_user_key), Some(largest_user_key)) {
             // There is an overlap at level 0 and level 0 is the only level that allows overlaps so
             // we must add the new table file here.
             return level;
@@ -330,7 +352,8 @@ impl Version {
             InternalKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
         let end_key = InternalKey::new(largest_user_key.to_vec(), 0, crate::key::Operation::Delete);
         while level < MAX_MEM_COMPACT_LEVEL {
-            if self.has_overlap_in_level(level + 1, smallest_user_key, largest_user_key) {
+            if self.has_overlap_in_level(level + 1, Some(smallest_user_key), Some(largest_user_key))
+            {
                 break;
             }
 
@@ -634,46 +657,32 @@ impl Version {
 /// Private methods
 impl Version {
     /**
-    Returns true if and only if some file in the specified level overlaps some part of the
-    range covered by the provided user keys.
-
-    # Legacy
-
-    This is synonomous to LevelDB's `Version::OverlapInLevel`.
-    */
-    fn has_overlap_in_level(
-        &self,
-        level: usize,
-        smallest_user_key: &[u8],
-        largest_user_key: &[u8],
-    ) -> bool {
-        Version::some_file_overlaps_range(
-            level > 0,
-            &self.files[level],
-            smallest_user_key,
-            largest_user_key,
-        )
-    }
-
-    /**
     Returns true if and only if some file in the provided `files` overlaps the key range formed by
     the provided user keys.
 
     If `disjoint_sorted_files` is set to true, `files` must contain files with disjoint
     (i.e. non-overlapping) key ranges in sorted order. For example, the files in any one level,
     where the level is > 0, have non-overlapping key ranges.
+
+    If `smallest_user_key` is set to `None`, this will indicate a key smaller than all keys in the
+    database.
+
+    If `largest_user_key` is set to `None`, this will indicate a key larger than all keys in the
+    database.
     */
     fn some_file_overlaps_range(
         disjoint_sorted_files: bool,
         files: &[Arc<FileMetadata>],
-        smallest_user_key: &[u8],
-        largest_user_key: &[u8],
+        smallest_user_key: Option<&[u8]>,
+        largest_user_key: Option<&[u8]>,
     ) -> bool {
         if !disjoint_sorted_files {
             // Need to check all files if there are overlapping key ranges
             for file in files {
-                let is_key_after_file = smallest_user_key > file.largest_key().get_user_key();
-                let is_key_before_file = largest_user_key < file.smallest_key().get_user_key();
+                let is_key_after_file = smallest_user_key.is_some()
+                    && smallest_user_key.unwrap() > file.largest_key().get_user_key();
+                let is_key_before_file = largest_user_key.is_some()
+                    && largest_user_key.unwrap() < file.smallest_key().get_user_key();
 
                 if is_key_after_file || is_key_before_file {
                     // No overlap
@@ -688,20 +697,26 @@ impl Version {
 
         // Create the earliest full key from the specified user key, recalling that sequence
         // numbers are sorted in decreasing order.
-        let smallest_full_key =
-            InternalKey::new_for_seeking(smallest_user_key.to_vec(), MAX_SEQUENCE_NUMBER);
-        let maybe_file_index =
-            super::utils::find_file_with_upper_bound_range(files, &smallest_full_key);
-
-        if maybe_file_index.is_none() {
-            // The beginning of the range is after all of the files, so there is no overlap
-            return false;
+        let mut overlapping_file_index: usize = 0;
+        if let Some(smallest_key) = smallest_user_key {
+            let smallest_full_key =
+                InternalKey::new_for_seeking(smallest_key.to_vec(), MAX_SEQUENCE_NUMBER);
+            if let Some(file_index) =
+                super::utils::find_file_with_upper_bound_range(files, &smallest_full_key)
+            {
+                // The beginning of the range is after all of the files, so there is no overlap
+                overlapping_file_index = file_index;
+            } else {
+                return false;
+            }
         }
 
-        let file_index = maybe_file_index.unwrap();
-        // We know file[file_index].largest > smallest_user_key.
-        // If the largest_user_key is also < file[file_index].smallest, then there is no overlap.
-        largest_user_key >= files[file_index].smallest_key().get_user_key()
+        // We know file[overlapping_file_index].largest > smallest_user_key.
+        // If the largest_user_key is also < file[overlapping_file_index].smallest, then there is
+        // no overlap.
+        largest_user_key.is_some()
+            && largest_user_key.unwrap()
+                >= files[overlapping_file_index].smallest_key().get_user_key()
     }
 
     /**
