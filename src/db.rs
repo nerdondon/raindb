@@ -694,6 +694,45 @@ impl DB {
             self.force_level_compaction(level, &key_range);
         }
     }
+
+    /**
+    Get a string describing the requested descriptor.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `DB::GetProperty`.
+    */
+    pub fn get_descriptor(&self, descriptor: DatabaseDescriptor) -> RainDBResult<String> {
+        let db_fields_guard = self.guarded_fields.lock();
+        match descriptor {
+            DatabaseDescriptor::NumFilesAtLevel(level) => {
+                if level >= MAX_NUM_LEVELS {
+                    let err_msg = format!(
+                        "Could not process the NumFilesAtLevel descriptor because the specified \
+                        level {level} was not valid."
+                    );
+                    log::error!("{err_msg}", err_msg = &err_msg);
+                    return Err(RainDBError::Other(err_msg));
+                }
+
+                let num_files = db_fields_guard.version_set.num_files_at_level(level);
+                Ok(format!("Level {level} has {num_files} files."))
+            }
+            DatabaseDescriptor::Stats => {
+                let db_stats = self.summarize_compaction_stats();
+                Ok(db_stats)
+            }
+            DatabaseDescriptor::SSTables => {
+                let table_stats = db_fields_guard
+                    .version_set
+                    .get_current_version()
+                    .read()
+                    .element
+                    .debug_summary();
+                Ok(table_stats)
+            }
+        }
+    }
 }
 
 /// Private methods
@@ -2079,4 +2118,22 @@ impl Drop for DB {
             }
         }
     }
+}
+
+/// Various statistics and summaries that can be requested from the database.
+pub enum DatabaseDescriptor {
+    /// Get the number of files at the specified level.
+    NumFilesAtLevel(usize),
+
+    /**
+    Returns a multi-line string that describes statistics about the internal operation of the
+    database.
+    */
+    Stats,
+
+    /**
+    Returns a multi-line string that describes the table files that make up the database
+    contents.
+    */
+    SSTables,
 }

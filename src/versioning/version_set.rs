@@ -711,6 +711,26 @@ impl VersionSet {
 
         format!("files[ {level_summary} ]", level_summary = level_summary)
     }
+
+    /**
+    Get the size of the specified level at the current version in bytes.
+
+    # Panics
+
+    The method will panic if the specified level is not in the valid range.
+
+    # Legacy
+
+    This method is synonomous to LevelDB's `VersionSet::NumLevelBytes`.
+    */
+    pub fn get_current_level_size(&self, level: usize) -> u64 {
+        assert!(level < MAX_NUM_LEVELS);
+
+        self.get_current_version()
+            .read()
+            .element
+            .get_level_size(level)
+    }
 }
 
 /// Crate-only methods
