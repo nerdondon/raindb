@@ -1,5 +1,6 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::HashSet;
+use std::fmt::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -651,6 +652,54 @@ impl Version {
         }
 
         false
+    }
+
+    /**
+    Get a full summary of the contents of the version including the files at each level and the key
+    range and size of the files.
+
+    # Format
+
+    The format of the string is:
+
+    ```text
+    --- Level {level_num} ---
+    {file_num_1} (size: {file_size})[{key_range_start}..{key_range_end}]
+    {file_num_2} (size: {file_size})[{key_range_start}..{key_range_end}]
+    ```
+    */
+    pub(crate) fn debug_summary(&self) -> String {
+        let mut summary = "".to_owned();
+        for (level, files) in self.files.iter().enumerate() {
+            writeln!(summary, "--- Level {level} ---").unwrap();
+
+            for file in files {
+                writeln!(
+                    summary,
+                    "{file_num} (size: {file_size})[{key_range_start:?}..{key_range_end:?}]",
+                    file_num = file.file_number(),
+                    file_size = file.get_file_size(),
+                    key_range_start = file.smallest_key(),
+                    key_range_end = file.largest_key()
+                )
+                .unwrap();
+            }
+        }
+
+        summary
+    }
+
+    /**
+    Get the current size of a level in bytes.
+
+    # Panics
+
+    The method will panic if the specified level is not in the valid range.
+    */
+    pub(crate) fn get_level_size(&self, level: usize) -> u64 {
+        assert!(level < MAX_NUM_LEVELS);
+
+        super::utils::sum_file_sizes(&self.files[level])
     }
 }
 
