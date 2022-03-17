@@ -6,6 +6,7 @@ use arc_swap::ArcSwap;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::cell::UnsafeCell;
 use std::collections::{HashSet, VecDeque};
+use std::fmt::Write;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -1994,6 +1995,43 @@ impl DB {
             log::warn!("A manual compaction was canceled early for an unknown reason.");
             db_fields_guard.maybe_manual_compaction.take();
         }
+    }
+
+    /// Return a string summarizing the compaction statistics for each level.
+    fn summarize_compaction_stats(&self) -> String {
+        const MEGABYTE_SIZE_BYTES: f64 = 1.0 * 1024.0 * 1024.0;
+
+        let db_fields_guard = self.guarded_fields.lock();
+        let mut summary = "Compactions".to_owned();
+        writeln!(
+            summary,
+            "Level  Files Size(MB) Time(sec) Read(MB) Write(MB)"
+        )
+        .unwrap();
+        writeln!(
+            summary,
+            "--------------------------------------------------"
+        )
+        .unwrap();
+
+        for level in 0..MAX_NUM_LEVELS {
+            let num_files = db_fields_guard.version_set.num_files_at_level(level);
+            let compaction_stats = &db_fields_guard.compaction_stats[level];
+            if !compaction_stats.compaction_duration.is_zero() || num_files > 0 {
+                writeln!(
+                    summary,
+                    "{level:3} {num_files:8} {level_size:8.0} {compaction_duration:9.0} \
+                    {bytes_read:8.0} {bytes_written:9.0}",
+                    level_size = db_fields_guard.version_set.get_current_level_size(level),
+                    compaction_duration = compaction_stats.compaction_duration.as_secs_f64(),
+                    bytes_read = (compaction_stats.bytes_read as f64) / MEGABYTE_SIZE_BYTES,
+                    bytes_written = (compaction_stats.bytes_written as f64) / MEGABYTE_SIZE_BYTES
+                )
+                .unwrap();
+            }
+        }
+
+        summary
     }
 }
 
