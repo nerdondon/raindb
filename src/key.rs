@@ -17,6 +17,7 @@ The sequence number is used to denote which of the stored records is the most re
 
 use integer_encoding::FixedInt;
 use std::convert::{TryFrom, TryInto};
+use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 use crate::errors::{RainDBError, RainDBResult};
@@ -57,7 +58,7 @@ Unlike in LevelDB, we do not pack the sequence number and operation together int
 integer (forming an 8 byte trailer) where the sequence number takes up the first 56 bits and the
 operation takes up the last 8 bits.
 */
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Eq)]
 pub struct InternalKey {
     /// The user suplied key.
     user_key: Vec<u8>,
@@ -142,6 +143,21 @@ impl RainDbKeyType for InternalKey {
         buf.extend_from_slice(&[self.get_operation() as u8]);
 
         buf
+    }
+}
+
+impl Debug for InternalKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        // We display the user key as a lossy UTF-8 string for simplicity of debugging the database
+        // itself. Turning it into hex to would help with client debugging so we will reconsider
+        // at a later time.
+        write!(
+            f,
+            "{user_key} @ {seq_num} : {operation:?}",
+            user_key = String::from_utf8_lossy(self.user_key.as_slice()).escape_debug(),
+            seq_num = self.sequence_number,
+            operation = self.operation
+        )
     }
 }
 
