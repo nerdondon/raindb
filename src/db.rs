@@ -462,17 +462,27 @@ impl DB {
         }
     }
 
+    /// Set the provided `key` to the specified `value`.
     pub fn put(
         &self,
         write_options: WriteOptions,
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> RainDBResult<()> {
-        todo!("working on it!")
+        let mut batch = Batch::new();
+        batch.add_put(key, value);
+        self.apply(write_options, batch)
     }
 
+    /**
+    Delete the specified `key` from the database.
+
+    The operation is considered successful even if the key does not exist in the database.
+    */
     pub fn delete(&self, write_options: WriteOptions, key: Vec<u8>) -> RainDBResult<()> {
-        todo!("working on it!")
+        let mut batch = Batch::new();
+        batch.add_delete(key);
+        self.apply(write_options, batch)
     }
 
     /**
