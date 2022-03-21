@@ -143,10 +143,15 @@ More information on the format of sorted table files can be found in the
 The read path is as follows:
 
 1. Consult the memtable to see if it contains the value for the provided key.
-1. If it exists, consult the immutable memtable (this is an old memtable currently undergoing the
-   compaction process)
+1. If there is an immutable memtable, consult it. The immutable memtable is an old memtable
+   currently undergoing the compaction process)
 1. Check the manifest file for the key ranges covered by each level of SSTables
 1. Check each level to see if it has a value for the key. If it does return.
+
+During reads, if it is determined that a file in an older level must be read, the file at the
+younger level is charged a "fee" i.e. a counter is incremented for that file in the version. We say
+that we were reqired to **seek through** the file at the younger level. Once a file has been charged
+too many times, a compaction is triggered to attempt flatten the levels and reduce disk reads.
 
 ### Compactions
 
