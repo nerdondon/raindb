@@ -98,20 +98,25 @@ impl BloomFilterPolicy {
 
 /// Private methods
 impl BloomFilterPolicy {
-    /// Generates a 32-bit hash similar to the Murmur hash.
+    /**
+    Generates a 32-bit hash similar to the Murmur hash.
+
+    # Legacy
+
+    We use wrapping operations to emulate C++ behavior from LevelDB.
+    */
     fn hash(val: &[u8]) -> u32 {
         let seed: u32 = 0xbc9f1d34;
         let multiplier: u32 = 0xc6a4a793;
         let rotation_factor: u32 = 24;
         let val_length = val.len() as u32;
-        let mut hash: u32 = seed ^ (val_length * multiplier);
+        let mut hash: u32 = seed ^ (val_length.wrapping_mul(multiplier));
 
         // Read and process value in groups of 4 bytes
         let mut idx: usize = 0;
-        while idx + 4 < (val_length as usize) {
+        while idx + 4 <= val.len() {
             let word = u32::decode_fixed(&val[idx..idx + 4]);
-            hash += word;
-            hash *= multiplier;
+            hash = hash.wrapping_add(word).wrapping_mul(multiplier);
             hash ^= hash >> 16;
 
             idx += 4;
@@ -119,19 +124,20 @@ impl BloomFilterPolicy {
 
         // Process remaining bytes. There are at most 3 remaining since we processed in 4 byte
         // chunks above.
-        let left_over = val_length - idx as u32;
+        let left_over = val.len() - idx;
         let remaining_buf = &val[idx..];
         if left_over == 3 {
-            hash = hash.overflowing_add((remaining_buf[2] as u32) << 16).0;
+            hash = hash.wrapping_add((remaining_buf[2] as u32) << 16);
         }
 
         if left_over >= 2 {
-            hash = hash.overflowing_add((remaining_buf[1] as u32) << 8).0;
+            hash = hash.wrapping_add((remaining_buf[1] as u32) << 8);
         }
 
         if left_over >= 1 {
-            hash = hash.overflowing_add(remaining_buf[0] as u32).0;
-            hash *= multiplier;
+            hash = hash
+                .wrapping_add(remaining_buf[0] as u32)
+                .wrapping_mul(multiplier);
             hash ^= hash >> rotation_factor;
         }
 
@@ -174,6 +180,8 @@ impl FilterPolicy for BloomFilterPolicy {
         // Compute Bloom filter size
         let mut filter_size_bits = num_keys * self.bits_per_key;
         if filter_size_bits < 64 {
+            // There can be a high false positive rate when there are too little bits, so we
+            // enforce a minimum length.
             filter_size_bits = 64;
         }
 
@@ -198,7 +206,7 @@ impl FilterPolicy for BloomFilterPolicy {
                 let bit_offset_in_byte = overall_bit_offset % 8;
                 hashes[byte_offset] |= 1 << bit_offset_in_byte;
 
-                hash = hash.overflowing_add(delta).0;
+                hash = hash.wrapping_add(delta);
             }
         }
 
@@ -254,7 +262,7 @@ impl FilterPolicy for BloomFilterPolicy {
                 return Ok(false);
             }
 
-            hash = hash.overflowing_add(delta).0;
+            hash = hash.wrapping_add(delta);
         }
 
         Ok(true)
