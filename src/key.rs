@@ -219,7 +219,7 @@ impl TryFrom<Vec<u8>> for InternalKey {
         let sequence_number_end_index = buf.len() - 2;
         let user_key = &buf[..trailer_start_index];
         let sequence_number =
-            u64::decode_fixed(&buf[trailer_start_index..sequence_number_end_index]);
+            u64::decode_fixed(&buf[trailer_start_index..=sequence_number_end_index]);
         let operation: Operation = buf[buf.len() - 1].try_into()?;
 
         Ok(InternalKey::new(
@@ -314,5 +314,161 @@ impl TryFrom<u8> for Operation {
         };
 
         Ok(operation)
+    }
+}
+
+impl RainDbKeyType for Vec<u8> {
+    fn as_bytes(&self) -> Vec<u8> {
+        self.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn internal_key_can_be_converted_to_byte_buffer_and_back() {
+        let user_key1 = b"batmann".to_vec();
+        let sequence_num1: u64 = 1;
+        let operation1 = Operation::Put;
+        let internal_key1 = InternalKey::new(user_key1, sequence_num1, operation1);
+        let encoded1 = internal_key1.as_bytes();
+        let decoded1 = InternalKey::try_from(encoded1).unwrap();
+        assert_eq!(internal_key1.get_user_key(), decoded1.get_user_key());
+        assert_eq!(
+            internal_key1.get_sequence_number(),
+            decoded1.get_sequence_number()
+        );
+        assert_eq!(internal_key1.get_operation(), decoded1.get_operation());
+        assert_eq!(internal_key1, decoded1);
+
+        let user_key2 = b"batmann".to_vec();
+        let sequence_num2: u64 = u64::MAX;
+        let operation2 = Operation::Put;
+        let internal_key2 = InternalKey::new(user_key2, sequence_num2, operation2);
+        let encoded2 = internal_key2.as_bytes();
+        let decoded2 = InternalKey::try_from(encoded2).unwrap();
+        assert_eq!(internal_key2.get_user_key(), decoded2.get_user_key());
+        assert_eq!(
+            internal_key2.get_sequence_number(),
+            decoded2.get_sequence_number()
+        );
+        assert_eq!(internal_key2.get_operation(), decoded2.get_operation());
+        assert_eq!(internal_key2, decoded2);
+
+        let user_key3 = b"batmannandrobinarethekeyinthisverylongstory".to_vec();
+        let sequence_num3: u64 = (1 << 32) + 1;
+        let operation3 = Operation::Delete;
+        let internal_key3 = InternalKey::new(user_key3, sequence_num3, operation3);
+        let encoded3 = internal_key3.as_bytes();
+        let decode3 = InternalKey::try_from(encoded3).unwrap();
+        assert_eq!(internal_key3.get_user_key(), decode3.get_user_key());
+        assert_eq!(
+            internal_key3.get_sequence_number(),
+            decode3.get_sequence_number()
+        );
+        assert_eq!(internal_key3.get_operation(), decode3.get_operation());
+        assert_eq!(internal_key3, decode3);
+    }
+
+    #[test]
+    fn internal_key_returns_an_error_if_trying_to_convert_improperly_formatted_byte_buffer() {
+        let encoded1: Vec<u8> = vec![];
+        let maybe_decoded1 = InternalKey::try_from(encoded1);
+        assert!(maybe_decoded1.is_err());
+    }
+
+    #[test]
+    fn internal_key_has_proper_ordering_invariants() {
+        let internal_key1 = InternalKey::new(b"batmann".to_vec(), 1, Operation::Put);
+        let internal_key2 = InternalKey::new(b"robin".to_vec(), 3, Operation::Put);
+        let internal_key3 = InternalKey::new(b"robin".to_vec(), 2, Operation::Delete);
+        let internal_key4 = InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put);
+        let internal_key5 = InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put);
+
+        assert!(
+            internal_key1 < internal_key4,
+            "key1 should be less than because the user key is alphabetically first"
+        );
+        assert!(
+            internal_key1 < internal_key2,
+            "key1 should be less than because the user key is alphabetically first"
+        );
+        assert!(
+            internal_key2 < internal_key3,
+            "key2 should be less than because the sequence number is larger"
+        );
+        assert!(
+            internal_key4 == internal_key5,
+            "These keys are equal because the constituent parts of thee key are equal"
+        );
+    }
+
+    #[test]
+    fn internal_key_can_generate_the_shortest_separator_between_two_keys_with_the_same_user_key() {
+        let internal_key1 = InternalKey::new(b"batmann".to_vec(), 3, Operation::Put);
+        let internal_key2 = InternalKey::new(b"batmann".to_vec(), 2, Operation::Put);
+        let internal_key3 = InternalKey::new(b"batmann".to_vec(), 1, Operation::Put);
+        let internal_key4 = InternalKey::new(b"batmann".to_vec(), 1, Operation::Put);
+        let internal_key5 = InternalKey::new(b"batmann".to_vec(), 1, Operation::Delete);
+        let internal_key6 = InternalKey::new(b"dog".to_vec(), 1, Operation::Delete);
+
+        assert_eq!(
+            BinarySeparable::find_shortest_separator(&internal_key2, &internal_key3),
+            InternalKey::new(b"batmann".to_vec(), 2, Operation::Put).as_bytes(),
+            "The shortest separator should be the first arg becuase the keys are out of order"
+        );
+
+        assert_eq!(
+            BinarySeparable::find_shortest_separator(&internal_key2, &internal_key1),
+            InternalKey::new(b"batmann".to_vec(), 2, Operation::Put).as_bytes(),
+            "The shortest separator should be the one with the smaller sequence number"
+        );
+
+        assert_eq!(
+            BinarySeparable::find_shortest_separator(&internal_key3, &internal_key4),
+            InternalKey::new(b"batmann".to_vec(), 1, Operation::Put).as_bytes(),
+            "The shortest separator is the key since the two keys are equal"
+        );
+
+        assert_eq!(
+            BinarySeparable::find_shortest_separator(&internal_key3, &internal_key5),
+            InternalKey::new(b"batmann".to_vec(), 1, Operation::Put).as_bytes(),
+            "The shortest separator should the one in the first argument since no shorter user \
+            key could be found"
+        );
+
+        assert_eq!(
+            BinarySeparable::find_shortest_separator(&internal_key1, &internal_key6),
+            InternalKey::new(b"c".to_vec(), MAX_SEQUENCE_NUMBER, Operation::Put).as_bytes(),
+            "The shortest separator should be between the specified keys"
+        );
+    }
+
+    #[test]
+    fn internal_key_can_find_a_shortest_successor() {
+        let internal_key1 = InternalKey::new(b"batmann".to_vec(), 3, Operation::Put);
+
+        let actual = BinarySeparable::find_shortest_successor(&internal_key1);
+
+        assert_eq!(
+            InternalKey::new_for_seeking(b"c".to_vec(), MAX_SEQUENCE_NUMBER).as_bytes(),
+            actual
+        );
+    }
+
+    #[test]
+    fn internal_key_prints_out_a_human_readable_debug_string() {
+        let internal_key1 = InternalKey::new(b"batmann".to_vec(), 55, Operation::Put);
+        assert_eq!(format!("{:?}", internal_key1), "batmann @ 55 : Put");
+
+        let internal_key2 =
+            InternalKey::new(b"A weird \"key\" 'with' \n".to_vec(), 1, Operation::Put);
+        assert_eq!(
+            format!("{:?}", internal_key2),
+            "A weird \\\"key\\\" \\'with\\' \\n @ 1 : Put"
+        );
     }
 }
