@@ -242,6 +242,7 @@ impl FilterPolicy for BloomFilterPolicy {
         }
 
         let (num_hash_functions, bloom_filter) = serialized_filter.split_first().unwrap();
+        let filter_length_bits = bloom_filter.len() * 8;
         if *num_hash_functions != (self.num_hash_functions as u8) {
             log::warn!("The provided filter has an unexpected number of hash functions. Found {} but expected {}. This is not a breaking issue but should be considered an anomoly.",
                 num_hash_functions,
@@ -255,7 +256,7 @@ impl FilterPolicy for BloomFilterPolicy {
         // rotated 17 bits.
         let delta: u32 = (hash >> 17) | (hash << 15);
         for _ in 0..*num_hash_functions {
-            let overall_bit_offset = hash % serialized_filter.len() as u32;
+            let overall_bit_offset = hash % filter_length_bits as u32;
             let byte_offset: usize = (overall_bit_offset / 8) as usize;
             let bit_offset_in_byte = overall_bit_offset % 8;
             if bloom_filter[byte_offset] & (1 << bit_offset_in_byte) == 0 {
@@ -292,4 +293,152 @@ const FILTER_BLOCK_KEY_PREFIX: &str = "filter";
 /// Get the serialized name for a filter block in a table file.
 pub(crate) fn get_filter_block_name(filter_policy: Arc<dyn FilterPolicy>) -> String {
     FILTER_BLOCK_KEY_PREFIX.to_string() + "." + &filter_policy.get_name()
+}
+
+#[cfg(test)]
+mod bloom_filter_tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn hash_function_produces_expected_hashes() {
+        // Test values from LevelDB hash_test.cc to check for compatibility
+        let val1 = [0x62];
+        let val2 = [0xc3, 0x97];
+        let val3 = [0xe2, 0x99, 0xa5];
+        let val4 = [0xe1, 0x80, 0xb9, 0x32];
+
+        assert_eq!(BloomFilterPolicy::hash(&[]), 0xbc9f1d34);
+        assert_eq!(BloomFilterPolicy::hash(&val1), 0xef1345c4);
+        assert_eq!(BloomFilterPolicy::hash(&val2), 0x5b663814);
+        assert_eq!(BloomFilterPolicy::hash(&val3), 0x323c078f);
+        assert_eq!(BloomFilterPolicy::hash(&val4), 0xed21633a);
+    }
+
+    #[test]
+    fn with_an_empty_filter_returns_false_for_any_request() {
+        let bloom_filter_policy = BloomFilterPolicy::new(10);
+        let filter = bloom_filter_policy.create_filter(&[]);
+
+        assert!(!bloom_filter_policy
+            .key_may_match(b"hello", filter.as_slice())
+            .unwrap());
+
+        assert!(!bloom_filter_policy
+            .key_may_match(b"world", filter.as_slice())
+            .unwrap());
+    }
+
+    #[test]
+    fn with_an_small_filter_returns_expected_responses() {
+        let bloom_filter_policy = BloomFilterPolicy::new(10);
+        let keys = [b"hello".to_vec(), b"world".to_vec()];
+        let filter = bloom_filter_policy.create_filter(&keys);
+
+        assert!(bloom_filter_policy
+            .key_may_match(b"hello", filter.as_slice())
+            .unwrap());
+
+        assert!(bloom_filter_policy
+            .key_may_match(b"world", filter.as_slice())
+            .unwrap());
+
+        assert!(!bloom_filter_policy
+            .key_may_match(b"batmann", filter.as_slice())
+            .unwrap());
+
+        assert!(!bloom_filter_policy
+            .key_may_match(b"robin", filter.as_slice())
+            .unwrap());
+    }
+
+    #[test]
+    fn bloom_filters_are_created_with_acceptable_false_positive_rates_for_varying_lengths() {
+        const BITS_PER_KEY: usize = 10;
+        let bloom_filter_policy = BloomFilterPolicy::new(BITS_PER_KEY);
+
+        // The number of filters that significantly exceed the false positive rate
+        let mut num_mediocre_filters: usize = 0;
+        let mut num_good_filters: usize = 0;
+
+        let mut num_keys: usize = 1;
+        while num_keys <= 10_000 {
+            // Build up keys we want to build the filter for
+            let mut keys: Vec<Vec<u8>> = Vec::with_capacity(num_keys);
+            for idx in 0..num_keys {
+                keys.push(u32::encode_fixed_vec(idx as u32));
+            }
+
+            let filter = bloom_filter_policy.create_filter(&keys);
+            // Calculate filter size based on `BITS_PER_KEY`
+            let filter_size: usize = ((num_keys * 10) / 8) + 40;
+            assert!(filter.len() <= filter_size);
+
+            // All added keys must be found in the filter
+            for idx in 0..num_keys {
+                let key = u32::encode_fixed_vec(idx as u32);
+                assert!(
+                    bloom_filter_policy.key_may_match(&key, &filter).unwrap(),
+                    "Expected to find {idx} in the filter."
+                );
+            }
+
+            // Check that false positive rate is within acceptable bounds i.e. at most 2%
+            let false_positive_rate = check_false_positive_rate(&bloom_filter_policy, &filter);
+            assert!(
+                false_positive_rate <= 0.02,
+                "The false positive rate exceeded 2%. Num keys {num_keys} had a false positive \
+                rate of {false_positive_rate}."
+            );
+            if false_positive_rate > 0.0125 {
+                num_mediocre_filters += 1;
+            } else {
+                num_good_filters += 1;
+            }
+
+            num_keys = next_num_keys(num_keys);
+        }
+
+        println!(
+            "There are {num_mediocre_filters} mediocre filters and {num_good_filters} good \
+            filters."
+        );
+
+        assert!(
+            num_mediocre_filters <= (num_good_filters / 5),
+            "If there are any mediocre filters, there must be at least 5 times as many good \
+            filters (i.e. filters that have < 1.25% false positive rate)."
+        );
+    }
+
+    /// Get the next filter length for the false positive test.
+    fn next_num_keys(prev_num_keys: usize) -> usize {
+        let mut num_keys = prev_num_keys;
+        if num_keys < 10 {
+            num_keys += 1
+        } else if num_keys < 100 {
+            num_keys += 10;
+        } else if num_keys < 1000 {
+            num_keys += 100;
+        } else {
+            num_keys += 1000;
+        }
+
+        num_keys
+    }
+
+    fn check_false_positive_rate(policy: &BloomFilterPolicy, filter: &[u8]) -> f64 {
+        const NUM_ITERATIONS: usize = 10_000;
+        let mut matches: f64 = 0.0;
+        for idx in 0..NUM_ITERATIONS {
+            if policy
+                .key_may_match(&u32::encode_fixed_vec(idx as u32 + 1_000_000_000), filter)
+                .unwrap()
+            {
+                matches += 1.0;
+            }
+        }
+
+        matches / (NUM_ITERATIONS as f64)
+    }
 }
