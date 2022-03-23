@@ -84,9 +84,8 @@ impl FileNameHandler {
 
     /// Resolve the path to the write-ahead log.
     pub(crate) fn get_wal_file_path(&self, wal_number: u64) -> PathBuf {
-        let mut buf = PathBuf::from(&self.db_path);
-        buf.push(WAL_DIR);
-        buf.set_file_name(format!("wal-{number}", number = wal_number));
+        let mut buf = self.get_wal_dir();
+        buf.push(format!("wal-{wal_number}"));
         buf.set_extension(WAL_EXT);
 
         buf
@@ -102,9 +101,8 @@ impl FileNameHandler {
 
     /// Resolve the path to a specific table file.
     pub(crate) fn get_table_file_path(&self, file_number: u64) -> PathBuf {
-        let mut buf = PathBuf::from(&self.db_path);
-        buf.push(DATA_DIR);
-        buf.set_file_name(file_number.to_string());
+        let mut buf = self.get_data_dir();
+        buf.push(file_number.to_string());
         buf.set_extension(TABLE_EXT);
 
         buf
@@ -119,7 +117,7 @@ impl FileNameHandler {
     */
     pub(crate) fn get_manifest_file_path(&self, manifest_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
-        buf.set_file_name(format!("MANIFEST-{number}", number = manifest_number));
+        buf.push(format!("MANIFEST-{manifest_number}"));
         buf.set_extension(MANIFEST_FILE_EXT);
 
         buf
@@ -128,7 +126,7 @@ impl FileNameHandler {
     /// Resolve the path to the `CURRENT` file.
     pub(crate) fn get_current_file_path(&self) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
-        buf.set_file_name(CURRENT_FILE_NAME);
+        buf.push(CURRENT_FILE_NAME);
 
         buf
     }
@@ -136,7 +134,7 @@ impl FileNameHandler {
     /// Resolve the path to a temp file.
     pub(crate) fn get_temp_file_path(&self, file_number: u64) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
-        buf.set_file_name(file_number.to_string());
+        buf.push(file_number.to_string());
         buf.set_extension(TEMP_FILE_EXT);
 
         buf
@@ -145,7 +143,7 @@ impl FileNameHandler {
     /// Resolve the path to the LOCK file.
     pub(crate) fn get_lock_file_path(&self) -> PathBuf {
         let mut buf = PathBuf::from(&self.db_path);
-        buf.set_file_name(LOCK_FILE);
+        buf.push(LOCK_FILE);
 
         buf
     }
