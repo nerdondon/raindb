@@ -46,6 +46,7 @@ Enum of file types used in RainDB.
 
 If appropriate, variants will hold the file number parsed from the file path.
 */
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ParsedFileType {
     WriteAheadLog(u64),
     DBLockFile,
@@ -148,23 +149,17 @@ impl FileNameHandler {
         buf
     }
 
-    /**
-    Attempts to determine the RainDB file type and file number (if any) from the provided path.
-
-    # Panics
-
-    This method will panic if the provided path does not have a file name.
-    */
+    /// Attempts to determine the RainDB file type and file number (if any) from the provided path.
     pub(crate) fn get_file_type_from_name(file_path: &Path) -> RainDBResult<ParsedFileType> {
-        if file_path.is_dir() {
+        let file_name = if let Some(file_name) = file_path.file_name() {
+            file_name
+        } else {
             return Err(RainDBError::PathResolution(format!(
-                "Error resolving path to file type. The path is a directory but a file was \
-                    expected. The provided path was {:?}.",
+                "The provided file path is not a recognized RainDB file type. Provided path: {:?}.",
                 file_path
             )));
-        }
+        };
 
-        let file_name = file_path.file_name().unwrap();
         if file_name == CURRENT_FILE_NAME {
             return Ok(ParsedFileType::CurrentFile);
         }
@@ -231,6 +226,146 @@ impl FileNameHandler {
                 Err(_parse_err) => Err(RainDBError::PathResolution(file_name_err_msg)),
             },
             None => Err(RainDBError::PathResolution(file_name_err_msg)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn file_name_handler_gets_wal_paths_correctly() {
+        let db_path = "/storm/system".to_string();
+        let handler = FileNameHandler::new(db_path);
+
+        let wal_dir = handler.get_wal_dir();
+        assert!(wal_dir.ends_with("wal"));
+
+        let wal_path = handler.get_wal_file_path(43);
+        assert!(
+            wal_path.starts_with(&wal_dir),
+            "The generated path should be prefixed with the same generated path for the parent \
+            directory."
+        );
+        assert_eq!(wal_path.file_name().unwrap(), "wal-43.log");
+        assert_eq!(wal_path.extension().unwrap(), "log");
+    }
+
+    #[test]
+    fn file_name_handler_gets_data_paths_correctly() {
+        let db_path = "/storm/system".to_string();
+        let handler = FileNameHandler::new(db_path);
+
+        let data_dir = handler.get_data_dir();
+        assert!(data_dir.ends_with("data"));
+
+        let table_path = handler.get_table_file_path(43);
+        assert!(
+            table_path.starts_with(&data_dir),
+            "The generated path should be prefixed with the same generated path for the parent \
+            directory."
+        );
+        assert_eq!(table_path.file_name().unwrap(), "43.rdb");
+        assert_eq!(table_path.extension().unwrap(), "rdb");
+    }
+
+    #[test]
+    fn file_name_handler_gets_root_paths_correctly() {
+        let db_path = "/storm/system".to_string();
+        let handler = FileNameHandler::new(db_path);
+        let saved_db_path = handler.get_db_path();
+
+        let manifest_path = handler.get_manifest_file_path(43);
+        assert!(
+            manifest_path.starts_with(&saved_db_path),
+            "The generated path should be prefixed with the same generated path for the parent \
+            directory."
+        );
+        assert_eq!(manifest_path.file_name().unwrap(), "MANIFEST-43.manifest");
+
+        let current_path = handler.get_current_file_path();
+        assert!(
+            current_path.starts_with(&saved_db_path),
+            "The generated path should be prefixed with the same generated path for the parent \
+            directory."
+        );
+        assert_eq!(current_path.file_name().unwrap(), "CURRENT");
+
+        let temp_path = handler.get_temp_file_path(43);
+        assert!(
+            temp_path.starts_with(&saved_db_path),
+            "The generated path should be prefixed with the same generated path for the parent \
+            directory."
+        );
+        assert_eq!(temp_path.file_name().unwrap(), "43.dbtemp");
+
+        let lock_path = handler.get_lock_file_path();
+        assert!(
+            lock_path.starts_with(&saved_db_path),
+            "The generated path should be prefixed with the same generated path for the parent \
+            directory."
+        );
+        assert_eq!(lock_path.file_name().unwrap(), "LOCK");
+    }
+
+    #[test]
+    fn parser_can_correctly_parse_valid_file_paths() {
+        let valid_paths = vec![
+            ("wal-100.log", ParsedFileType::WriteAheadLog(100)),
+            ("wal-0.log", ParsedFileType::WriteAheadLog(0)),
+            ("LOCK", ParsedFileType::DBLockFile),
+            ("43.rdb", ParsedFileType::TableFile(43)),
+            (
+                "1238097123981723.rdb",
+                ParsedFileType::TableFile(1238097123981723),
+            ),
+            ("MANIFEST-1337.manifest", ParsedFileType::ManifestFile(1337)),
+            ("MANIFEST-55.manifest", ParsedFileType::ManifestFile(55)),
+            (
+                "18446744073709551615.dbtemp",
+                ParsedFileType::TempFile(18446744073709551615),
+            ),
+        ];
+
+        for (path, expected) in valid_paths {
+            let file_type = FileNameHandler::get_file_type_from_name(&PathBuf::from(path)).unwrap();
+            assert_eq!(file_type, expected, "{path} should be parsed correctly.");
+        }
+    }
+
+    #[test]
+    fn parser_rejects_invalid_paths() {
+        let invalid_paths = vec![
+            "",
+            "foo",
+            "foo.log",
+            "wal-foo.log",
+            "123-wal-123.log",
+            "wal-18446744073709551616.log",
+            "wal-184467440737095516150.log",
+            ".log",
+            "wal-1231x.log",
+            "manifest",
+            "MANIFEST-.manifest",
+            "MANIFEST-3x.manifest",
+            "XMANIFEST-3.manifest",
+            "LOC",
+            "LOCKx",
+            "CURR",
+            "CURRENTx",
+            "100",
+            "100.",
+            "100.rd",
+        ];
+
+        for path in invalid_paths {
+            let file_type_result = FileNameHandler::get_file_type_from_name(&PathBuf::from(path));
+            assert!(
+                file_type_result.is_err(),
+                "{path} should cause the parser to raise an exception."
+            );
         }
     }
 }
