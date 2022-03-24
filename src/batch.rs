@@ -12,7 +12,7 @@ use integer_encoding::{FixedInt, FixedIntReader, VarInt, VarIntReader};
 use std::io::Read;
 use std::slice::Iter;
 
-use crate::errors::RainDBError;
+use crate::errors::{RainDBError, RainDBResult};
 use crate::key::Operation;
 use crate::utils::io::ReadHelpers;
 
@@ -29,7 +29,7 @@ When serialized a [`BatchElement`] will have the following format:
 1. If the operation is a `Put` operation, the value is encoded in the same way as the key and
    appended
 */
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BatchElement {
     /// The operation for this batch element.
     operation: Operation,
@@ -83,6 +83,28 @@ impl BatchElement {
     pub(crate) fn size(&self) -> usize {
         self.size
     }
+
+    /**
+    Deserializes a [`BatchElement`] from the provided byte buffer and returning a tuple of the
+    deserialized value and the number of bytes read.
+    */
+    pub(crate) fn read_element(mut buf: &[u8]) -> RainDBResult<(BatchElement, usize)> {
+        let starting_len = buf.len();
+        let mut raw_operation: [u8; 1] = [0; 1];
+        buf.read_exact(&mut raw_operation)?;
+        let operation = Operation::try_from(raw_operation[0])?;
+        let user_key = buf.read_length_prefixed_slice()?;
+
+        let value: Option<Vec<u8>> = if operation == Operation::Put {
+            Some(buf.read_length_prefixed_slice()?)
+        } else {
+            None
+        };
+
+        let bytes_read = starting_len - buf.len();
+
+        Ok((BatchElement::new(operation, user_key, value), bytes_read))
+    }
 }
 
 impl From<&BatchElement> for Vec<u8> {
@@ -111,19 +133,8 @@ impl From<&BatchElement> for Vec<u8> {
 impl TryFrom<&[u8]> for BatchElement {
     type Error = RainDBError;
 
-    fn try_from(mut buf: &[u8]) -> Result<Self, Self::Error> {
-        let mut raw_operation: [u8; 1] = [0; 1];
-        buf.read_exact(&mut raw_operation)?;
-        let operation = Operation::try_from(raw_operation[0])?;
-        let user_key = buf.read_length_prefixed_slice()?;
-
-        let value: Option<Vec<u8>> = if operation == Operation::Put {
-            Some(buf.read_length_prefixed_slice()?)
-        } else {
-            None
-        };
-
-        Ok(BatchElement::new(operation, user_key, value))
+    fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
+        Ok(BatchElement::read_element(buf)?.0)
     }
 }
 
@@ -289,9 +300,128 @@ impl TryFrom<&[u8]> for Batch {
 
         let num_operations: u32 = buf.read_varint()?;
         for _ in 0..num_operations {
-            batch.add_operation(BatchElement::try_from(buf)?);
+            let (element, bytes_read) = BatchElement::read_element(buf)?;
+            batch.add_operation(element);
+            buf = &buf[bytes_read..];
         }
 
         Ok(batch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn can_add_and_remove_elements_on_a_batch() {
+        let mut batch = Batch::new();
+
+        assert!(batch.is_empty());
+
+        batch.add_put(b"batmann".to_vec(), u32::encode_fixed_vec(55));
+        batch.add_delete(b"robin".to_vec());
+        batch.add_put(b"robin".to_vec(), u32::encode_fixed_vec(3));
+
+        assert_eq!(batch.len(), 3);
+
+        batch.clear();
+
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn can_append_another_batch() {
+        let mut batch1 = Batch::new();
+        batch1.set_starting_seq_number(43);
+        batch1.add_put(b"batmann".to_vec(), u32::encode_fixed_vec(55));
+
+        let mut batch2 = Batch::new();
+        batch2.set_starting_seq_number(117);
+        batch2.add_delete(b"batmann".to_vec());
+
+        batch1.append_batch(&batch2);
+        assert_eq!(batch1.len(), 2);
+        assert_eq!(batch1.get_starting_seq_number().unwrap(), 43);
+        let mut batch1_iter = batch1.iter();
+        assert_eq!(
+            *batch1_iter.next().unwrap(),
+            BatchElement::new(
+                Operation::Put,
+                b"batmann".to_vec(),
+                Some(u32::encode_fixed_vec(55))
+            )
+        );
+        assert_eq!(
+            *batch1_iter.next().unwrap(),
+            BatchElement::new(Operation::Delete, b"batmann".to_vec(), None)
+        );
+    }
+
+    #[test]
+    fn can_be_serialized_and_deserialized() {
+        let expected_elements = [
+            BatchElement::new(
+                Operation::Put,
+                b"batmann".to_vec(),
+                Some(u32::encode_fixed_vec(55)),
+            ),
+            BatchElement::new(Operation::Delete, b"batmann".to_vec(), None),
+            BatchElement::new(
+                Operation::Put,
+                b"robin".to_vec(),
+                Some(u32::encode_fixed_vec(3)),
+            ),
+            BatchElement::new(
+                Operation::Put,
+                b"batmann".to_vec(),
+                Some(u32::encode_fixed_vec(11)),
+            ),
+        ];
+
+        let mut batch = Batch::new();
+        batch.set_starting_seq_number(43);
+        batch.add_put(b"batmann".to_vec(), u32::encode_fixed_vec(55));
+        batch.add_delete(b"batmann".to_vec());
+        batch.add_put(b"robin".to_vec(), u32::encode_fixed_vec(3));
+        batch.add_put(b"batmann".to_vec(), u32::encode_fixed_vec(11));
+
+        let serialized_batch = Vec::<u8>::from(&batch);
+        let deserialized_batch = Batch::try_from(serialized_batch.as_slice()).unwrap();
+        assert_eq!(
+            batch.get_starting_seq_number(),
+            deserialized_batch.get_starting_seq_number()
+        );
+        assert_eq!(
+            batch.get_approximate_size(),
+            deserialized_batch.get_approximate_size(),
+            "The batch approximate size ({batch_size}) should match the deserialized size \
+            ({deserialized_size})",
+            batch_size = batch.get_approximate_size(),
+            deserialized_size = deserialized_batch.get_approximate_size()
+        );
+
+        for (deserialized_element, expected_element) in
+            deserialized_batch.iter().zip(expected_elements.iter())
+        {
+            assert_eq!(deserialized_element, expected_element);
+        }
+    }
+
+    #[test]
+    fn approximate_sizes_scale_appropriately() {
+        let mut batch = Batch::new();
+
+        assert_eq!(batch.get_approximate_size(), 0);
+
+        batch.add_put(b"batmann".to_vec(), u32::encode_fixed_vec(55));
+        assert!(batch.get_approximate_size() <= 69);
+
+        batch.add_delete(b"batmann".to_vec());
+        assert!(batch.get_approximate_size() <= (69 + 65));
+
+        batch.add_put(b"batmann".to_vec(), u32::encode_fixed_vec(11));
+        assert!(batch.get_approximate_size() <= (69 + 65 + 69));
     }
 }
