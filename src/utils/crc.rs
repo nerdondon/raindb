@@ -25,3 +25,26 @@ pub(crate) fn unmask_checksum(masked_checksum: u32) -> u32 {
     let rotated = masked_checksum - CRC_MASKING_DELTA;
     (rotated >> 17) | (rotated << 15)
 }
+
+#[cfg(test)]
+mod tests {
+    use crc::{Crc, CRC_32_ISCSI};
+
+    use super::*;
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    const CRC_CALCULATOR: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+
+    #[test]
+    fn can_mask_and_unmask_checksums_correctly() {
+        let checksum = CRC_CALCULATOR.checksum(b"foo");
+
+        assert_ne!(checksum, mask_checksum(checksum));
+        assert_ne!(checksum, mask_checksum(mask_checksum(checksum)));
+        assert_eq!(checksum, unmask_checksum(mask_checksum(checksum)));
+        assert_eq!(
+            checksum,
+            unmask_checksum(unmask_checksum(mask_checksum(mask_checksum(checksum))))
+        );
+    }
+}
