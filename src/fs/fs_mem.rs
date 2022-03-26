@@ -3,7 +3,7 @@ This module contains a wrapper for an in-memory file system implementation.
 */
 
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -77,14 +77,35 @@ impl FileSystem for InMemoryFileSystem {
     fn list_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
         let files = self.files.read();
         // Iterate the file system map and get all keys that begin with the specified path
-        let mut children: Vec<PathBuf> = files
+        let children: Vec<PathBuf> = files
             .keys()
             .filter(|key| key.starts_with(path))
             .cloned()
             .collect();
-        children.sort();
 
-        Ok(children)
+        let mut deduped_children: HashSet<PathBuf> = HashSet::new();
+        for child in children {
+            let target_path_is_parent = child.parent().map_or(false, |parent| parent == path);
+
+            if target_path_is_parent {
+                deduped_children.insert(child);
+                continue;
+            }
+
+            if let Some(parent) = child.parent() {
+                // If parent is a folder and the parent is a direct child of the target path, try
+                // adding the folder
+                let parent_of_parent = parent.parent().unwrap();
+                if !deduped_children.contains(parent) && parent_of_parent == path {
+                    deduped_children.insert(parent.to_owned());
+                }
+            }
+        }
+
+        let mut results: Vec<PathBuf> = deduped_children.into_iter().collect();
+        results.sort();
+
+        Ok(results)
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn ReadonlyRandomAccessFile>> {
