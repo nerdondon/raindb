@@ -83,12 +83,19 @@ pub trait FileSystem: Send + Sync {
     /**
     Remove a directory and its contents.
 
-    This is a thin abstraction over [`std::fs::remove_dir_all`].
+    This is meant to provide an abstraction over [`std::fs::remove_dir_all`].
     */
     fn remove_dir_all(&self, path: &Path) -> Result<()>;
 
     /// Get the size of the file or directory at the specified path.
     fn get_file_size(&self, path: &Path) -> Result<u64>;
+
+    /**
+    Check if a path is a directory.
+
+    This is meant to provide an abstraction over the built-in [`std::fs::metadata`] function.
+    */
+    fn is_dir(&self, path: &Path) -> Result<bool>;
 
     /**
     Place an exclusive lock on the file at the specified path.
