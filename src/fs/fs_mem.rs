@@ -180,6 +180,35 @@ impl FileSystem for InMemoryFileSystem {
         self.open_mem_file(path)?.len()
     }
 
+    /**
+    Check if a path is a directory.
+
+    The in-memory file system map only keep track of files. The heuristic to check if a path
+    is a directory is:
+
+    1. Check if any entry in the map has the provided path as a prefix
+    2. Check if any entries with the prefix have the prefix as an ancestor. If there is an exact
+       match, the prefix is a file.
+    */
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        let files = self.files.write();
+        let children: Vec<PathBuf> = files
+            .keys()
+            .filter(|key| key.starts_with(path))
+            .cloned()
+            .collect();
+
+        if children.is_empty() {
+            return Ok(false);
+        }
+
+        if children.iter().any(|child_path| child_path == path) {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
     fn lock_file(&self, path: &Path) -> io::Result<super::FileLock> {
         Ok(FileLock::new(Box::new(self.open_mem_file(path)?)))
     }

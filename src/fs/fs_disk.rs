@@ -132,6 +132,10 @@ impl FileSystem for OsFileSystem {
         Ok(self.open_disk_file(path)?.metadata()?.len())
     }
 
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        Ok(fs::metadata(path)?.is_dir())
+    }
+
     fn lock_file(&self, path: &Path) -> io::Result<FileLock> {
         let file = OpenOptions::new()
             .read(true)
@@ -254,6 +258,10 @@ impl FileSystem for TmpFileSystem {
 
     fn get_file_size(&self, path: &Path) -> io::Result<u64> {
         Ok(self.open_tmp_file(path)?.metadata()?.len())
+    }
+
+    fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        Ok(fs::metadata(path)?.is_dir())
     }
 
     fn lock_file(&self, path: &Path) -> io::Result<FileLock> {
