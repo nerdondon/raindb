@@ -397,6 +397,8 @@ impl RandomAccessFile for LockableInMemoryFile {
     fn append(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut file = self.0.write();
         file.contents.extend_from_slice(buf);
+        file.cursor = file.contents.len() as u64;
+
         Ok(buf.len())
     }
 }
