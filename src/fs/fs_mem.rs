@@ -49,7 +49,15 @@ impl InMemoryFileSystem {
     fn open_mem_file(&self, path: &Path) -> io::Result<LockableInMemoryFile> {
         let files = self.files.read();
         match files.get(path) {
-            Some(file) => Ok(file.clone()),
+            Some(file) => {
+                // Make sure to reset the cursor on a newly opened file.
+                // TODO: Ideally, we make sure to set a different cursor for each file handle but
+                // this memory environment is only used for tests where multiple handles for a file
+                // are not held at the same time.
+                file.0.write().cursor = 0;
+
+                Ok(file.clone())
+            }
             None => {
                 let error_message = format!(
                     "Could not find the file with path {path}",
