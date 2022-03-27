@@ -288,8 +288,18 @@ impl Read for LockableInMemoryFile {
             return Ok(0);
         }
 
-        let file = self.0.read();
-        buf.copy_from_slice(&file.contents[..buf_length]);
+        let mut file = self.0.write();
+        let contents_len = file.contents.len();
+        let num_bytes_to_read = if (contents_len - (file.cursor as usize)) < buf_length {
+            contents_len - (file.cursor as usize)
+        } else {
+            buf_length
+        };
+        buf.copy_from_slice(
+            &file.contents[(file.cursor as usize)..(file.cursor as usize) + num_bytes_to_read],
+        );
+
+        file.cursor += num_bytes_to_read as u64;
 
         Ok(buf_length)
     }
