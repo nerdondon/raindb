@@ -303,6 +303,32 @@ impl Read for LockableInMemoryFile {
 
         Ok(buf_length)
     }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        let space_required = self.0.read().contents.len() - (self.0.read().cursor as usize);
+        buf.reserve_exact(space_required);
+        buf.resize(space_required, 0);
+        self.read(buf)
+    }
+
+    fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
+        unsafe {
+            // SAFETY: We will check for valid UTF-8 after the buffer is read into
+            match self.read_to_end(buf.as_mut_vec()) {
+                Ok(bytes_read) => {
+                    if std::str::from_utf8(buf.as_mut_vec()).is_err() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "The data read is not valid UTF-8.",
+                        ));
+                    }
+
+                    Ok(bytes_read)
+                }
+                Err(io_err) => Err(io_err),
+            }
+        }
+    }
 }
 
 impl Write for LockableInMemoryFile {
