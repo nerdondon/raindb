@@ -142,6 +142,8 @@ impl FileSystem for InMemoryFileSystem {
         let mut files = self.files.write();
         if let Some(file) = files.get_mut(path) {
             if append {
+                let mut file_guard = file.0.write();
+                file_guard.cursor = file_guard.len();
                 return Ok(Box::new(file.clone()));
             }
         }
@@ -339,11 +341,17 @@ impl Write for LockableInMemoryFile {
         }
 
         let mut file = self.0.write();
-        // `copy_from_slice` only allows copying between slices of the same length
         let content_length = file.contents.len();
-        file.contents.copy_from_slice(&buf[0..content_length]);
-        // Append the rest of the buffer
-        file.contents.extend_from_slice(&buf[content_length..]);
+
+        if file.cursor < (content_length as u64) {
+            // Truncate existing contents if the file cursor is not positioned at the end of the
+            // file
+            let cursor_usize = file.cursor as usize;
+            file.contents.truncate(cursor_usize);
+        }
+
+        file.contents.write_all(buf)?;
+        file.cursor += buf_length as u64;
 
         Ok(buf_length)
     }
@@ -363,11 +371,8 @@ impl Seek for LockableInMemoryFile {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         let mut file = self.0.write();
 
-        let mut offset: u64;
-        match pos {
-            SeekFrom::Start(off) => {
-                offset = off;
-            }
+        let mut offset: u64 = match pos {
+            SeekFrom::Start(off) => off,
             SeekFrom::Current(off) => {
                 if off < 0 {
                     let error_message = format!(
@@ -377,7 +382,7 @@ impl Seek for LockableInMemoryFile {
                     return Err(io::Error::new(io::ErrorKind::InvalidInput, error_message));
                 }
 
-                offset = (off as u64) + file.cursor;
+                (off as u64) + file.cursor
             }
             SeekFrom::End(_) => {
                 unimplemented!("Not used as part of any database operations.");
