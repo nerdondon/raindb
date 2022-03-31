@@ -450,3 +450,105 @@ impl UnlockableFile for LockableInMemoryFile {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn can_create_and_remove_files() {
+        let fs = InMemoryFileSystem::new();
+        let dir_path = PathBuf::from("/some/database");
+        let file_path = PathBuf::from("/some/database/LOCK");
+
+        assert!(fs.create_file(&file_path, false).is_ok());
+
+        let files = fs.list_dir(&dir_path).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files.first().unwrap(), &file_path);
+
+        assert!(fs.remove_file(&file_path).is_ok());
+        assert_eq!(fs.list_dir(&dir_path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn can_list_files_under_a_path() {
+        let fs = InMemoryFileSystem::new();
+        let path1 = PathBuf::from("/some/database/LOCK");
+        let path2 = PathBuf::from("/some/database/wal/wal-123.log");
+        let path3 = PathBuf::from("/some/database/wal/wal-456.log");
+        let path4 = PathBuf::from("/some/database/wal/random/something-else.log");
+        let path5 = PathBuf::from("/some/database/data/456.rdb");
+
+        // Create the files
+        assert!(fs.create_file(&path1, false).is_ok());
+        assert!(fs.create_file(&path2, false).is_ok());
+        assert!(fs.create_file(&path3, false).is_ok());
+        assert!(fs.create_file(&path4, false).is_ok());
+        assert!(fs.create_file(&path5, false).is_ok());
+
+        let files = fs.list_dir(Path::new("/some/database")).unwrap();
+        assert_eq!(files.len(), 3);
+        let mut files_iter = files.iter();
+        assert_eq!(
+            files_iter.next().unwrap(),
+            &PathBuf::from("/some/database/LOCK")
+        );
+        assert_eq!(
+            files_iter.next().unwrap(),
+            &PathBuf::from("/some/database/data")
+        );
+        assert_eq!(
+            files_iter.next().unwrap(),
+            &PathBuf::from("/some/database/wal")
+        );
+    }
+
+    #[test]
+    fn can_read_and_write_a_file() {
+        let fs = InMemoryFileSystem::new();
+        let file_path = PathBuf::from("/some/database/wal-123.log");
+
+        let mut file = fs.create_file(&file_path, false).unwrap();
+        assert!(file.write(b"Hello World").is_ok());
+        assert!(file.flush().is_ok());
+        assert_eq!(fs.list_dir(Path::new("/some/database")).unwrap().len(), 1);
+        assert_eq!(fs.get_file_size(&file_path).unwrap(), 11);
+
+        let mut file_contents = String::new();
+        let bytes_read = file.read_to_string(&mut file_contents).unwrap();
+        assert_eq!(bytes_read, 0);
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let bytes_read = file.read_to_string(&mut file_contents).unwrap();
+        assert_eq!(bytes_read, 11);
+        assert_eq!(file_contents, "Hello World");
+    }
+
+    #[test]
+    fn can_check_if_a_path_is_a_directory() {
+        let fs = InMemoryFileSystem::new();
+        let path1 = PathBuf::from("/some/database/LOCK");
+        let path2 = PathBuf::from("/some/database/wal/wal-123.log");
+        let path3 = PathBuf::from("/some/database/wal/wal-456.log");
+        let path4 = PathBuf::from("/some/database/wal/random/something-else.log");
+
+        // Create the files
+        fs.create_file(&path1, false).unwrap();
+        fs.create_file(&path2, false).unwrap();
+        fs.create_file(&path3, false).unwrap();
+        fs.create_file(&path4, false).unwrap();
+
+        assert!(fs.is_dir(Path::new("/some/")).unwrap());
+        assert!(fs.is_dir(Path::new("/some/database")).unwrap());
+        assert!(fs.is_dir(Path::new("/some/database/wal")).unwrap());
+        assert!(fs.is_dir(Path::new("/some/database/wal/random")).unwrap());
+
+        assert!(!fs.is_dir(Path::new("/some/database/LOCK")).unwrap());
+        assert!(!fs
+            .is_dir(Path::new("/some/database/wal/wal-123.log"))
+            .unwrap());
+    }
+}
