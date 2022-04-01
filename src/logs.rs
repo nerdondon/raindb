@@ -204,15 +204,18 @@ impl LogWriter {
         loop {
             let block_available_space = BLOCK_SIZE_BYTES - self.current_block_offset;
             if block_available_space < HEADER_LENGTH_BYTES {
-                log::debug!(
-                    "Log file {:?}. There is not enough remaining space in the current block \
+                if block_available_space > 0 {
+                    log::debug!(
+                        "Log file {:?}. There is not enough remaining space in the current block \
                     for the header. Filling it with zeroes.",
-                    self.log_file_path
-                );
-                self.log_file
-                    .write_all(&vec![0, 0, 0][0..block_available_space])?;
-                self.current_cursor_position = 0;
-                block_available_space = BLOCK_SIZE_BYTES;
+                        self.log_file_path
+                    );
+                    self.log_file
+                        .write_all(&vec![0; HEADER_LENGTH_BYTES - 1][0..block_available_space])?;
+                }
+
+                // Switch to a new block
+                self.current_block_offset = 0;
             }
 
             let space_available_for_data =
