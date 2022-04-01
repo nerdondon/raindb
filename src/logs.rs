@@ -157,16 +157,16 @@ pub(crate) struct LogWriter {
     /// The path to the log file.
     log_file_path: PathBuf,
 
-    /** The underlying file representing the log.  */
+    /// The underlying file representing the log.
     log_file: Box<dyn RandomAccessFile>,
 
     /**
-    The byte offset within the file.
+    The offset in the current block being written to.
 
-    This cursor position is not necessarily aligned to a block i.e. it can be in the middle of a
-    lock during a write operation.
+    This position is not necessarily aligned to a block i.e. it can be in the middle of a block
+    during a write operation.
     */
-    current_cursor_position: usize,
+    current_block_offset: usize,
 }
 
 /// Public methods
@@ -184,7 +184,7 @@ impl LogWriter {
         let log_file = fs.create_file(log_file_path.as_ref(), is_appending)?;
 
         let mut block_offset = 0;
-        let log_file_size = fs.get_file_size(log_file_path.as_ref())? as usize;
+        let log_file_size = log_file.len()? as usize;
         if log_file_size > 0 {
             block_offset = log_file_size % BLOCK_SIZE_BYTES;
         }
@@ -192,7 +192,7 @@ impl LogWriter {
         Ok(LogWriter {
             log_file_path: log_file_path.as_ref().to_path_buf(),
             log_file,
-            current_cursor_position: block_offset,
+            current_block_offset: block_offset,
         })
     }
 
@@ -202,8 +202,7 @@ impl LogWriter {
         let mut is_first_data_chunk = true;
 
         loop {
-            let mut block_available_space = BLOCK_SIZE_BYTES - self.current_cursor_position;
-
+            let block_available_space = BLOCK_SIZE_BYTES - self.current_block_offset;
             if block_available_space < HEADER_LENGTH_BYTES {
                 log::debug!(
                     "Log file {:?}. There is not enough remaining space in the current block \
@@ -216,7 +215,8 @@ impl LogWriter {
                 block_available_space = BLOCK_SIZE_BYTES;
             }
 
-            let space_available_for_data = block_available_space - HEADER_LENGTH_BYTES;
+            let space_available_for_data =
+                BLOCK_SIZE_BYTES - self.current_block_offset - HEADER_LENGTH_BYTES;
             let block_data_chunk_length = if data_to_write.len() < space_available_for_data {
                 data_to_write.len()
             } else {
@@ -273,7 +273,7 @@ impl LogWriter {
         self.log_file.flush()?;
 
         let bytes_written = HEADER_LENGTH_BYTES + data_chunk.len();
-        self.current_cursor_position += bytes_written;
+        self.current_block_offset += bytes_written;
         log::info!("Wrote {} bytes to the log file.", bytes_written);
         Ok(())
     }
