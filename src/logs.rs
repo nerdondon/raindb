@@ -201,7 +201,7 @@ impl LogWriter {
         let mut data_to_write = data;
         let mut is_first_data_chunk = true;
 
-        while !data_to_write.is_empty() {
+        loop {
             let mut block_available_space = BLOCK_SIZE_BYTES - self.current_cursor_position;
 
             if block_available_space < HEADER_LENGTH_BYTES {
@@ -238,6 +238,12 @@ impl LogWriter {
             // Remove chunk that was written from the front
             data_to_write = data_to_write.split_at(block_data_chunk_length).1;
             is_first_data_chunk = false;
+
+            if data_to_write.is_empty() {
+                // Use a do-while loop formulation so that we emit a zero-length block if asked to
+                // to append an empty buffer (same as in LevelDB)
+                break;
+            }
         }
 
         Ok(())
