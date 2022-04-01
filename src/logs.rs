@@ -220,13 +220,16 @@ impl LogWriter {
 
             let space_available_for_data =
                 BLOCK_SIZE_BYTES - self.current_block_offset - HEADER_LENGTH_BYTES;
+
+            // The length available for the next data chunk a.k.a. how much of the buffer can
+            // actually be written
             let block_data_chunk_length = if data_to_write.len() < space_available_for_data {
                 data_to_write.len()
             } else {
                 space_available_for_data
             };
 
-            let is_last_data_chunk = block_available_space == space_available_for_data;
+            let is_last_data_chunk = data_to_write.len() == block_data_chunk_length;
             let block_type = if is_first_data_chunk && is_last_data_chunk {
                 BlockType::Full
             } else if is_first_data_chunk {
