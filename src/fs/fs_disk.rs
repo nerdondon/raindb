@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn create_file_creates_a_file_we_can_write_to() {
+    fn create_file_creates_a_file_we_can_write_to_and_read_from() {
         fs::create_dir(BASE_TESTING_DIR_NAME).ok();
         let file_system: OsFileSystem = OsFileSystem::new();
         let test_dir = BASE_TESTING_DIR_NAME.to_string() + "create_file";
@@ -342,9 +342,14 @@ mod tests {
         let mut file = file_system.create_file(&file_path, true).unwrap();
         assert!(file.write(b"Hello World").is_ok());
         assert!(file.flush().is_ok());
-
         assert_eq!(file_system.list_dir(Path::new(&test_dir)).unwrap().len(), 1);
         assert_eq!(file_system.get_file_size(&file_path).unwrap(), 11);
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut file_contents = String::new();
+        let bytes_read = file.read_to_string(&mut file_contents).unwrap();
+        assert_eq!(bytes_read, 11);
+        assert_eq!(file_contents, "Hello World");
 
         // Clean up
         assert!(fs::remove_dir_all(Path::new(&test_dir)).is_ok());
