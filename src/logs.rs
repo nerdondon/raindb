@@ -15,6 +15,7 @@ bytes of user data) to fill up the trailing three bytes of the block and then em
 data in subsequent blocks.
 */
 
+use crc::{Crc, CRC_32_ISCSI};
 use integer_encoding::FixedInt;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
@@ -24,13 +25,14 @@ use std::sync::Arc;
 
 use crate::errors::{DBIOError, LogIOError, LogSerializationErrorKind};
 use crate::fs::{FileSystem, RandomAccessFile, ReadonlyRandomAccessFile};
+use crate::utils::crc::{mask_checksum, unmask_checksum};
 
 /**
 The length of block headers.
 
-This is 3 bytes.
+This is 7 bytes.
 */
-const HEADER_LENGTH_BYTES: usize = 2 + 1;
+const HEADER_LENGTH_BYTES: usize = 4 + 2 + 1;
 
 /**
 The size of blocks in the log file format.
@@ -38,6 +40,14 @@ The size of blocks in the log file format.
 This is set at 32 KiB.
 */
 const BLOCK_SIZE_BYTES: usize = 32 * 1024;
+
+/**
+CRC calculator using the iSCSI polynomial.
+
+LevelDB uses the [google/crc32c](https://github.com/google/crc32c) CRC implementation. This
+implementation specifies using the iSCSI polynomial so that is what we use here as well.
+*/
+const CRC_CALCULATOR: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
 /// Alias for a [`Result`] that wraps a [`LogIOError`].
 type LogIOResult<T> = Result<T, LogIOError>;
@@ -93,6 +103,7 @@ record.
 
 When serialized to disk the block record will have the following format:
 
+1. A 32-bit checksum of the data
 1. The length as a 2-byte integer with a fixed-size encoding
 1. The block type converted to a 1 byte integer with a fixed-size encoding
 1. The data
@@ -100,6 +111,9 @@ When serialized to disk the block record will have the following format:
 */
 #[derive(Debug)]
 pub(crate) struct BlockRecord {
+    /// A checksum of the data in this block.
+    checksum: u32,
+
     /// The size of the data within the block.
     length: u16,
 
@@ -110,10 +124,26 @@ pub(crate) struct BlockRecord {
     data: Vec<u8>,
 }
 
+/// Crate-only methods
+impl BlockRecord {
+    pub(crate) fn new(length: u16, block_type: BlockType, data: Vec<u8>) -> Self {
+        let checksum = CRC_CALCULATOR.checksum(&data);
+
+        Self {
+            checksum,
+            length,
+            block_type,
+            data,
+        }
+    }
+}
+
 impl From<&BlockRecord> for Vec<u8> {
     fn from(record: &BlockRecord) -> Self {
         let initial_capacity = HEADER_LENGTH_BYTES + record.data.len();
         let mut buf: Vec<u8> = Vec::with_capacity(initial_capacity);
+        // Mask the checksum before storage in case there are other checksums being done
+        buf.extend_from_slice(&u32::encode_fixed_vec(mask_checksum(record.checksum)));
         buf.extend_from_slice(&u16::encode_fixed_vec(record.length));
         buf.extend_from_slice(&[record.block_type as u8]);
         buf.extend_from_slice(&record.data);
@@ -138,17 +168,29 @@ impl TryFrom<&Vec<u8>> for BlockRecord {
             )));
         }
 
-        // The first two bytes are the length of the data
-        let data_length = u16::decode_fixed(&buf[0..2]);
+        // The first four bytes are the length of the data
+        let checksum = u32::decode_fixed(&buf[0..4]);
+        let unmasked_checksum = unmask_checksum(checksum);
 
-        // The third byte should be the block type
-        let block_type: BlockType = buf[2].try_into()?;
+        // The next two bytes are the length of the data
+        let data_length = u16::decode_fixed(&buf[4..6]);
 
-        Ok(BlockRecord {
-            length: data_length,
-            block_type,
-            data: buf[3..].to_vec(),
-        })
+        // The last byte should be the block type
+        let block_type: BlockType = buf[6].try_into()?;
+
+        // Get data and check the integrity of the data
+        let data = buf[HEADER_LENGTH_BYTES..].to_vec();
+        let calculated_checksum = CRC_CALCULATOR.checksum(&data);
+        if calculated_checksum != unmasked_checksum {
+            return Err(LogIOError::Seralization(LogSerializationErrorKind::Other(
+                format!(
+                    "The checksums of the data did not match. Expected {unmasked_checksum} but \
+                    got {calculated_checksum}"
+                ),
+            )));
+        }
+
+        Ok(BlockRecord::new(data_length, block_type, data))
     }
 }
 

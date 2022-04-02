@@ -1,6 +1,6 @@
 # RainDB - Architecture and Design
 
-## Goal
+## Motivation/Goals/Tenets
 
 This document is geared more towards the specifics of RainDB than a discussion of LSM trees in
 general--though there is a large amount of overlap. For more reading and references on LSM trees you
@@ -248,12 +248,14 @@ LevelDB. In LevelDB, the sequence number is a 56-bit uint and the operation is r
 
 Two structures in RainDB use the log format: write-ahead logs and manifest files.
 
-Log files consist of a series of 32KiB blocks. For each block, RainDB has a 3 byte header that
-consists of a 2 byte uint for the length of the data in the block and 1 byte to represent the block
-record type. Together, a block in the log can be represented by this struct:
+Log files consist of a series of 32KiB blocks. For each block, RainDB has a 7 byte header that
+consists of a 4 byte checksum, 2 byte unsigned integer for the length of the data in the block, and
+1 byte to represent the block record type. Together, a block in the log can be represented by this
+struct:
 
 ```rust
 struct BlockRecord {
+    checksum: u32,
     length: u16,
     block_type: BlockType,
     data: Vec<u8>,
