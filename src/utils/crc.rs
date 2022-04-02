@@ -13,7 +13,7 @@ recommend masking CRC's that will be stored somewhere (e.g. in a file).
 */
 pub(crate) fn mask_checksum(checksum: u32) -> u32 {
     // Rotate right by 15 bits and add a constant.
-    ((checksum >> 15) | (checksum << 17)) + CRC_MASKING_DELTA
+    ((checksum.wrapping_shr(15)) | (checksum.wrapping_shl(17))).wrapping_add(CRC_MASKING_DELTA)
 }
 
 /**
@@ -22,8 +22,8 @@ Return the unmasked checksum.
 The checksum must have been masked with [`crate::utils::crc::mask_checksum`].
 */
 pub(crate) fn unmask_checksum(masked_checksum: u32) -> u32 {
-    let rotated = masked_checksum - CRC_MASKING_DELTA;
-    (rotated >> 17) | (rotated << 15)
+    let rotated = masked_checksum.wrapping_sub(CRC_MASKING_DELTA);
+    (rotated.wrapping_shr(17)) | (rotated.wrapping_shl(15))
 }
 
 #[cfg(test)]
