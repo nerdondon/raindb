@@ -435,7 +435,7 @@ impl LogReader {
         let mut block_start_position = self.initial_offset - offset_in_block;
 
         // Skip ahead if we landed in the trailer.
-        if offset_in_block > BLOCK_SIZE_BYTES - 2 {
+        if offset_in_block > (BLOCK_SIZE_BYTES - (HEADER_LENGTH_BYTES - 1)) {
             block_start_position += BLOCK_SIZE_BYTES;
         }
 
@@ -456,7 +456,7 @@ impl LogReader {
     */
     fn read_physical_record(&mut self) -> LogIOResult<BlockRecord> {
         // Read the header
-        let mut header_buffer = [0; 3];
+        let mut header_buffer = [0; HEADER_LENGTH_BYTES];
         let header_bytes_read = self.log_file.read(&mut header_buffer)?;
         if header_bytes_read < HEADER_LENGTH_BYTES {
             // The end of the file was reached before we were able to read a full header. This
@@ -472,13 +472,13 @@ impl LogReader {
             )));
         }
 
-        let data_length = u16::decode_fixed(&header_buffer[0..2]);
+        let data_length = u16::decode_fixed(&header_buffer[4..6]) as usize;
 
         // Read the payload
-        let mut data_buffer = Vec::with_capacity(data_length as usize);
+        let mut data_buffer = vec![0; data_length];
         let data_bytes_read = self.log_file.read(&mut data_buffer)?;
 
-        if data_bytes_read < (data_length as usize) {
+        if data_bytes_read < data_length {
             // The end of the file was reached before we were able to read a full data chunk. This
             // can occur if the log writer died in the middle of writing the record.
             let err_msg = format!(
