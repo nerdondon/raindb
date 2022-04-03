@@ -304,11 +304,7 @@ impl LogWriter {
     fn emit_block(&mut self, block_type: BlockType, data_chunk: &[u8]) -> LogIOResult<()> {
         // Convert `usize` to `u16` so that it fits in our header format.
         let data_length = u16::try_from(data_chunk.len())?;
-        let block = BlockRecord {
-            length: data_length,
-            block_type,
-            data: data_chunk.to_vec(),
-        };
+        let block = BlockRecord::new(data_length, block_type, data_chunk.to_vec());
 
         log::info!(
             "Writing new record to log file at {:?} with length {} and block type {:?}.",
