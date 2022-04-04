@@ -413,7 +413,7 @@ impl LogReader {
         }
 
         if self.current_cursor_position > 0
-            && (self.current_cursor_position as u64) == self.log_file.len()?
+            && (self.current_cursor_position as u64) >= self.len()?
         {
             return Ok(vec![]);
         }
