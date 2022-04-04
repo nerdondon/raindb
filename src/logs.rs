@@ -352,8 +352,26 @@ pub(crate) struct LogReader {
     The offset to the byte being read.
 
     This should usually be aligned to the start of a block.
+
+    # Legacy
+
+    This is synonomous to LevelDB's `log::Reader::end_of_buffer_offset_`.
     */
     current_cursor_position: usize,
+
+    /**
+    The offset in the current block being written to.
+
+    # Legacy
+
+    This is synonomous to whenever LevelDB calls `log::Reader::buffer_.size()`. LevelDB uses a this
+    private `buffer_` field when reading from the physical file backing the log reader. For
+    efficiency, LevelDB reads the physical file a block at a time e.g. 32 KiB at time. RainDB
+    attempts to simplify matters by just reading what we need. Reading a block at a time helps with
+    efficiency because the log is usually read in a sequential manner and all entries are
+    processed (e.g. during database recoveries).
+    */
+    current_block_offset: usize,
 }
 
 /// Public methods
@@ -378,6 +396,7 @@ impl LogReader {
             log_file_path: log_file_path.as_ref().to_path_buf(),
             initial_offset: initial_block_offset,
             current_cursor_position: initial_block_offset,
+            current_block_offset: 0,
         };
 
         Ok(reader)
@@ -471,6 +490,7 @@ impl LogReader {
                 err_msg,
             )));
         }
+        self.current_block_offset += header_bytes_read;
 
         let data_length = u16::decode_fixed(&header_buffer[4..6]) as usize;
 
@@ -496,6 +516,8 @@ impl LogReader {
         let serialized_block = [header_buffer.to_vec(), data_buffer].concat();
         let block_record: BlockRecord = BlockRecord::try_from(&serialized_block)?;
         self.current_cursor_position += header_buffer.len() + data_bytes_read;
+        self.current_block_offset =
+            (self.current_block_offset + data_bytes_read) % BLOCK_SIZE_BYTES;
 
         Ok(block_record)
     }
