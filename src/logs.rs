@@ -474,6 +474,17 @@ impl LogReader {
     Returns the parsed [`BlockRecord`].
     */
     fn read_physical_record(&mut self) -> LogIOResult<BlockRecord> {
+        if BLOCK_SIZE_BYTES - self.current_block_offset < HEADER_LENGTH_BYTES {
+            // There are not enough bytes left in the current block to form a header. This might
+            // be a trailer so read up bytes until we hit the next record.
+            let mut trailer = vec![0u8; BLOCK_SIZE_BYTES - self.current_block_offset];
+            if !trailer.is_empty() {
+                self.log_file.read_exact(&mut trailer)?;
+                self.current_block_offset = 0;
+                self.current_cursor_position += trailer.len();
+            }
+        }
+
         // Read the header
         let mut header_buffer = [0; HEADER_LENGTH_BYTES];
         let header_bytes_read = self.log_file.read(&mut header_buffer)?;
