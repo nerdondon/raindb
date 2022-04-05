@@ -321,6 +321,11 @@ impl LogWriter {
         log::info!("Wrote {} bytes to the log file.", bytes_written);
         Ok(())
     }
+
+    /// Get the length of the underlying log file.
+    fn len(&self) -> LogIOResult<u64> {
+        Ok(self.log_file.len()?)
+    }
 }
 
 impl fmt::Debug for LogWriter {
@@ -533,6 +538,11 @@ impl LogReader {
         Ok(block_record)
     }
 
+    /// Get the length of the underlying log file.
+    fn len(&self) -> LogIOResult<u64> {
+        Ok(self.log_file.len()?)
+    }
+
     /// Log bytes dropped with the provided reason.
     fn log_drop(num_bytes_dropped: u64, reason: String) {
         log::error!(
@@ -545,5 +555,184 @@ impl LogReader {
     /// Log bytes dropped because corruption was detected.
     fn log_corruption(num_bytes_corrupted: u64) {
         LogReader::log_drop(num_bytes_corrupted, "Detected corruption.".to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use std::fmt::Write;
+
+    use crate::fs::InMemoryFileSystem;
+
+    use super::*;
+
+    #[test]
+    fn can_read_and_write() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+
+        log_writer.append(b"here is a string.").unwrap();
+        log_writer.append(b"we got more strings over here").unwrap();
+        log_writer.append(b"").unwrap();
+        log_writer
+            .append(b"there was an empty string somewhere")
+            .unwrap();
+
+        drop(log_writer);
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+        assert_eq!(
+            b"here is a string.".to_vec(),
+            log_reader.read_record().unwrap()
+        );
+        assert_eq!(
+            b"we got more strings over here".to_vec(),
+            log_reader.read_record().unwrap()
+        );
+        assert_eq!(b"".to_vec(), log_reader.read_record().unwrap());
+        assert_eq!(
+            b"there was an empty string somewhere".to_vec(),
+            log_reader.read_record().unwrap()
+        );
+
+        assert_eq!(
+            Vec::<u8>::new(),
+            log_reader.read_record().unwrap(),
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+        assert_eq!(
+            Vec::<u8>::new(),
+            log_reader.read_record().unwrap(),
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+    }
+
+    #[test]
+    fn can_read_and_write_with_lots_of_blocks() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+
+        for num in 0usize..100_000 {
+            log_writer.append(format!("{num}").as_bytes()).unwrap();
+        }
+        println!("Log writer wrote {} bytes", log_writer.len().unwrap());
+        drop(log_writer);
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+        println!("Log reader sees {} bytes", log_reader.len().unwrap());
+        for num in 0usize..100_000 {
+            let actual_record = log_reader.read_record().ok();
+            if num >= 99_990 {
+                println!(
+                    "Actual record read {}",
+                    std::str::from_utf8(actual_record.as_ref().unwrap()).unwrap()
+                );
+            }
+            assert!(
+                actual_record.unwrap() == format!("{num}").as_bytes(),
+                "Failed to properly read at iteration {num}"
+            );
+        }
+
+        assert_eq!(
+            Vec::<u8>::new(),
+            log_reader.read_record().unwrap(),
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+    }
+
+    #[test]
+    fn can_read_and_write_with_records_larger_than_the_block_size_limit() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+
+        log_writer.append(b"small").unwrap();
+        log_writer
+            .append(&generate_large_buffer("medium", 50_000))
+            .unwrap();
+        log_writer
+            .append(&generate_large_buffer("large", 100_000))
+            .unwrap();
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+        assert_eq!(log_reader.read_record().unwrap(), b"small");
+        assert_eq!(
+            log_reader.read_record().unwrap(),
+            generate_large_buffer("medium", 50_000)
+        );
+        assert_eq!(
+            log_reader.read_record().unwrap(),
+            generate_large_buffer("large", 100_000)
+        );
+        assert_eq!(
+            Vec::<u8>::new(),
+            log_reader.read_record().unwrap(),
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+    }
+
+    #[test]
+    fn when_a_there_is_only_enough_room_for_an_empty_record_will_write_a_header_with_no_padding() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+        let marginal_size = BLOCK_SIZE_BYTES - (2 * HEADER_LENGTH_BYTES);
+
+        log_writer
+            .append(&generate_large_buffer("foo", marginal_size))
+            .unwrap();
+        assert_eq!(
+            log_writer.len().unwrap(),
+            (BLOCK_SIZE_BYTES - HEADER_LENGTH_BYTES) as u64
+        );
+
+        log_writer.append(b"").unwrap();
+        log_writer.append(b"bar").unwrap();
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+        assert_eq!(
+            log_reader.read_record().unwrap(),
+            generate_large_buffer("foo", marginal_size)
+        );
+        assert_eq!(log_reader.read_record().unwrap(), b"");
+        assert_eq!(log_reader.read_record().unwrap(), b"bar");
+        assert_eq!(
+            Vec::<u8>::new(),
+            log_reader.read_record().unwrap(),
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+    }
+
+    #[test]
+    fn can_reopen_a_log_and_append() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+        log_writer.append(b"foo").unwrap();
+
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, true).unwrap();
+        log_writer.append(b"bar").unwrap();
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+        assert_eq!(log_reader.read_record().unwrap(), b"foo");
+        assert_eq!(log_reader.read_record().unwrap(), b"bar");
+        assert_eq!(
+            Vec::<u8>::new(),
+            log_reader.read_record().unwrap(),
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+    }
+
+    fn generate_large_buffer(pattern: &str, target_size: usize) -> Vec<u8> {
+        let mut string = String::with_capacity(target_size);
+        while string.len() < target_size {
+            write!(string, "{pattern}").unwrap();
+        }
+
+        string.as_bytes().to_vec()
     }
 }
