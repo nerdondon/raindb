@@ -4,9 +4,7 @@ use std::rc::Rc;
 use integer_encoding::FixedInt;
 use snap::write::FrameEncoder;
 
-use crate::config::{
-    TableFileCompressionType, MAX_BLOCK_DATA_SIZE, PREFIX_COMPRESSION_RESTART_INTERVAL,
-};
+use crate::config::{TableFileCompressionType, PREFIX_COMPRESSION_RESTART_INTERVAL};
 use crate::file_names::FileNameHandler;
 use crate::filter_policy;
 use crate::fs::RandomAccessFile;
@@ -141,7 +139,7 @@ impl TableBuilder {
             BuilderError::OutOfOrder
         );
 
-        if self.data_block_builder.approximate_size() >= MAX_BLOCK_DATA_SIZE {
+        if self.data_block_builder.approximate_size() >= self.options.max_block_size() {
             let maybe_block_handle = self.flush_data_block()?;
 
             if let Some(block_handle) = maybe_block_handle {

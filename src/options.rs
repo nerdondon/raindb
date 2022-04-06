@@ -50,7 +50,17 @@ pub struct DbOptions {
 
     **This defaults to 2 MiB.**
     */
-    max_file_size: u64,
+
+    /**
+    The approximate maximum size of user data that is allowed to be packed into a block of a table
+    file.
+
+    The data considered here is uncompressed data. The actual size of the data on disk may be smaller
+    due to compression.
+
+    In LevelDB this is configurable and has a default size of 4 KiB.
+    */
+    pub max_block_size: usize,
 
     /**
     A wrapper around a particular file system to use.
@@ -95,9 +105,14 @@ impl DbOptions {
         self.max_memtable_size
     }
 
-    /// Get the databases maximum table file size.
+    /// Get the database's maximum table file size.
     pub fn max_file_size(&self) -> u64 {
         self.max_file_size
+    }
+
+    /// Get the maximum block size.
+    pub fn max_block_size(&self) -> usize {
+        self.max_block_size
     }
 
     /// Get a strong reference to the file system provider.
@@ -136,6 +151,7 @@ impl Default for DbOptions {
                 .to_owned(),
             max_memtable_size: 4 * 1024 * 1024,
             max_file_size: 2 * 1024 * 1024,
+            max_block_size: 4 * 1024,
             filesystem_provider: Arc::new(OsFileSystem::new()),
             filter_policy: Arc::new(BloomFilterPolicy::new(10)),
             block_cache: Arc::new(LRUCache::<BlockCacheKey, Arc<DataBlockReader>>::new(
