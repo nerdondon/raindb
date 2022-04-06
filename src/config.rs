@@ -14,24 +14,11 @@ use crate::errors::{RainDBError, RainDBResult};
 pub(crate) const SIZE_OF_U32_BYTES: usize = 4;
 
 /**
-The approximate maximum size of user data that is allowed to be packed into a block of a table
-file.
-
-The data considered here is uncompressed data. The actual size of the data on disk may be smaller
-due to compression.
-
-In LevelDB this is configurable and has a default size of 4 KiB.
-*/
-pub(crate) const MAX_BLOCK_DATA_SIZE: usize = 4 * 1024;
-
-/**
 The number of keys between restart points when prefix compressing keys.
 
 # Legacy
 
-This is configurable in LevelDB as part of the options object because LevelDB tends to pass all
-options around even if only a couple of the fields are required. RainDB is taking a more tactical
-approach and so this value is not configurable.
+This is synonomous to LevelDB's `Options::block_restart_interval`.
 */
 pub(crate) const PREFIX_COMPRESSION_RESTART_INTERVAL: usize = 16;
 
