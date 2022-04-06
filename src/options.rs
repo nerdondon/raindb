@@ -25,7 +25,7 @@ pub struct DbOptions {
 
     **This defaults to the current working directory.**
     */
-    db_path: String,
+    pub db_path: String,
 
     /**
     The maximum size that the memtable can reach before it is flushed to disk.
@@ -38,7 +38,7 @@ pub struct DbOptions {
 
     **This defaults to 4 MiB.**
     */
-    max_memtable_size: usize,
+    pub max_memtable_size: usize,
 
     /**
     This amount of bytes will be written to a file before switching to a new one.
@@ -50,6 +50,7 @@ pub struct DbOptions {
 
     **This defaults to 2 MiB.**
     */
+    pub max_file_size: u64,
 
     /**
     The approximate maximum size of user data that is allowed to be packed into a block of a table
@@ -67,14 +68,14 @@ pub struct DbOptions {
 
     **This defaults to [`OsFileSystem`](crate::fs::OsFileSystem).**
     */
-    filesystem_provider: Arc<dyn FileSystem>,
+    pub filesystem_provider: Arc<dyn FileSystem>,
 
     /**
     The filter policy to use for filtering requests to table files to reduce disk seeks.
 
     **This defaults to [`BloomFilterPolicy`](crate::filter_policy::BloomFilterPolicy).**
     */
-    filter_policy: Arc<dyn FilterPolicy>,
+    pub filter_policy: Arc<dyn FilterPolicy>,
 
     /**
     Cache used to store blocks read from disk in-memory to save on disk reads.
@@ -84,13 +85,13 @@ pub struct DbOptions {
 
     **This defaults to an 8 MiB internal cache if not set.**
     */
-    block_cache: Arc<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>>,
+    pub block_cache: Arc<dyn Cache<BlockCacheKey, Arc<DataBlockReader>>>,
 
     /// If true, the database will be created if it is missing.
-    create_if_missing: bool,
+    pub create_if_missing: bool,
 
     /// If true, an error is raised if the database already exists.
-    error_if_exists: bool,
+    pub error_if_exists: bool,
 }
 
 /// Public methods
