@@ -96,3 +96,21 @@ impl From<&BlockHandle> for Vec<u8> {
         [encoded_offset, encoded_size].concat()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn can_be_serialized_and_deserialized() {
+        let block_handle = BlockHandle::new(80, 2_000);
+        let serialized = Vec::<u8>::from(&block_handle);
+        let deserialized_from_slice = BlockHandle::try_from(serialized.as_slice()).unwrap();
+        let deserialized_from_ref = BlockHandle::try_from(&serialized).unwrap();
+
+        assert_eq!(block_handle, deserialized_from_slice);
+        assert_eq!(block_handle, deserialized_from_ref);
+    }
+}
