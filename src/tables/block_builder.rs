@@ -1,4 +1,5 @@
 use std::cmp;
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 use integer_encoding::{FixedInt, VarInt};
@@ -46,8 +47,16 @@ where
     /// True if the block has been finalized, i.e. [`BlockBuilder::finalize`] was called.
     block_finalized: bool,
 
-    /// The last key that was added to the block.
-    maybe_last_key_added: Option<Rc<K>>,
+    /// The last key that was added in bytes.
+    last_key_bytes: Vec<u8>,
+
+    /**
+    Marker to allow the specification of the type of keys this block stores.
+
+    This is meant to ensure that only a single type of key is added to the block rather than
+    any key that implements the [`RainDbKeyType`] trait.
+    */
+    key_type_marker: PhantomData<K>,
 }
 
 /// Crate-only methods
@@ -74,7 +83,8 @@ where
             restart_points,
             curr_compressed_count: 0,
             block_finalized: false,
-            maybe_last_key_added: None,
+            last_key_bytes: vec![],
+            key_type_marker: PhantomData,
         }
     }
 
@@ -88,6 +98,7 @@ where
     1. [`BlockBuilder::finalize`] has not been called since the last call to
        [`BlockBuilder::reset`].
     1. The provided key is larger than any previously provided key.
+    1. Key compression and reconstruction must be inverse functions.
 
     # Legacy
 
@@ -102,7 +113,7 @@ where
             "Attempted to add a key-value pair to a finalized block."
         );
         assert!(
-            self.buffer.is_empty() || self.maybe_last_key_added.as_ref().unwrap() < &key,
+            self.buffer.is_empty() || self.last_key_bytes < key_bytes,
             "{}",
             BuilderError::OutOfOrder
         );
@@ -113,16 +124,13 @@ where
 
         let mut shared_prefix_size: usize = 0;
         if self.curr_compressed_count < self.prefix_compression_restart_interval {
-            if let Some(last_key_added) = self.maybe_last_key_added.as_ref() {
-                // Compare to the previously added key to see how much the current key can be compressed
-                let last_key_added_bytes = last_key_added.as_bytes();
-                let min_prefix_length = cmp::min(last_key_added_bytes.len(), key_bytes.len());
+            // Compare to the current key prefix to see how much the new key can be compressed
+            let min_prefix_length = cmp::min(self.last_key_bytes.len(), key_bytes.len());
 
-                while shared_prefix_size < min_prefix_length
-                    && last_key_added_bytes[shared_prefix_size] == key_bytes[shared_prefix_size]
-                {
-                    shared_prefix_size += 1;
-                }
+            while shared_prefix_size < min_prefix_length
+                && self.last_key_bytes[shared_prefix_size] == key_bytes[shared_prefix_size]
+            {
+                shared_prefix_size += 1;
             }
         } else {
             // Restart compression
@@ -130,14 +138,15 @@ where
             self.curr_compressed_count = 0;
         }
 
-        let non_shared_bytes = (key_bytes.len() - shared_prefix_size) as u32;
+        let num_non_shared_bytes = (key_bytes.len() - shared_prefix_size) as u32;
 
         // Write number of shared bytes for the key
         self.buffer
             .extend(u32::encode_var_vec(shared_prefix_size as u32));
 
         // Write number of non-shared bytes
-        self.buffer.extend(u32::encode_var_vec(non_shared_bytes));
+        self.buffer
+            .extend(u32::encode_var_vec(num_non_shared_bytes));
 
         // Write length of the value
         self.buffer.extend(u32::encode_var_vec(value.len() as u32));
@@ -150,7 +159,14 @@ where
         self.buffer.extend_from_slice(value);
 
         // Update builder state
-        self.maybe_last_key_added = Some(key);
+        self.last_key_bytes.truncate(shared_prefix_size);
+        self.last_key_bytes
+            .extend_from_slice(&key_bytes[shared_prefix_size..]);
+        assert!(
+            self.last_key_bytes == key_bytes,
+            "The reconstructed key was not the same as the key being added."
+        );
+
         self.curr_compressed_count += 1;
     }
 
@@ -169,7 +185,7 @@ where
         self.buffer.clear();
         self.curr_compressed_count = 0;
         self.block_finalized = false;
-        self.maybe_last_key_added = None;
+        self.last_key_bytes.clear();
     }
 
     /**
