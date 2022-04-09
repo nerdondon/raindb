@@ -203,6 +203,7 @@ impl FileMetadata {
     pub(crate) fn deserialize<R: Read>(reader: &mut R) -> io::Result<FileMetadata> {
         let file_number = reader.read_varint::<u64>()?;
         let mut file = FileMetadata::new(file_number);
+        let file_size = reader.read_varint::<u64>()?;
         let smallest_key = match InternalKey::try_from(reader.read_length_prefixed_slice()?) {
             Ok(key) => key,
             Err(base_err) => {
@@ -222,7 +223,7 @@ impl FileMetadata {
             }
         };
 
-        file.set_file_size(reader.read_varint::<u64>()?);
+        file.set_file_size(file_size);
         file.set_smallest_key(Some(smallest_key));
         file.set_largest_key(Some(largest_key));
 
@@ -291,3 +292,143 @@ impl PartialEq for FileMetadata {
 }
 
 impl Eq for FileMetadata {}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn file_metadata_maintains_identity_invariants() {
+        let mut metadata1 = FileMetadata::new(117);
+        metadata1.set_smallest_key(Some(InternalKey::new(b"hello".to_vec(), 1, Operation::Put)));
+        metadata1.set_largest_key(Some(InternalKey::new(
+            b"world".to_vec(),
+            1,
+            Operation::Delete,
+        )));
+        metadata1.set_file_size(30_000);
+
+        let mut metadata2 = FileMetadata::new(117);
+        metadata2.set_smallest_key(Some(InternalKey::new(b"hello".to_vec(), 1, Operation::Put)));
+        metadata2.set_largest_key(Some(InternalKey::new(
+            b"world".to_vec(),
+            1,
+            Operation::Delete,
+        )));
+        metadata2.set_file_size(30_000);
+
+        let mut metadata3 = FileMetadata::new(117);
+        metadata3.set_smallest_key(Some(InternalKey::new(b"hello".to_vec(), 1, Operation::Put)));
+        metadata3.set_largest_key(Some(InternalKey::new(
+            b"world".to_vec(),
+            3,
+            Operation::Delete,
+        )));
+        metadata3.set_file_size(30_000);
+
+        assert_eq!(metadata1, metadata2);
+        assert_ne!(metadata1, metadata3);
+    }
+
+    #[test]
+    fn file_metadata_can_be_serialized_and_deserialized_correct() {
+        let mut metadata = FileMetadata::new(117);
+        metadata.set_smallest_key(Some(InternalKey::new(b"hello".to_vec(), 1, Operation::Put)));
+        metadata.set_largest_key(Some(InternalKey::new(
+            b"world".to_vec(),
+            1,
+            Operation::Delete,
+        )));
+        metadata.set_file_size(30_000);
+
+        let serialized: Vec<u8> = (&metadata).into();
+        let deserialized = FileMetadata::try_from(serialized.as_slice()).unwrap();
+
+        assert_eq!(metadata, deserialized);
+    }
+
+    #[test]
+    fn file_metadata_by_smallest_key_comparator_correctly_orders_inputs() {
+        let mut metadata1 = FileMetadata::new(117);
+        metadata1.set_smallest_key(Some(InternalKey::new(b"apple".to_vec(), 1, Operation::Put)));
+        metadata1.set_largest_key(Some(InternalKey::new(
+            b"this doesn't matter".to_vec(),
+            1,
+            Operation::Delete,
+        )));
+        metadata1.set_file_size(30_000);
+
+        let mut metadata2 = FileMetadata::new(117);
+        metadata2.set_smallest_key(Some(InternalKey::new(
+            b"banana".to_vec(),
+            1,
+            Operation::Put,
+        )));
+        metadata2.set_largest_key(Some(InternalKey::new(
+            b"this doesn't matter".to_vec(),
+            1,
+            Operation::Delete,
+        )));
+        metadata2.set_file_size(30_000);
+
+        let mut metadata3 = FileMetadata::new(104);
+        metadata3.set_smallest_key(Some(InternalKey::new(b"apple".to_vec(), 1, Operation::Put)));
+        metadata3.set_largest_key(Some(InternalKey::new(
+            b"this doesn't matter".to_vec(),
+            1,
+            Operation::Delete,
+        )));
+        metadata3.set_file_size(30_000);
+
+        assert_eq!(
+            FileMetadataBySmallestKey::compare(&metadata1, &metadata2),
+            Ordering::Less,
+            "Should be ordered by smallest key."
+        );
+        assert_eq!(
+            FileMetadataBySmallestKey::compare(&metadata1, &metadata3),
+            Ordering::Greater,
+            "Ties should be broken by file number"
+        );
+    }
+
+    #[test]
+    fn file_metadata_can_get_a_key_range_covering_the_key_range_in_a_list_of_files() {
+        let mut metadata1 = FileMetadata::new(87);
+        metadata1.set_smallest_key(Some(InternalKey::new(
+            b"banana".to_vec(),
+            1,
+            Operation::Put,
+        )));
+        metadata1.set_largest_key(Some(InternalKey::new(b"zebra".to_vec(), 3, Operation::Put)));
+
+        let mut metadata2 = FileMetadata::new(104);
+        metadata2.set_smallest_key(Some(InternalKey::new(
+            b"coconut".to_vec(),
+            1,
+            Operation::Put,
+        )));
+        metadata2.set_largest_key(Some(InternalKey::new(b"zebra".to_vec(), 1, Operation::Put)));
+
+        let mut metadata3 = FileMetadata::new(117);
+        metadata3.set_smallest_key(Some(InternalKey::new(
+            b"apple".to_vec(),
+            999,
+            Operation::Put,
+        )));
+        metadata3.set_largest_key(Some(InternalKey::new(b"zebra".to_vec(), 2, Operation::Put)));
+
+        let files = [metadata1, metadata2, metadata3].map(Arc::new);
+        let expected_range = InternalKey::new(b"apple".to_vec(), 999, Operation::Put)
+            ..InternalKey::new(b"zebra".to_vec(), 3, Operation::Put);
+
+        assert_eq!(
+            expected_range,
+            FileMetadata::get_key_range_for_files(&files)
+        );
+    }
+}
