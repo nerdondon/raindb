@@ -337,9 +337,9 @@ where
 
         // Binary search to find a key <= `target` since block entries are sorted
         let mut left = 0;
-        let mut right = self.block_entries.len() - 1;
+        let mut right = self.block_entries.len();
         while left < right {
-            let mid = (left + right + 1) / 2;
+            let mid = (left + right) / 2;
             let mid_entry = &self.block_entries[mid];
 
             match mid_entry.key.cmp(target) {
@@ -347,12 +347,13 @@ where
                     // The key at `mid` is smaller than `target`. So, shift the search space right
                     // to see if we can find a larger key that is smaller than `target`. Our aim is
                     // to get as close as we can to the `target`.
-                    left = mid;
+                    left = mid + 1;
                 }
                 Ordering::Greater | Ordering::Equal => {
                     // The key at `mid` is >= the `target`. So, shift the search space left to see
-                    // if we can find a key that is smaller than `target`.
-                    right = mid - 1;
+                    // if we can find a key that is smaller than `target` in the case that the
+                    // `target` does not exist.
+                    right = mid;
                 }
             }
         }
