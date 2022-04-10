@@ -219,10 +219,11 @@ where
             current_offset = value_end_offset;
 
             // Check if the block offset is also the offset of a restart point.
-            // Also do a check to ensure that the number of shared bytes is zero since restart
+            // Also, do a check to ensure that the number of shared bytes is zero since restart
             // points do not have any prefix compression. This second check should be largely
             // redundant but here just to be extra safe and verify all invariants.
-            if block_offset == (restart_point_offsets[restart_offsets_index] as usize)
+            if restart_offsets_index < restart_point_offsets.len()
+                && block_offset == (restart_point_offsets[restart_offsets_index] as usize)
                 && key_num_shared_bytes == 0
             {
                 restart_point_indexes.push(block_entries.len());
