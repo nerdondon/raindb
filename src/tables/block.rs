@@ -374,8 +374,8 @@ where
     }
 
     fn next(&mut self) -> Option<(&K, &Vec<u8>)> {
-        // The iterator is not valid, don't do anything
-        if !self.is_valid() {
+        // Don't do anything if we are just past the last element
+        if self.current_index == self.block_entries.len() {
             return None;
         }
 
@@ -390,8 +390,8 @@ where
     }
 
     fn prev(&mut self) -> Option<(&K, &Vec<u8>)> {
-        // The iterator is not valid, don't do anything
-        if !self.is_valid() {
+        // Don't do anything if we are the first element
+        if self.current_index == 0 {
             return None;
         }
 
