@@ -453,3 +453,198 @@ impl TryFrom<Vec<u8>> for MetaIndexKey {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use std::rc::Rc;
+
+    use crate::config::PREFIX_COMPRESSION_RESTART_INTERVAL;
+    use crate::tables::block_builder::BlockBuilder;
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn block_reader_can_deserialize_a_block() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+        for idx in 0..2_000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        assert!(
+            block_builder.approximate_size() >= block_reader.size(),
+            "The size of the deserialized block should not be understated by the builder's \
+            approximation."
+        );
+        assert_eq!(
+            block_reader.block_entries.len(),
+            2_000,
+            "There should be the same number of entries as the block builder that created the \
+            block being deserialized."
+        );
+    }
+
+    #[test]
+    fn block_iterator_can_iterate_the_block() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+        for idx in 0..2_000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        let mut block_iter = block_reader.iter();
+        let mut idx: usize = 0;
+        while block_iter.is_valid() && idx < 2_000 {
+            let num = idx + 100_000;
+            let expected_key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            let expected_val = u64::encode_fixed_vec(num as u64);
+
+            let (curr_key, curr_val) = block_iter.current().unwrap();
+            assert_eq!(&expected_key, curr_key);
+            assert_eq!(&expected_val, curr_val);
+
+            // Move to the next entry
+            idx += 1;
+            block_iter.next();
+        }
+
+        assert!(
+            block_iter.next().is_none() && idx == 2_000,
+            "Arrived at the last element early (index {idx}). Expected last element at iteration \
+            2,000."
+        );
+    }
+
+    #[test]
+    fn block_iterator_can_seek_to_last() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+        for idx in 0..2_000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        let mut block_iter = block_reader.iter();
+
+        block_iter.seek_to_last().unwrap();
+        let (last_key, last_val) = block_iter.current().unwrap();
+        assert_eq!(
+            last_key,
+            &InternalKey::new(
+                101_999_usize.to_string().as_bytes().to_vec(),
+                1_999,
+                Operation::Put,
+            ),
+            "Found an incorrect last key"
+        );
+        assert_eq!(
+            last_val,
+            &u64::encode_fixed_vec(101_999),
+            "Found an incorrect last value"
+        );
+        assert!(block_iter.next().is_none());
+        assert!(block_iter.prev().is_some());
+    }
+
+    #[test]
+    fn block_iterator_can_seek_to_targets() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+        for idx in 0..2_000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        let mut block_iter = block_reader.iter();
+        // Start the iterator at an arbitrary position
+        block_iter.seek_to_last().unwrap();
+
+        // Seek key that exists
+        block_iter
+            .seek(&InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                117,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                117,
+                Operation::Put,
+            ),
+            "Found an incorrect key"
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_117),
+            "Found an incorrect value"
+        );
+
+        // Seeking a key that does not exist should end at an entry less than the target
+        block_iter
+            .seek(&InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                // Sequence numbers are sorted in descending order so this is greater than what
+                // exists in the block
+                118,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                117,
+                Operation::Put,
+            ),
+            "Found an incorrect key. Should have found a key less than the target."
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_117),
+            "Found an incorrect key. Should have found a key less than the target."
+        );
+    }
+}
