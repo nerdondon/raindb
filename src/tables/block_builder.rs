@@ -153,7 +153,7 @@ where
 
         // Write non-shared part of the key i.e. the prefix-compressed key
         self.buffer
-            .extend_from_slice(&key_bytes[(non_shared_bytes as usize)..]);
+            .extend_from_slice(&key_bytes[shared_prefix_size..]);
 
         // Write the value
         self.buffer.extend_from_slice(value);
@@ -231,5 +231,89 @@ where
     /// Return true if the block does not have any entries.
     pub(crate) fn is_empty(&self) -> bool {
         self.buffer.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::PREFIX_COMPRESSION_RESTART_INTERVAL;
+    use crate::key::InternalKey;
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn can_add_entries_as_expected() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+
+        assert!(block_builder.is_empty());
+        assert_eq!(block_builder.restart_points.len(), 1);
+
+        for idx in 0..PREFIX_COMPRESSION_RESTART_INTERVAL {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+
+        assert_eq!(block_builder.restart_points.len(), 1);
+
+        let reset_prefix_key = InternalKey::new(
+            200_000_u32.to_string().as_bytes().to_vec(),
+            200_u64,
+            Operation::Put,
+        );
+        block_builder.add_entry(Rc::new(reset_prefix_key), &u64::encode_fixed_vec(200_u64));
+
+        assert_eq!(
+            block_builder.restart_points.len(),
+            2,
+            "A new restart point should have been created"
+        );
+
+        let key_after_reset = InternalKey::new(
+            201_000_u32.to_string().as_bytes().to_vec(),
+            201_u64,
+            Operation::Put,
+        );
+        block_builder.add_entry(Rc::new(key_after_reset), &u64::encode_fixed_vec(201_u64));
+
+        assert_eq!(
+            block_builder.restart_points.len(),
+            2,
+            "There should not be another reset point"
+        );
+
+        assert!(
+            block_builder.approximate_size() >= block_builder.buffer.len(),
+            "The approximate size should be for the finalized size of the block"
+        );
+    }
+
+    #[test]
+    fn finalize_works_as_expected() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+
+        for idx in 0..(PREFIX_COMPRESSION_RESTART_INTERVAL + 2) {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+
+        let finalized_block = block_builder.finalize();
+        assert!(
+            finalized_block.len() <= block_builder.approximate_size(),
+            "The buffer should be larger after calling `finalize` because of the addition of the \
+            serialized restart points."
+        );
     }
 }
