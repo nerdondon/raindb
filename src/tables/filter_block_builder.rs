@@ -67,7 +67,7 @@ impl FilterBlockBuilder {
     pub(crate) fn notify_new_data_block(&mut self, block_offset: usize) {
         let filter_index = block_offset / (FILTER_RANGE_SIZE_BYTES as usize);
 
-        // The data block was written at an offset indexes further than the filters that have been
+        // The data block was written at an offset further than the number filters that have been
         // generated so far. This means that we need to generate more filters for any pending keys.
         while filter_index > self.filters.len() {
             self.generate_filter();
@@ -126,5 +126,74 @@ impl FilterBlockBuilder {
         self.filters.push(filter);
 
         self.keys.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use crate::key::{InternalKey, RainDbKeyType};
+    use crate::{BloomFilterPolicy, Operation};
+
+    use super::*;
+
+    #[test]
+    fn can_generate_filter_blocks_based_on_a_filter_policy() {
+        let mut filter_block = FilterBlockBuilder::new(Arc::new(BloomFilterPolicy::new(10)));
+        let keys = generate_num_keys(30);
+        for key in keys {
+            filter_block.add_key(key.as_bytes());
+        }
+
+        filter_block.notify_new_data_block(4096);
+
+        assert_eq!(filter_block.filters.len(), 2);
+
+        let keys = generate_num_keys(40);
+        for key in keys {
+            filter_block.add_key(key.as_bytes());
+        }
+
+        filter_block.notify_new_data_block(8192);
+
+        assert_eq!(filter_block.filters.len(), 4);
+    }
+
+    #[test]
+    fn finalizing_a_filter_block_builder_returns_a_serialized_representation() {
+        let mut filter_block = FilterBlockBuilder::new(Arc::new(BloomFilterPolicy::new(10)));
+        let keys = generate_num_keys(30);
+        for key in keys {
+            filter_block.add_key(key.as_bytes());
+        }
+        filter_block.notify_new_data_block(4096);
+
+        let keys = generate_num_keys(40);
+        for key in keys {
+            filter_block.add_key(key.as_bytes());
+        }
+        filter_block.notify_new_data_block(8192);
+
+        assert!(
+            !filter_block.finalize().is_empty(),
+            "The serialized represenation of a set of filters should not be empty."
+        );
+    }
+
+    /// Generate a specified number of [`InternalKey`]'s.
+    fn generate_num_keys(num_keys_to_generate: usize) -> Vec<InternalKey> {
+        let mut keys = Vec::with_capacity(num_keys_to_generate);
+        for idx in 0..num_keys_to_generate {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            keys.push(key);
+        }
+
+        keys
     }
 }
