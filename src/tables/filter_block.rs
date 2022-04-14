@@ -58,7 +58,9 @@ impl FilterBlockReader {
         // before the range size exponent.
         let raw_offsets_start = &filter_data[filter_data.len() - 4..];
         let offsets_start_index = u32::decode_fixed(raw_offsets_start) as usize;
-        let offsets = FilterBlockReader::deserialize_offsets(&filter_data[offsets_start_index..])?;
+        let offsets = FilterBlockReader::deserialize_offsets(
+            &filter_data[offsets_start_index..(filter_data.len() - 4)],
+        )?;
 
         // Split up the filters according to the deserialized offets for more straight-forward
         // checking later
@@ -138,7 +140,7 @@ impl FilterBlockReader {
     fn split_filters_with_offset(offsets: &[u32], raw_filters: &[u8]) -> Vec<Vec<u8>> {
         let mut filters: Vec<Vec<u8>> = vec![];
 
-        for offset_index in 0..(offsets.len() - 1) {
+        for offset_index in 0..offsets.len() {
             let next_offset_index = offset_index + 1;
             let filter_start_index = offsets[offset_index] as usize;
 
