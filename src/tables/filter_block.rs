@@ -78,8 +78,8 @@ impl FilterBlockReader {
     /// Returns true if the `key` is in the filter.
     pub fn key_may_match(&self, block_offset: u64, key: &[u8]) -> bool {
         if self.filters.is_empty() {
-            // There are no filters so just return false
-            return false;
+            // There are no filters so return true and force a disk seek
+            return true;
         }
 
         /*
