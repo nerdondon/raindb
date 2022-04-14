@@ -93,6 +93,11 @@ impl FilterBlockReader {
             // encountered
             log::warn!("The provided block offset ({}) could not be used to index the filter array. Ignoring the error and returning true so that a disk seek is done.", block_offset);
         } else {
+            if self.filters[filter_index].is_empty() {
+                // Empty filters do not match any keys
+                return false;
+            }
+
             match (*self.filter_policy).key_may_match(key, &self.filters[filter_index]) {
                 Err(error) => {
                     log::warn!("There was an error checking the filter for a match. Ignoring the error and forcing a disk seek. Original error: {}", error);
