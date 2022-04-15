@@ -148,8 +148,8 @@ impl FilterBlockReader {
                 // This is the only or the last filter so just push the rest of the range
                 filters.push(raw_filters[filter_start_index..].to_vec());
             } else {
-                let filter_end_index = (offsets[next_offset_index] - 1) as usize;
-                filters.push(raw_filters[filter_start_index..filter_end_index].to_vec())
+                let next_filter_start_index = offsets[next_offset_index] as usize;
+                filters.push(raw_filters[filter_start_index..next_filter_start_index].to_vec())
             }
         }
 
