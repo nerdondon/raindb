@@ -64,7 +64,7 @@ impl FilterBlockReader {
 
         // Split up the filters according to the deserialized offets for more straight-forward
         // checking later
-        let raw_filters = &filter_data[..&filter_data.len() - 4].to_vec();
+        let raw_filters = &filter_data[..offsets_start_index].to_vec();
         let filters = FilterBlockReader::split_filters_with_offset(&offsets, raw_filters);
 
         Ok(Self {
