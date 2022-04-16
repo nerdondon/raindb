@@ -93,7 +93,11 @@ impl FilterBlockReader {
         if filter_index >= self.filters.len() {
             // Like LevelDB we ignore a filter matching error and force a disk seek when one is
             // encountered
-            log::warn!("The provided block offset ({}) could not be used to index the filter array. Ignoring the error and returning true so that a disk seek is done.", block_offset);
+            log::warn!(
+                "The provided block offset ({}) could not be used to index the filter array. \
+                Ignoring the error and returning true so that a disk seek is done.",
+                block_offset
+            );
         } else {
             if self.filters[filter_index].is_empty() {
                 // Empty filters do not match any keys
@@ -102,7 +106,11 @@ impl FilterBlockReader {
 
             match (*self.filter_policy).key_may_match(key, &self.filters[filter_index]) {
                 Err(error) => {
-                    log::warn!("There was an error checking the filter for a match. Ignoring the error and forcing a disk seek. Original error: {}", error);
+                    log::warn!(
+                        "There was an error checking the filter for a match. Ignoring the error \
+                        and forcing a disk seek. Original error: {}",
+                        error
+                    );
                 }
                 Ok(filter_result) => return filter_result,
             }
@@ -123,10 +131,7 @@ impl FilterBlockReader {
         }
 
         // Offsets are u32 values stored in a fixed-length encoding (4 bytes).
-        let offsets = raw_offsets
-            .chunks(4)
-            .map(|chunk| u32::decode_fixed(chunk))
-            .collect();
+        let offsets = raw_offsets.chunks(4).map(u32::decode_fixed).collect();
 
         Ok(offsets)
     }
