@@ -99,7 +99,7 @@ impl FilterBlockBuilder {
 
         // Append offsets next
         // The array of filter offsets come after the filters. Record this offset for serialization.
-        let offset_of_offsets = curr_filter_offset;
+        let offset_of_offsets = results.len();
         results.append(&mut serialized_offsets);
 
         // Add the offset to the array of filter offsets
