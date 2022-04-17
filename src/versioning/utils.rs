@@ -51,9 +51,167 @@ pub(crate) fn find_file_with_upper_bound_range(
         }
     }
 
-    if right == files.len() {
+    if left == files.len() {
         return None;
     }
 
-    Some(right)
+    Some(left)
+}
+
+#[cfg(test)]
+mod find_file_with_upper_bound_range_tests {
+    use pretty_assertions::assert_eq;
+
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn returns_nothing_for_an_empty_list() {
+        let files: Vec<Arc<FileMetadata>> = vec![];
+        let actual = find_file_with_upper_bound_range(
+            &files,
+            &InternalKey::new(b"bobo".to_vec(), 30, Operation::Put),
+        );
+
+        assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn when_there_is_only_one_file_returns_the_index_of_the_file_if_it_exists() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        insert_files_with_largest_keys(&mut files, vec![b"batmann".to_vec()]);
+
+        assert_eq!(
+            find_file_with_upper_bound_range(
+                &files,
+                &InternalKey::new(b"batmann".to_vec(), 30, Operation::Put),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(
+                &files,
+                &InternalKey::new(b"bat".to_vec(), 30, Operation::Put),
+            )
+            .unwrap(),
+            0,
+            "The target is not a boundary but is included in a file's key range so return the \
+            index of that file."
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(
+                &files,
+                &InternalKey::new(b"bb".to_vec(), 30, Operation::Put),
+            ),
+            None,
+            "The target key is larger than every other key so we return None since no file's range \
+            bounds the target from above."
+        );
+    }
+
+    #[test]
+    fn when_there_are_multiple_files_returns_the_index_of_the_file_if_it_exists() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        insert_files_with_largest_keys(
+            &mut files,
+            vec![
+                b"batmann".to_vec(),
+                b"blue".to_vec(),
+                b"bobo".to_vec(),
+                b"patty".to_vec(),
+                b"robin".to_vec(),
+            ],
+        );
+
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"apple".to_vec()))
+                .unwrap(),
+            0,
+            "The target is not a boundary but is included in a file's key range so return the \
+            index of that file."
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(
+                &files,
+                &InternalKey::new(b"bat".to_vec(), 30, Operation::Put),
+            )
+            .unwrap(),
+            0,
+            "The target is not a boundary but is included in a file's key range so return the \
+            index of that file."
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(
+                &files,
+                &InternalKey::new(b"batmann".to_vec(), 30, Operation::Put),
+            )
+            .unwrap(),
+            0
+        );
+
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"blue".to_vec()))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(
+                &files,
+                &InternalKey::new(b"bb".to_vec(), 30, Operation::Put),
+            )
+            .unwrap(),
+            1,
+            "The target is not a boundary but is included in a file's key range so return the \
+            index of that file."
+        );
+
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"bobo".to_vec()))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"bm".to_vec())).unwrap(),
+            2,
+            "The target is not a boundary but is included in a file's key range so return the \
+            index of that file."
+        );
+
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"patty".to_vec()))
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"robin".to_vec()))
+                .unwrap(),
+            4
+        );
+
+        assert_eq!(
+            find_file_with_upper_bound_range(&files, &create_testing_key(b"s".to_vec())),
+            None,
+            "The target key is larger than every other key so we return None since no file's range \
+            bounds the target from above."
+        );
+    }
+
+    /**
+    Add files with the largest key set to [`InternalKey`]'s with the specified user keys to the
+    provided metadata vector.
+    */
+    fn insert_files_with_largest_keys(files: &mut Vec<Arc<FileMetadata>>, user_keys: Vec<Vec<u8>>) {
+        for user_key in user_keys.into_iter() {
+            let mut file = FileMetadata::new(30);
+            file.set_largest_key(Some(create_testing_key(user_key)));
+            files.push(Arc::new(file));
+        }
+    }
+
+    /// Create an [`InternalKey`] based on the provided user key for testing.
+    fn create_testing_key(user_key: Vec<u8>) -> InternalKey {
+        InternalKey::new(user_key, 30, Operation::Put)
+    }
 }
