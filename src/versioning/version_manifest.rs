@@ -10,7 +10,7 @@ use super::errors::{RecoverError, RecoverResult};
 use super::file_metadata::FileMetadata;
 
 /// Represents a file to be deleted at a specified level.
-#[derive(Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DeletedFile {
     /// The level to delete the file from.
     pub(crate) level: usize,
@@ -36,6 +36,7 @@ This is synonymous to LevelDB's [`leveldb::VersionEdit`].
 
 [`leveldb::VersionEdit`]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/db/version_edit.h
 */
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct VersionChangeManifest {
     /// The file number for the write-ahead log for the new memtable.
     pub(crate) wal_file_number: Option<u64>,
@@ -65,7 +66,7 @@ pub(crate) struct VersionChangeManifest {
     */
     pub(crate) curr_file_number: Option<u64>,
 
-    /// New files to add to the next version with the level the file it should be added at.
+    /// New files to add to the next version with the level the file should be added at.
     pub(crate) new_files: Vec<(usize, FileMetadata)>,
 
     /**
@@ -359,5 +360,44 @@ impl TryFrom<&[u8]> for VersionChangeManifest {
         }
 
         Ok(version_manifest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn version_change_manifest_can_be_serialized_and_deserialized() {
+        let mut change_manifest = VersionChangeManifest {
+            curr_file_number: Some(3000),
+            prev_sequence_number: Some(4000),
+            wal_file_number: Some(2900),
+            ..VersionChangeManifest::default()
+        };
+
+        for idx in 0..4 {
+            change_manifest.add_file(
+                3,
+                2900 + idx,
+                4 * 1024 * 1024,
+                InternalKey::new(b"abc".to_vec(), (1 << 50) + idx, Operation::Put)
+                    ..InternalKey::new(b"xyz".to_vec(), (1 << 50) + 100 + idx, Operation::Delete),
+            );
+            change_manifest.remove_file(4, 2880 + idx);
+            change_manifest.add_compaction_pointer(
+                idx as usize,
+                InternalKey::new(b"rst".to_vec(), (1 << 50) + 100 + idx, Operation::Put),
+            );
+        }
+
+        let serialized = Vec::<u8>::from(&change_manifest);
+        let deserialized = VersionChangeManifest::try_from(serialized.as_slice()).unwrap();
+
+        assert_eq!(change_manifest, deserialized);
     }
 }
