@@ -1,5 +1,7 @@
 testing_files/
 
+*.bak
+
 ### macOS ###
 # General
 .DS_Store
