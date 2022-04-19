@@ -132,3 +132,36 @@ impl SnapshotList {
         self.list.tail().unwrap()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_snapshot_can_be_requested() {
+        let mut snapshots = SnapshotList::new();
+        let snapshot1 = snapshots.new_snapshot(1000);
+
+        assert!(Arc::ptr_eq(&snapshot1.inner(), &snapshots.newest()));
+
+        let snapshot2 = snapshots.new_snapshot(2000);
+
+        assert!(Arc::ptr_eq(&snapshot2.inner(), &snapshots.newest()));
+        assert!(Arc::ptr_eq(&snapshot1.inner(), &snapshots.oldest()));
+    }
+
+    #[test]
+    fn snapshots_can_be_removed() {
+        let mut snapshots = SnapshotList::new();
+        let snapshot1 = snapshots.new_snapshot(1000);
+        let snapshot2 = snapshots.new_snapshot(2000);
+
+        snapshots.delete_snapshot(snapshot1);
+
+        assert!(Arc::ptr_eq(&snapshot2.inner(), &snapshots.oldest()));
+
+        snapshots.delete_snapshot(snapshot2);
+
+        assert!(snapshots.is_empty());
+    }
+}
