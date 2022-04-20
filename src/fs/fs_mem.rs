@@ -408,23 +408,25 @@ impl ReadonlyRandomAccessFile for LockableInMemoryFile {
             return Ok(0);
         }
 
-        if offset > buf.len() {
+        let file = self.0.read();
+
+        if offset >= file.contents.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "The provided offset goes beyond the end of the file.",
             ));
         }
 
-        let file = self.0.read();
-        let end_of_copy_range = if file.contents.len() > (offset + buf.len()) {
-            offset + buf.len()
+        let bytes_to_read = if file.contents.len() > (offset + buf.len()) {
+            buf.len()
         } else {
-            file.contents.len()
+            file.contents.len() - offset
         };
+        let end_of_copy_range = offset + bytes_to_read;
 
-        // `copy_from_slice` requires that slices are of the same length or it panics. this is the
+        // `copy_from_slice` requires that slices are of the same length or it panics. This is the
         // reason for the range syntax below.
-        (&mut buf[..offset]).copy_from_slice(&file.contents[offset..end_of_copy_range]);
+        (&mut buf[..bytes_to_read]).copy_from_slice(&file.contents[offset..end_of_copy_range]);
 
         Ok(buf_length)
     }
@@ -525,6 +527,21 @@ mod tests {
         let bytes_read = file.read_to_string(&mut file_contents).unwrap();
         assert_eq!(bytes_read, 11);
         assert_eq!(file_contents, "Hello World");
+    }
+
+    #[test]
+    fn can_read_a_file_from_an_offset() {
+        let fs = InMemoryFileSystem::new();
+        let file_path = PathBuf::from("/some/database/wal-123.log");
+
+        let mut file = fs.create_file(&file_path, false).unwrap();
+        assert!(file.write(b"Hello World").is_ok());
+        file.seek(SeekFrom::Start(0)).unwrap();
+
+        let mut buf: [u8; 5] = [0; 5];
+        let bytes_read = file.read_from(&mut buf, 6).unwrap();
+        assert_eq!(bytes_read, 5);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "World");
     }
 
     #[test]
