@@ -1014,3 +1014,322 @@ impl VersionBuilder {
         files.push(file);
     }
 }
+
+#[cfg(test)]
+mod some_file_overlaps_range_tests {
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn given_an_empty_list_returns_false() {
+        let files: Vec<Arc<FileMetadata>> = vec![];
+
+        assert!(!Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"efg"),
+            Some(b"tuv")
+        ));
+        assert!(!Version::some_file_overlaps_range(
+            false,
+            &files,
+            None,
+            Some(b"tuv")
+        ));
+        assert!(!Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"efg"),
+            None
+        ));
+        assert!(!Version::some_file_overlaps_range(
+            false, &files, None, None
+        ));
+    }
+
+    #[test]
+    fn given_a_list_of_one_element_succeeds() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        insert_files_with_key_range(&mut files, vec![b"200".to_vec()..b"300".to_vec()]);
+
+        assert!(
+            !Version::some_file_overlaps_range(true, &files, Some(b"150"), Some(b"160")),
+            "A target range completely before the key space in the list of files should not have \
+            overlap."
+        );
+        assert!(
+            !Version::some_file_overlaps_range(true, &files, Some(b"301"), Some(b"400")),
+            "A target range completely after the key space in the list of files should not have \
+            overlap."
+        );
+
+        // Check boundaries
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"150"),
+            Some(b"200")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"200"),
+            Some(b"200")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"200"),
+            Some(b"300")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"250"),
+            Some(b"300")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"300"),
+            Some(b"300")
+        ));
+
+        // Check partially overlapping ranges
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"150"),
+            Some(b"250")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"250"),
+            Some(b"400")
+        ));
+
+        // Check completely overlapped range
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"220"),
+            Some(b"280")
+        ));
+    }
+
+    #[test]
+    fn given_a_disjoint_list_multiple_elements_succeeds() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        insert_files_with_key_range(
+            &mut files,
+            vec![
+                b"150".to_vec()..b"200".to_vec(),
+                b"200".to_vec()..b"250".to_vec(),
+                b"300".to_vec()..b"350".to_vec(),
+                b"400".to_vec()..b"450".to_vec(),
+            ],
+        );
+
+        assert!(
+            !Version::some_file_overlaps_range(true, &files, Some(b"120"), Some(b"140")),
+            "A target range completely before the key space in the list of files should not have \
+            overlap."
+        );
+        assert!(
+            !Version::some_file_overlaps_range(true, &files, Some(b"460"), Some(b"470")),
+            "A target range completely after the key space in the list of files should not have \
+            overlap."
+        );
+        assert!(
+            !Version::some_file_overlaps_range(true, &files, Some(b"251"), Some(b"299")),
+            "Should not detect overlap for a target range completely between key spaces of all \
+            files."
+        );
+
+        // Check boundaries
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"120"),
+            Some(b"150")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"200"),
+            Some(b"200")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"250"),
+            Some(b"299")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"450"),
+            Some(b"460")
+        ));
+
+        // Check various overlaps
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"150"),
+            Some(b"250")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"250"),
+            Some(b"400")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"220"),
+            Some(b"280")
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"275"),
+            Some(b"320")
+        ));
+    }
+
+    #[test]
+    fn given_a_disjoint_list_multiple_elements_and_target_ranges_with_open_ranges_succeeds() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        insert_files_with_key_range(
+            &mut files,
+            vec![
+                b"150".to_vec()..b"200".to_vec(),
+                b"200".to_vec()..b"250".to_vec(),
+                b"300".to_vec()..b"350".to_vec(),
+                b"400".to_vec()..b"450".to_vec(),
+            ],
+        );
+
+        // Check boundaries
+        assert!(!Version::some_file_overlaps_range(
+            true,
+            &files,
+            None,
+            Some(b"149")
+        ));
+        assert!(!Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"451"),
+            None
+        ));
+
+        assert!(Version::some_file_overlaps_range(true, &files, None, None));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"100"),
+            None
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"230"),
+            None
+        ));
+        assert!(Version::some_file_overlaps_range(
+            true,
+            &files,
+            Some(b"450"),
+            None
+        ));
+    }
+
+    #[test]
+    fn given_a_non_disjoint_list_multiple_elements_succeeds() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        insert_files_with_key_range(
+            &mut files,
+            vec![
+                b"150".to_vec()..b"600".to_vec(),
+                b"400".to_vec()..b"500".to_vec(),
+            ],
+        );
+
+        // Check boundaries
+        assert!(!Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"100"),
+            Some(b"149")
+        ));
+        assert!(!Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"601"),
+            Some(b"700")
+        ));
+
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"100"),
+            Some(b"150"),
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"100"),
+            Some(b"700"),
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"400"),
+            Some(b"600"),
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"450"),
+            Some(b"500"),
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"450"),
+            Some(b"700"),
+        ));
+        assert!(Version::some_file_overlaps_range(
+            false,
+            &files,
+            Some(b"600"),
+            Some(b"700"),
+        ));
+    }
+
+    /**
+    Add files with the largest key set to [`InternalKey`]'s with the specified user keys to the
+    provided metadata vector.
+    */
+    fn insert_files_with_key_range(
+        files: &mut Vec<Arc<FileMetadata>>,
+        user_keys: Vec<Range<Vec<u8>>>,
+    ) {
+        for user_key_range in user_keys.into_iter() {
+            let mut file = FileMetadata::new(30);
+            file.set_smallest_key(Some(create_testing_key(user_key_range.start)));
+            file.set_largest_key(Some(create_testing_key(user_key_range.end)));
+            files.push(Arc::new(file));
+        }
+    }
+
+    /// Create an [`InternalKey`] based on the provided user key for testing.
+    fn create_testing_key(user_key: Vec<u8>) -> InternalKey {
+        InternalKey::new(user_key, 30, Operation::Put)
+    }
+}
