@@ -753,11 +753,17 @@ impl Version {
             if let Some(file_index) =
                 super::utils::find_file_with_upper_bound_range(files, &smallest_full_key)
             {
-                // The beginning of the range is after all of the files, so there is no overlap
                 overlapping_file_index = file_index;
             } else {
+                // The beginning of the range is after all of the files, so there is no overlap
                 return false;
             }
+        }
+
+        // The start of the target range is in key range of the list of files so an open ended end
+        // of the target range means that there is an overlap
+        if largest_user_key.is_none() {
+            return true;
         }
 
         // We know file[overlapping_file_index].largest > smallest_user_key.
