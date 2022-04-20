@@ -725,6 +725,11 @@ impl Version {
         smallest_user_key: Option<&[u8]>,
         largest_user_key: Option<&[u8]>,
     ) -> bool {
+        if files.is_empty() {
+            // Early return since an empty list of files cannot overlap
+            return false;
+        }
+
         if !disjoint_sorted_files {
             // Need to check all files if there are overlapping key ranges
             for file in files {
