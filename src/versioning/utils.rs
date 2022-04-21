@@ -215,3 +215,24 @@ mod find_file_with_upper_bound_range_tests {
         InternalKey::new(user_key, 30, Operation::Put)
     }
 }
+
+#[cfg(test)]
+mod sum_file_sizes_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn can_sum_objects_convertible_to_a_file_metadata_reference() {
+        let mut files: Vec<Arc<FileMetadata>> = vec![];
+        assert_eq!(sum_file_sizes(&files), 0);
+
+        for idx in 0..5 {
+            let mut file = FileMetadata::new(idx + 30);
+            file.set_file_size(10);
+            files.push(Arc::new(file));
+        }
+
+        assert_eq!(sum_file_sizes(&files), 50);
+    }
+}
