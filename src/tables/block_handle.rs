@@ -22,7 +22,12 @@ pub(crate) struct BlockHandle {
     /// The offset in the raw byte buffer that the block resides.
     offset: u64,
 
-    /// The size of the block.
+    /**
+    The size of the block.
+
+    Crucially, this is purely the size of the block contents and does not include the block
+    descriptor (e.g. the block compression type or the block checksum).
+    */
     size: u64,
 }
 
@@ -39,7 +44,7 @@ impl BlockHandle {
 
     /// Get the size of the block this handle is for.
     pub fn get_size(&self) -> u64 {
-        self.offset
+        self.size
     }
 
     /**
@@ -102,6 +107,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn can_get_properties() {
+        let block_handle = BlockHandle::new(80, 2_000);
+
+        assert_eq!(block_handle.get_offset(), 80);
+        assert_eq!(block_handle.get_size(), 2_000);
+    }
 
     #[test]
     fn can_be_serialized_and_deserialized() {
