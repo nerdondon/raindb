@@ -43,7 +43,7 @@ A table file's footer consists of the following parts:
     - 40 comes from (2 * [`crate::block_handle::BLOCK_HANDLE_MAX_ENCODED_LENGTH`])
 - 8-byte `TABLE_MAGIC_NUMBER`
 */
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct Footer {
     metaindex_handle: BlockHandle,
     index_handle: BlockHandle,
@@ -116,5 +116,24 @@ impl TryFrom<&Footer> for Vec<u8> {
         }
 
         Ok(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn footer_can_be_serialized_and_deserialized() {
+        let metaindex_handle = BlockHandle::new(80, 20);
+        let index_handle = BlockHandle::new(100, 20);
+        let footer = Footer::new(metaindex_handle, index_handle);
+
+        let serialized = Vec::<u8>::try_from(&footer).unwrap();
+        let deserialized = Footer::try_from(&serialized).unwrap();
+
+        assert_eq!(footer, deserialized);
     }
 }
