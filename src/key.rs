@@ -407,6 +407,32 @@ mod tests {
     }
 
     #[test]
+    fn internal_key_sorting_works_as_expected() {
+        let keys = [
+            InternalKey::new(b"batmann".to_vec(), 1, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 2, Operation::Delete),
+            InternalKey::new(b"robin".to_vec(), 3, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 5, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put),
+        ];
+
+        let expected = [
+            InternalKey::new(b"batmann".to_vec(), 1, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 3, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 2, Operation::Delete),
+            InternalKey::new(b"tumtum".to_vec(), 5, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put),
+        ];
+
+        let mut actual = keys;
+        actual.sort();
+
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
     fn internal_key_can_generate_the_shortest_separator_between_two_keys_with_the_same_user_key() {
         let internal_key1 = InternalKey::new(b"batmann".to_vec(), 3, Operation::Put);
         let internal_key2 = InternalKey::new(b"batmann".to_vec(), 2, Operation::Put);
