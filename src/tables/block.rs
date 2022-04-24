@@ -592,6 +592,7 @@ mod tests {
 
         let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
         let mut block_iter = block_reader.iter();
+
         // Start the iterator at an arbitrary position
         block_iter.seek_to_last().unwrap();
 
@@ -645,6 +646,102 @@ mod tests {
             target_val,
             &u64::encode_fixed_vec(100_117),
             "Found an incorrect key. Should have found a key less than the target."
+        );
+    }
+
+    #[test]
+    fn block_reader_given_a_compression_restart_interval_of_one_can_deserialize_a_block() {
+        let mut block_builder: BlockBuilder<InternalKey> = BlockBuilder::new(1);
+        for idx in 0..30_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        assert_eq!(
+            block_reader.block_entries.len(),
+            30,
+            "There should be the same number of entries as the block builder that created the \
+            block being deserialized."
+        );
+    }
+
+    #[test]
+    fn block_iterator_given_a_compression_restart_interval_of_one_can_seek_to_targets() {
+        let mut block_builder: BlockBuilder<InternalKey> = BlockBuilder::new(1);
+        for idx in 0..2_000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        let mut block_iter = block_reader.iter();
+
+        // Start the iterator at an arbitrary position
+        block_iter.seek_to_last().unwrap();
+
+        // Seek key that exists
+        block_iter
+            .seek(&InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                117,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                117,
+                Operation::Put,
+            ),
+            "Found an incorrect key"
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_117),
+            "Found an incorrect value"
+        );
+
+        // Seeking a key that does not exist should end at an entry less than the target
+        block_iter
+            .seek(&InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                // Sequence numbers are sorted in descending order so this is greater than what
+                // exists in the block
+                118,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                117,
+                Operation::Put,
+            ),
+            "Found an incorrect key. Should have found a key less than the target."
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_117),
+            "Found an incorrect value. Should have found a value less than the target."
         );
     }
 }
