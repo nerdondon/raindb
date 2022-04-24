@@ -38,7 +38,6 @@ A table file has the following format:
 1. An index block that provides offets to data blocks
 1. A fixed-length footer providing offests to the index blocks
 
-
 # Concurrency
 
 The table builder cannot currently be passed between threads because it uses primitives that do not
@@ -147,9 +146,11 @@ impl TableBuilder {
                 let last_key_added = self.maybe_last_key_added.as_ref().unwrap();
                 let key_separator =
                     BinarySeparable::find_shortest_separator(last_key_added.as_ref(), key.as_ref());
-                let serialized_separator = Rc::new(InternalKey::try_from(key_separator).unwrap());
-                self.index_block_builder
-                    .add_entry(Rc::clone(&serialized_separator), &Vec::from(&block_handle));
+                let deserialized_separator = Rc::new(InternalKey::try_from(key_separator).unwrap());
+                self.index_block_builder.add_entry(
+                    Rc::clone(&deserialized_separator),
+                    &Vec::from(&block_handle),
+                );
             }
         }
 
@@ -316,5 +317,74 @@ impl TableBuilder {
         self.current_offset += (block_contents.len() + BLOCK_DESCRIPTOR_SIZE_BYTES) as u64;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn table_builder_can_write_data_blocks_to_disk() {
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options, 55).unwrap();
+        for idx in 0..400_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+
+        assert_eq!(table_builder.get_num_entries(), 400);
+
+        assert!(
+            table_builder.file_size() >= (2 * MAX_BLOCK_SIZE_BYTES as u64),
+            "The current file size should be at least as large as two blocks given our test input."
+        );
+
+        let pre_finalize_file_size = table_builder.file_size();
+        table_builder.finalize().unwrap();
+
+        assert!(table_builder.file_size() > pre_finalize_file_size);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Attempted to perform an operation when the file had already been closed."
+    )]
+    fn table_builder_finalizing_an_abandoned_builder_should_panic() {
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options, 55).unwrap();
+        for idx in 0..400_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+        table_builder.abandon();
+
+        table_builder.finalize().unwrap();
     }
 }
