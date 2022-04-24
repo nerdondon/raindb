@@ -101,7 +101,7 @@ where
         )?;
 
         let (block_entries, restart_point_indexes) =
-            BlockReader::deserialize_entries(&raw_data[0..restart_offset], restart_point_offsets)?;
+            BlockReader::deserialize_entries(&raw_data[..restart_offset], restart_point_offsets)?;
 
         Ok(Self {
             raw_data,
@@ -201,16 +201,15 @@ where
             current_full_key_buffer.truncate(key_num_shared_bytes as usize);
             current_full_key_buffer.extend_from_slice(&key_delta);
             let maybe_key = K::try_from(current_full_key_buffer.clone());
-            let key: K;
-            match maybe_key {
+            let key: K = match maybe_key {
                 Err(_base_err) => {
                     return Err(ReadError::FailedToParse(
                         "Failed to fully deserialize an entry. The key may be corrupted."
                             .to_string(),
                     ));
                 }
-                Ok(k) => key = k,
-            }
+                Ok(k) => k,
+            };
             current_offset = key_end_offset;
 
             // Parse value
