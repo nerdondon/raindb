@@ -390,19 +390,23 @@ mod tests {
 
         assert!(
             internal_key1 < internal_key4,
-            "key1 should be less than because the user key is alphabetically first"
+            "key1 should be less than because its user key is alphabetically first"
         );
         assert!(
             internal_key1 < internal_key2,
-            "key1 should be less than because the user key is alphabetically first"
+            "key1 should be less than because its user key is alphabetically first"
         );
         assert!(
             internal_key2 < internal_key3,
-            "key2 should be less than because the sequence number is larger"
+            "key2 should be less than because its sequence number is larger"
+        );
+        assert!(
+            internal_key3 > internal_key2,
+            "key3 should be greater than because its sequence number is smaller"
         );
         assert!(
             internal_key4 == internal_key5,
-            "These keys are equal because the constituent parts of thee key are equal"
+            "These keys are equal because the constituent parts of the key are equal"
         );
     }
 
