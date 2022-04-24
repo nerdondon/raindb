@@ -5,7 +5,7 @@ This module holds the various option structures that can be passed to RainDB ope
 use std::sync::Arc;
 
 use crate::filter_policy::{BloomFilterPolicy, FilterPolicy};
-use crate::fs::{FileSystem, OsFileSystem};
+use crate::fs::{FileSystem, InMemoryFileSystem, OsFileSystem};
 use crate::tables::block::DataBlockReader;
 use crate::tables::BlockCacheKey;
 use crate::utils::cache::LRUCache;
@@ -96,6 +96,14 @@ pub struct DbOptions {
 
 /// Public methods
 impl DbOptions {
+    /// Get [`DbOptions`] with an in-memory file system.
+    pub fn with_memory_env() -> DbOptions {
+        DbOptions {
+            filesystem_provider: Arc::new(InMemoryFileSystem::new()),
+            ..DbOptions::default()
+        }
+    }
+
     /// Get the database path.
     pub fn db_path(&self) -> &str {
         self.db_path.as_str()
