@@ -112,7 +112,10 @@ impl TableBuilder {
     The following invariants must be maintained:
 
     1. The table must not have been finalized or abandoned.
-    1. The provided key is larger than any previously provided key.
+    1. The provided key is ordered after any previously provided key. For example, if two keys have
+       the same value, then they are always added with sequence numbers already in descending order.
+       This requirement makes sense because tables are created from memtables which keeps records
+       sorted by key already.
 
     # Legacy
 

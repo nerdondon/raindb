@@ -5,7 +5,7 @@ use std::rc::Rc;
 use integer_encoding::{FixedInt, VarInt};
 
 use crate::config::SIZE_OF_U32_BYTES;
-use crate::key::RainDbKeyType;
+use crate::key::{InternalKey, RainDbKeyType};
 use crate::tables::errors::BuilderError;
 
 /**
@@ -97,7 +97,9 @@ where
 
     1. [`BlockBuilder::finalize`] has not been called since the last call to
        [`BlockBuilder::reset`].
-    1. The provided key is larger than any previously provided key.
+    1. The provided key is larger than any previously provided key. This requirement is maintained
+       by the fact that blocks are created by tables and tables are created by adding entries that
+       are already sorted from the memtable.
     1. Key compression and reconstruction must be inverse functions.
 
     # Legacy
@@ -107,19 +109,29 @@ where
     pub(crate) fn add_entry(&mut self, key: Rc<K>, value: &[u8]) {
         let key_bytes = key.as_bytes();
 
-        // Panic if our invariants are not maintained. This is a bug.
+        // Panic if our invariants are not maintained. If a panic occurred, there is a definite bug.
         assert!(
             !self.block_finalized,
             "Attempted to add a key-value pair to a finalized block."
         );
         assert!(
-            self.buffer.is_empty() || self.last_key_bytes < key_bytes,
-            "{}",
-            BuilderError::OutOfOrder
-        );
-        assert!(
             self.curr_compressed_count <= self.prefix_compression_restart_interval,
             "Attempted to add too many consecutive compressed entries."
+        );
+
+        /*
+        This check does a conversion to an InternalKey even if the block builder key type is
+        not an InternalKey. This works because the serialized format of the InternalKey has
+        very simple layout (e.g. there are not length prefixed slices) that lends itself to be
+        extracted from any byte buffer of a sufficient length. This behavior is carried over from
+        LevelDB.
+        */
+        assert!(
+            self.buffer.is_empty()
+                || InternalKey::try_from(self.last_key_bytes.clone()).unwrap()
+                    < InternalKey::try_from(key_bytes.clone()).unwrap(),
+            "{}",
+            BuilderError::OutOfOrder
         );
 
         let mut shared_prefix_size: usize = 0;
@@ -236,6 +248,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use crate::config::PREFIX_COMPRESSION_RESTART_INTERVAL;
     use crate::key::InternalKey;
     use crate::Operation;
@@ -291,6 +305,22 @@ mod tests {
         assert!(
             block_builder.approximate_size() >= block_builder.buffer.len(),
             "The approximate size should be for the finalized size of the block"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to add a key but it was out of order.")]
+    fn panics_if_entries_are_not_added_in_order() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+
+        block_builder.add_entry(
+            Rc::new(InternalKey::new(b"def".to_vec(), 399, Operation::Put)),
+            b"123",
+        );
+        block_builder.add_entry(
+            Rc::new(InternalKey::new(b"abc".to_vec(), 400, Operation::Put)),
+            b"456",
         );
     }
 
