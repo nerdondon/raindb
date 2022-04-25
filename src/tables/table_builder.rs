@@ -165,11 +165,11 @@ impl TableBuilder {
     }
 
     /**
-    Finish building the table. Flushes all pending blocks to disk and adds final metadata.
+    Finish building the table. Any pending data is flushed to disk and final metadata is appended.
 
     # Panics
 
-    The table should have been finalized or abandoned already.
+    The table should not have been finalized or abandoned already.
     */
     pub fn finalize(&mut self) -> TableBuildResult<()> {
         assert!(!self.file_closed, "{}", BuilderError::AlreadyClosed);
@@ -223,7 +223,7 @@ impl TableBuilder {
     Indicates that the contents of the builder should be abandoned.
 
     If the creator of the table does not call [`TableBuilder::finalize`], it must call
-    [`TableBuilder::abandon`].
+    `TableBuilder::abandon` (i.e this function).
 
     # Panics
 
@@ -282,16 +282,19 @@ impl TableBuilder {
         compressed_block = snappy_encoder.into_inner().unwrap();
 
         // Emit the raw block if the compression ratio is less than 12.5% (1/8)
-        if compressed_block.len() < (block_contents.len() - (block_contents.len() / 8)) {
-            self.emit_block_to_disk(block_contents, TableFileCompressionType::None)?;
-        } else {
-            self.emit_block_to_disk(
-                compressed_block.as_slice(),
-                TableFileCompressionType::Snappy,
-            )?;
-        }
+        let actual_block_size =
+            if compressed_block.len() < (block_contents.len() - (block_contents.len() / 8)) {
+                self.emit_block_to_disk(
+                    compressed_block.as_slice(),
+                    TableFileCompressionType::Snappy,
+                )?;
+                compressed_block.len()
+            } else {
+                self.emit_block_to_disk(block_contents, TableFileCompressionType::None)?;
+                block_contents.len()
+            };
 
-        Ok(BlockHandle::new(start_offset, block_contents.len() as u64))
+        Ok(BlockHandle::new(start_offset, actual_block_size as u64))
     }
 
     /// Actually performs the operations to write a block to disk.
@@ -311,8 +314,9 @@ impl TableBuilder {
 
         // Write block descriptor
         self.file.write_all(&[compression_type as u8])?;
+        let masked_checksum = crc::mask_checksum(checksum);
         self.file
-            .write_all(&u32::encode_fixed_vec(crc::mask_checksum(checksum)))?;
+            .write_all(&u32::encode_fixed_vec(masked_checksum))?;
 
         self.current_offset += (block_contents.len() + BLOCK_DESCRIPTOR_SIZE_BYTES) as u64;
 
