@@ -394,4 +394,87 @@ mod tests {
 
         table_builder.finalize().unwrap();
     }
+
+    #[test]
+    fn table_builder_succeeds_when_keys_are_added_in_sorted_order() {
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let keys = [
+            InternalKey::new(b"batmann".to_vec(), 1, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 3, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 2, Operation::Delete),
+            InternalKey::new(b"tumtum".to_vec(), 5, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put),
+        ];
+
+        let mut table_builder = TableBuilder::new(options, 55).unwrap();
+
+        for key in keys {
+            table_builder.add_entry(Rc::new(key), b"random").unwrap();
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to add a key but it was out of order.")]
+    fn table_builder_panics_if_user_keys_are_not_added_in_sorted_order() {
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options, 55).unwrap();
+
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(b"def".to_vec(), 399, Operation::Put)),
+                b"123",
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(b"abc".to_vec(), 400, Operation::Put)),
+                b"456",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to add a key but it was out of order.")]
+    fn table_builder_panics_when_user_keys_are_sorted_but_sequence_numbers_are_not_added_in_sorted_order(
+    ) {
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options, 55).unwrap();
+
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(b"abc".to_vec(), 399, Operation::Put)),
+                b"123",
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(b"def".to_vec(), 400, Operation::Put)),
+                b"456",
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(b"ghi".to_vec(), 401, Operation::Put)),
+                b"original",
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(b"ghi".to_vec(), 402, Operation::Put)),
+                b"most up to date",
+            )
+            .unwrap();
+    }
 }
