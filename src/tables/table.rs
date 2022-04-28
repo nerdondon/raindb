@@ -601,7 +601,12 @@ impl RainDbIterator for TwoLevelIterator {
             }
         }
 
-        self.maybe_data_block_iter.as_mut().unwrap().current()
+        // Check if there is still a data block after skipping forward
+        if let Some(data_block) = self.maybe_data_block_iter.as_ref() {
+            return data_block.current();
+        }
+
+        None
     }
 
     fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
@@ -626,7 +631,12 @@ impl RainDbIterator for TwoLevelIterator {
             }
         }
 
-        self.maybe_data_block_iter.as_ref().unwrap().current()
+        // Check if there is still a data block after skipping backwards
+        if let Some(data_block) = self.maybe_data_block_iter.as_ref() {
+            return data_block.current();
+        }
+
+        None
     }
 
     fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
