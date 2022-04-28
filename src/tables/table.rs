@@ -254,16 +254,16 @@ impl Table {
             Ok(encoded_compression_type) => compression_type = encoded_compression_type,
         };
 
+        let raw_block_contents = &raw_block_data[..compression_type_offset];
         match compression_type {
-            TableFileCompressionType::None => {
-                Ok(raw_block_data[0..compression_type_offset].to_vec())
-            }
+            TableFileCompressionType::None => Ok(raw_block_contents.to_vec()),
             TableFileCompressionType::Snappy => {
-                let mut snappy_reader =
-                    FrameDecoder::new(&raw_block_data[0..compression_type_offset]);
-                let mut decompressed_data: Vec<u8> = vec![];
+                let mut snappy_reader = FrameDecoder::new(raw_block_contents);
+                // We do not know the decompressed size of the data but pre-allocating a ballpark
+                // can still help
+                let mut decompressed_data: Vec<u8> = Vec::with_capacity(raw_block_contents.len());
 
-                match snappy_reader.read_exact(&mut decompressed_data) {
+                match snappy_reader.read_to_end(&mut decompressed_data) {
                     Err(error) => Err(ReadError::BlockDecompression(error.into())),
                     Ok(_) => Ok(decompressed_data),
                 }
