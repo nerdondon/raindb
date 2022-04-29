@@ -509,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn can_read_and_write_a_file() {
+    fn can_read_and_write_a_single_value_to_a_file() {
         let fs = InMemoryFileSystem::new();
         let file_path = PathBuf::from("/some/database/wal-123.log");
 
@@ -543,6 +543,25 @@ mod tests {
         let bytes_read = file.read_from(&mut buf, 6).unwrap();
         assert_eq!(bytes_read, 5);
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "World");
+    }
+
+    #[test]
+    fn can_read_and_write_a_multiple_values_to_a_file() {
+        let fs = InMemoryFileSystem::new();
+        let file_path = PathBuf::from("/some/database/wal-123.log");
+
+        let mut file = fs.create_file(&file_path, false).unwrap();
+        assert!(file.write(b"Hello World").is_ok());
+        assert!(file.write_all(b"something else").is_ok());
+        assert!(file.write_all(b"another thing").is_ok());
+        assert!(file.write_all(b"the last thing").is_ok());
+        assert_eq!(fs.get_file_size(&file_path).unwrap(), 52);
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut buf: [u8; 14] = [0; 14];
+        let bytes_read = file.read_from(&mut buf, 38).unwrap();
+        assert_eq!(bytes_read, 14);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "the last thing");
     }
 
     #[test]
