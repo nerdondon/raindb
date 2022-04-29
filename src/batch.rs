@@ -148,7 +148,7 @@ The updates are applied in the order in which they are added to the batch.
 ```
 use raindb::Batch;
 
-let batch = Batch::new();
+let mut batch = Batch::new();
 batch
     .add_put("key".into(), "v1".into())
     .add_delete("key".into())
