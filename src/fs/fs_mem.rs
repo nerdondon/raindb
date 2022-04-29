@@ -516,8 +516,8 @@ mod tests {
         let mut file = fs.create_file(&file_path, false).unwrap();
         assert!(file.write(b"Hello World").is_ok());
         assert!(file.flush().is_ok());
+        assert_eq!(file.len().unwrap(), 11);
         assert_eq!(fs.list_dir(Path::new("/some/database")).unwrap().len(), 1);
-        assert_eq!(fs.get_file_size(&file_path).unwrap(), 11);
 
         let mut file_contents = String::new();
         let bytes_read = file.read_to_string(&mut file_contents).unwrap();
@@ -527,6 +527,7 @@ mod tests {
         let bytes_read = file.read_to_string(&mut file_contents).unwrap();
         assert_eq!(bytes_read, 11);
         assert_eq!(file_contents, "Hello World");
+        assert_eq!(fs.get_file_size(&file_path).unwrap(), 11);
     }
 
     #[test]
