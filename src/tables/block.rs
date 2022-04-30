@@ -15,7 +15,12 @@ pub type DataBlockReader = BlockReader<InternalKey>;
 /// A block where the keys of entries are metaindex keys.
 pub(crate) type MetaIndexBlockReader = BlockReader<MetaIndexKey>;
 
-/// An entry in a block.
+/**
+An entry in a block.
+
+The extra unused fields is stored for debugging purposes.
+*/
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct BlockEntry<K> {
     /// The offset that this block entry is at in the parent block.
@@ -48,7 +53,12 @@ pub struct BlockEntry<K> {
     value: Vec<u8>,
 }
 
-/// Reader for deserializing a block from the table file and iterating its entries.
+/**
+Reader for deserializing a block from the table file and iterating its entries.
+
+The extra unused fields is stored for debugging purposes.
+*/
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct BlockReader<K>
 where
