@@ -126,7 +126,7 @@ impl Table {
     This method corresponds to the publicly exposed `Db::get` operation so will ignore deleted
     values.
 
-    Returns an non-deleted value if the key is in the table. Otherwise, return `None`.
+    Returns a non-deleted value if the key is in the table. Otherwise, return `None`.
     */
     pub fn get(
         &self,
@@ -166,12 +166,16 @@ impl Table {
         let mut block_reader_iter = block_reader.iter();
         block_reader_iter.seek(key)?;
         match block_reader_iter.current() {
-            Some((key, value)) => {
-                if key.get_operation() == Operation::Delete {
+            Some((found_key, found_value)) => {
+                if found_key.get_user_key() != key.get_user_key() {
+                    return Err(ReadError::KeyNotFound);
+                }
+
+                if found_key.get_operation() == Operation::Delete {
                     return Ok(None);
                 }
 
-                Ok(Some(value.clone()))
+                Ok(Some(found_value.clone()))
             }
             None => Err(ReadError::KeyNotFound),
         }
