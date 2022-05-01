@@ -182,11 +182,12 @@ impl Table {
     }
 
     /**
-    Get an iterator for the table.
+    Get an iterator for the table. NOTE: This iterator is initially invalid until an operation is
+    performed with it.
 
     In the terminology set by LevelDB, this is a two level iterator. We invert the lifetime
     relationship of the iterator object and the table unlike common Rust iterator objects. This is
-    because of the requirement to keep a list of table iterators in single iterator that merges
+    because of the requirement to keep a list of table iterators in a single iterator that merges
     all of the table data. There was an effort to use [`std::borrow::Cow`] and [`std::ops::Deref`]
     in RainDB but things got a little hairy and the effort was not worth it at the time to come up
     with a more generic solution to allow a method that accepts either a table reference or an
@@ -408,7 +409,7 @@ impl From<&BlockCacheKey> for Vec<u8> {
 
 /**
 A two-level iterator that first iterates the index block and then iterates a corresponding data
-block.
+block. NOTE: This iterator is initially invalid until an operation is performed with it.
 
 This iterator yields the concatenation of all key-value pairs in a sequence of blocks (e.g. in a
 table file).
