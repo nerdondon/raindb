@@ -651,3 +651,471 @@ impl RainDbIterator for TwoLevelIterator {
         self.maybe_data_block_iter.as_ref().unwrap().current()
     }
 }
+
+#[cfg(test)]
+mod table_tests {
+    use std::rc::Rc;
+
+    use pretty_assertions::assert_eq;
+
+    use crate::file_names::FileNameHandler;
+    use crate::tables::TableBuilder;
+
+    use super::*;
+
+    fn setup() {
+        let _ = env_logger::builder()
+            // Include all events in tests
+            .filter_level(log::LevelFilter::max())
+            // Ensure events are captured by `cargo test`
+            .is_test(true)
+            // Ignore errors initializing the logger if tests race to configure it
+            .try_init();
+    }
+
+    #[test]
+    fn table_with_one_entry_can_be_opened() {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        let num: u64 = 100_000;
+        let key = InternalKey::new(num.to_string().as_bytes().to_vec(), 30, Operation::Put);
+        table_builder
+            .add_entry(Rc::new(key), &u64::encode_fixed_vec(num))
+            .unwrap();
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+
+        let _ = Table::open(options.clone(), file).unwrap();
+    }
+
+    #[test]
+    fn table_with_multiple_entries_can_be_opened() {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        for idx in 0..400_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+
+        let _ = Table::open(options.clone(), file).unwrap();
+    }
+
+    #[test]
+    fn given_a_table_with_a_single_entry_the_reader_can_get_a_value() {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        let num: u64 = 100_000;
+        let key = InternalKey::new(num.to_string().as_bytes().to_vec(), 30, Operation::Put);
+        table_builder
+            .add_entry(Rc::new(key), &u64::encode_fixed_vec(num))
+            .unwrap();
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+
+        let table = Table::open(options.clone(), file).unwrap();
+
+        let actual = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(num.to_string().as_bytes().to_vec(), 30),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(actual, u64::encode_fixed_vec(100_000));
+    }
+
+    #[test]
+    fn given_a_table_with_multiple_entries_the_table_iterator_yields_expected_values_when_iterated()
+    {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        for idx in 0..2000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+        let table = Table::open(options.clone(), file).unwrap();
+        let mut table_iter = Table::iter_with(Arc::new(table), ReadOptions::default());
+        table_iter.seek_to_first().unwrap();
+
+        let mut idx: usize = 0;
+        while table_iter.is_valid() && idx < 2000 {
+            let num = idx + 100_000;
+            let expected_key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            let expected_val = u64::encode_fixed_vec(num as u64);
+
+            let (curr_key, curr_val) = table_iter.current().unwrap();
+            assert_eq!(&expected_key, curr_key);
+            assert_eq!(&expected_val, curr_val);
+
+            // Move to the next entry
+            idx += 1;
+            table_iter.next();
+        }
+
+        assert!(
+            table_iter.next().is_none() && idx == 2000,
+            "Arrived at the last element early (index {idx}). Expected last element at iteration \
+            2000."
+        );
+    }
+
+    #[test]
+    fn given_a_table_with_a_multiple_entries_the_table_iterator_can_seek_to_targets() {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        for idx in 0..2000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+        let table = Table::open(options.clone(), file).unwrap();
+        let mut table_iter = Table::iter_with(Arc::new(table), ReadOptions::default());
+
+        // Start the iterator at an arbitrary position
+        table_iter.seek_to_last().unwrap();
+
+        let (last_key, last_val) = table_iter.current().unwrap();
+        assert_eq!(
+            last_key,
+            &InternalKey::new(
+                101_999_usize.to_string().as_bytes().to_vec(),
+                1_999,
+                Operation::Put,
+            ),
+            "Found an incorrect last key"
+        );
+        assert_eq!(
+            last_val,
+            &u64::encode_fixed_vec(101_999),
+            "Found an incorrect last value"
+        );
+
+        // Seek key that exists
+        table_iter
+            .seek(&InternalKey::new(
+                101_117_usize.to_string().as_bytes().to_vec(),
+                1117,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (actual_key, actual_val) = table_iter.current().unwrap();
+
+        assert_eq!(
+            actual_key,
+            &InternalKey::new(
+                101_117_usize.to_string().as_bytes().to_vec(),
+                1117,
+                Operation::Put,
+            ),
+            "Found an incorrect key"
+        );
+        assert_eq!(
+            actual_val,
+            &u64::encode_fixed_vec(101_117),
+            "Found an incorrect value"
+        );
+
+        // Seeking a key that does not exist should end at an entry less than the target
+        table_iter
+            .seek(&InternalKey::new(
+                101_117_usize.to_string().as_bytes().to_vec(),
+                // Sequence numbers are sorted in descending order so this is greater than what
+                // exists in the block
+                1118,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (actual_key, actual_val) = table_iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new(
+                101_117_usize.to_string().as_bytes().to_vec(),
+                1117,
+                Operation::Put,
+            ),
+            "Found an incorrect key. Should have found a key less than the target."
+        );
+        assert_eq!(
+            actual_val,
+            &u64::encode_fixed_vec(101_117),
+            "Found an incorrect value. Should have found a value less than the target."
+        );
+    }
+
+    #[test]
+    fn given_a_table_with_one_block_get_can_filter_out_deleted_values() {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let keys = [
+            InternalKey::new(b"batmann".to_vec(), 1, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 3, Operation::Put),
+            InternalKey::new(b"robin".to_vec(), 2, Operation::Delete),
+            InternalKey::new(b"tumtum".to_vec(), 5, Operation::Delete),
+            InternalKey::new(b"tumtum".to_vec(), 4, Operation::Put),
+            InternalKey::new(b"tumtum".to_vec(), 1, Operation::Put),
+        ];
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+
+        for key in keys {
+            let val = key.get_sequence_number();
+            table_builder
+                .add_entry(Rc::new(key), val.to_string().as_bytes())
+                .unwrap();
+        }
+
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+        let table = Table::open(options.clone(), file).unwrap();
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(b"robin".to_vec(), 3),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(b"3".to_vec(), found_value);
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new(b"robin".to_vec(), 2, Operation::Delete),
+            )
+            .unwrap();
+        assert_eq!(
+            None, found_value,
+            "Looking exactly for a deleted key should find the key."
+        );
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(b"robin".to_vec(), 2),
+            )
+            .err();
+        assert_eq!(
+            Some(ReadError::KeyNotFound),
+            found_value,
+            "Using a seeking key should not find a deleted key in the table"
+        );
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(b"robin".to_vec(), 1),
+            )
+            .err();
+        assert_eq!(Some(ReadError::KeyNotFound), found_value);
+    }
+
+    #[test]
+    fn given_a_table_with_multiple_blocks_get_can_filter_out_deleted_values() {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        for idx in 0..400_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+
+        // Put a record with multiple versions
+        let user_key_to_find = 100_404_usize.to_string().as_bytes().to_vec();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(
+                    user_key_to_find.clone(),
+                    403,
+                    Operation::Delete,
+                )),
+                &Vec::new(),
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(
+                    user_key_to_find.clone(),
+                    402,
+                    Operation::Put,
+                )),
+                b"v3",
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(
+                    user_key_to_find.clone(),
+                    401,
+                    Operation::Put,
+                )),
+                b"v2",
+            )
+            .unwrap();
+        table_builder
+            .add_entry(
+                Rc::new(InternalKey::new(
+                    user_key_to_find.clone(),
+                    400,
+                    Operation::Put,
+                )),
+                b"original",
+            )
+            .unwrap();
+
+        // Add some more values to sandwich
+        for idx in 0..400_usize {
+            let num = idx + 100_000 + 405;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64 + 405,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+        let table = Table::open(options.clone(), file).unwrap();
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(user_key_to_find.clone(), 401),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(b"v2".to_vec(), found_value);
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(user_key_to_find.clone(), 402),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(b"v3".to_vec(), found_value);
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new(user_key_to_find.clone(), 403, Operation::Delete),
+            )
+            .unwrap();
+        assert_eq!(
+            None, found_value,
+            "Looking exactly for a deleted key should find the key."
+        );
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(user_key_to_find, 403),
+            )
+            .err();
+        assert_eq!(
+            Some(ReadError::KeyNotFound),
+            found_value,
+            "Using a seeking key should not find a deleted key in the table"
+        );
+    }
+}
