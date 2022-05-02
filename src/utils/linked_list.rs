@@ -117,7 +117,6 @@ where
     /// Remove an element from the front of the list.
     pub fn pop_front(&mut self) -> Option<SharedNode<T>> {
         self.head.take().map(|old_head_node| {
-            println!("popping {:?}", old_head_node.read().element);
             self.head = old_head_node.write().next.clone();
 
             match self.head.as_ref() {
@@ -126,7 +125,6 @@ where
                     self.tail = None;
                 }
                 Some(new_head_node) => {
-                    println!("new head {:?}", new_head_node.read().element);
                     // The new head's previous should now be `None` since it pointed at the old,
                     // removed head
                     new_head_node.write().prev = None;
