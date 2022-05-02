@@ -346,4 +346,21 @@ mod tests {
             serialized restart points."
         );
     }
+
+    #[test]
+    fn given_a_prefix_compression_restart_interval_of_one_can_build_a_block_as_expected() {
+        // This test case is particularly applicable to index blocks
+        let mut block_builder: BlockBuilder<InternalKey> = BlockBuilder::new(1);
+        for idx in 0..30_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64));
+        }
+
+        assert_eq!(block_builder.restart_points.len(), 30);
+    }
 }
