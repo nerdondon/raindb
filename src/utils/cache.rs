@@ -33,7 +33,7 @@ pub trait Cache<K, V>: Debug + Send + Sync {
     */
     fn insert(&self, key: K, value: V) -> Box<dyn CacheEntry<V>>;
 
-    /// Get the cached value for the given key
+    /// Get the cached value for the given key. Returns [`None`] if the key is not in the cache.
     fn get(&self, key: &K) -> Option<Box<dyn CacheEntry<V>>>;
 
     /// Remove the cached value for the given key.
@@ -110,9 +110,7 @@ where
     The provided capacity must be greater than zero or the program will panic.
     */
     pub fn new(capacity: usize) -> Self {
-        if capacity < 1 {
-            panic!("Capacity must be greater than 0");
-        }
+        assert!(capacity > 1, "Capacity must be greater than 0");
 
         let inner = LRUCacheInner {
             cache_entries: HashMap::with_capacity(capacity),
@@ -144,25 +142,19 @@ where
 {
     fn insert(&self, key: K, value: V) -> Box<dyn CacheEntry<V>> {
         let mut writable_inner = self.inner.write();
-        match writable_inner
-            .cache_entries
-            .get(&key)
-            .map(|node_ref| Arc::clone(node_ref))
-        {
-            None => {
-                // This is new entry
-                let shared_node = writable_inner.lru_list.push_front((key.clone(), value));
-                writable_inner
-                    .cache_entries
-                    .insert(key.clone(), shared_node);
-            }
-            Some(existing_node) => {
-                // This key is already in the cache. Do not update the value but update the LRU list to
-                // indicate an access.
-                writable_inner.lru_list.remove_node(existing_node.clone());
-                writable_inner.lru_list.push_node_front(existing_node);
-            }
+        if let Some(existing_node) = writable_inner.cache_entries.get(&key).map(Arc::clone) {
+            // This key is already in the cache, remove it from the cache so that new handles
+            // cannot be obtained to the old value.
+            writable_inner.lru_list.remove_node(existing_node);
         }
+
+        // Create a new node and add that to the cache.
+        // We do this even for existing entries so that clients with a cache handle to the old
+        // keep a consistent view.
+        let shared_node = writable_inner.lru_list.push_front((key.clone(), value));
+        writable_inner
+            .cache_entries
+            .insert(key.clone(), shared_node);
 
         if writable_inner.cache_entries.len() > self.capacity {
             // Evict least recently used
