@@ -168,10 +168,7 @@ where
 
     fn get(&self, key: &K) -> Option<Box<dyn CacheEntry<V>>> {
         let mut writable_inner = self.inner.write();
-        let maybe_node = writable_inner
-            .cache_entries
-            .get(key)
-            .map(|entry| Arc::clone(entry));
+        let maybe_node = writable_inner.cache_entries.get(key).map(Arc::clone);
 
         if let Some(node) = maybe_node {
             // Update LRU list
@@ -207,5 +204,139 @@ where
 {
     fn get_value(&self) -> MappedRwLockReadGuard<V> {
         RwLockReadGuard::map(self.read(), |node| &node.element.1)
+    }
+}
+
+#[cfg(test)]
+mod lru_cache_tests {
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    use super::*;
+
+    #[test]
+    fn can_insert_and_retrieve_elements_from_the_cache() {
+        let cache: LRUCache<u64, u64> = LRUCache::new(10);
+
+        assert!(cache.is_empty());
+        assert!(
+            cache.get(&20).is_none(),
+            "Should not be able to get a value not in the cache"
+        );
+
+        cache.insert(0, 10);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(*cache.get(&0).unwrap().get_value(), 10);
+        assert!(cache.get(&20).is_none());
+
+        cache.insert(1, 11);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(*cache.get(&1).unwrap().get_value(), 11);
+
+        cache.insert(0, 12);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(*cache.get(&0).unwrap().get_value(), 12);
+    }
+
+    #[test]
+    fn can_remove_elements_from_the_cache() {
+        let cache: LRUCache<u64, u64> = LRUCache::new(10);
+
+        cache.remove(&0);
+        assert!(cache.is_empty());
+
+        cache.insert(0, 10);
+        cache.insert(1, 11);
+        cache.insert(2, 12);
+        assert_eq!(*cache.get(&0).unwrap().get_value(), 10);
+        assert_eq!(cache.len(), 3);
+
+        cache.remove(&0);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&0).is_none());
+        assert_eq!(*cache.get(&1).unwrap().get_value(), 11);
+        assert_eq!(*cache.get(&2).unwrap().get_value(), 12);
+
+        // Removing after the key has already been removed should be a no-op
+        cache.remove(&0);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(*cache.get(&1).unwrap().get_value(), 11);
+        assert_eq!(*cache.get(&2).unwrap().get_value(), 12);
+    }
+
+    #[test]
+    fn cache_handles_stay_valid_even_after_eviction_from_cache() {
+        let cache: LRUCache<u64, u64> = LRUCache::new(10);
+        for idx in 0..10 {
+            cache.insert(idx, idx);
+        }
+
+        let handle1 = cache.get(&1).unwrap();
+        assert_eq!(*handle1.get_value(), 1);
+
+        cache.insert(1, 11);
+        let handle2 = cache.get(&1).unwrap();
+        assert_eq!(
+            *handle1.get_value(),
+            1,
+            "The old handle should have a consistent view of the old value"
+        );
+        assert_eq!(
+            *handle2.get_value(),
+            11,
+            "New lookups should get the most recent value"
+        );
+        assert_eq!(
+            cache.len(),
+            10,
+            "The old handle should not be in the cache anymore"
+        );
+
+        drop(handle1);
+        assert_eq!(
+            cache.len(),
+            10,
+            "Dropping the old handle should not affect the cache"
+        );
+
+        cache.remove(&1);
+        assert!(cache.get(&1).is_none());
+        assert_eq!(
+            *handle2.get_value(),
+            11,
+            "Live handles to cache entries continue to be valid even after the entry is removed \
+            from the cache"
+        );
+        assert_eq!(cache.len(), 9);
+
+        drop(handle2);
+        assert_eq!(
+            cache.len(),
+            9,
+            "Dropping the remaining handles to a removed cache entry does not affect the cache"
+        );
+    }
+
+    #[test]
+    fn when_filled_the_cache_evicts_the_least_recently_used_entry() {
+        let cache: LRUCache<u64, u64> = LRUCache::new(10);
+        for idx in 0..10 {
+            cache.insert(idx, idx);
+        }
+
+        cache.get(&0);
+        cache.insert(10, 10);
+
+        assert_eq!(*cache.get(&0).unwrap().get_value(), 0);
+        assert!(cache.get(&1).is_none());
+    }
+
+    #[test]
+    fn generates_unique_shard_ids() {
+        let cache: LRUCache<u64, u64> = LRUCache::new(10);
+
+        let id1 = cache.new_id();
+        let id2 = cache.new_id();
+
+        assert_ne!(id1, id2);
     }
 }
