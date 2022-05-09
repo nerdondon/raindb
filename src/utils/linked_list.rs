@@ -147,7 +147,7 @@ where
 
     /// Push a node onto the back of the list.
     pub fn push_node(&mut self, node: SharedNode<T>) {
-        node.write().prev = self.tail.as_ref().map(|tail| Arc::downgrade(tail));
+        node.write().prev = self.tail.as_ref().map(Arc::downgrade);
         node.write().next = None;
 
         match self.tail.as_ref() {
@@ -227,7 +227,7 @@ where
 
     /// Returns true if the list is empty, otherwise false.
     pub fn is_empty(&self) -> bool {
-        self.length == 0
+        self.len() == 0
     }
 
     /// Return an iterator over the nodes of the linked list.
@@ -278,11 +278,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next.take().map(|current_node| {
-            self.next = current_node
-                .read()
-                .next
-                .as_ref()
-                .map(|node| Arc::clone(node));
+            self.next = current_node.read().next.as_ref().map(Arc::clone);
 
             current_node
         })
