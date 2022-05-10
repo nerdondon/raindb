@@ -268,13 +268,12 @@ into blocks, here is an excerpt from the
 [LevelDB docs](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/doc/log_format.md)
 since they are pretty clear about the topic:
 
-> A record never starts within the last [2 bytes] of a block (since it won't fit). Any leftover
-> bytes here form the trailer, which must consist entirely of zero bytes and must be skipped by
-> readers.
+> A record never starts within the last 6 bytes of a block (since it won't fit). Any leftover bytes
+> here form the trailer, which must consist entirely of zero bytes and must be skipped by readers.
 >
-> Aside: if exactly [three bytes] are left in the current block, and a new non-zero length record is
+> Aside: if exactly seven bytes are left in the current block, and a new non-zero length record is
 > added, the writer must emit a `FIRST` record (which contains zero bytes of user data) to fill up
-> the trailing [three bytes] of the block and then emit all of the user data in subsequent blocks.
+> the trailing seven bytes of the block and then emit all of the user data in subsequent blocks.
 
 Block types are represented by this enum:
 
@@ -374,6 +373,7 @@ the block trailer. This is confusing because LevelDB already has a concept of a 
 [within the block itself](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/block_builder.cc#L24-L27)--we
 describe block format more below--and LevelDB also
 [calls this descriptor the block trailer](https://github.com/google/leveldb/blob/c5d5174a66f02e66d8e30c21ff4761214d8e4d6d/table/format.h#L78-L79).
+
 The block descriptor is serialized as follows:
 
 ```rust
