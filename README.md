@@ -29,7 +29,7 @@ See the [docs](./docs) folder for more information on architecture and design.
 
 ## Pedigree
 
-The work here builds heavily on the existing work of [LevelDB](https://github.com/golang/leveldb). A
+The work here builds heavily on the existing work of [LevelDB](https://github.com/google/leveldb). A
 big thank you goes to the creators for making so much of their design documentation available along
 side the code itself. Because of the heavy basis in these projects, some of the options and
 documentation is pulled from these projects.
