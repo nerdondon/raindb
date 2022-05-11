@@ -14,7 +14,9 @@ Whether your best mode of learning is through reading code or through reading do
 often repeated in multiple areas to make following along easier.
 
 RainDB **does not** aim to be high performance nor aim to have binary compatibility with LevelDB.
-These things would be nice side-effects though 😀.
+These things would be nice side-effects though 😀. Despite not aiming for binary compatibility, the
+behaviors are largely the same (i.e. a direct port) and the same test cases from LevelDB are used to
+check this conformance.
 
 ## High Level Design
 
@@ -22,7 +24,7 @@ RainDB's storage engine is an LSM tree and has/will have the traditional compone
 the fact:
 
 1. Memtable - Initially a skip list but will be swappable in the future with other data structures
-1. SSTable (sorted string tables) - A simpler implementation at first e.g. no checksumming
+1. SSTables (sorted string tables)
 1. Write-ahead log
 
 See the [docs](./docs) folder for more information on architecture and design.
@@ -40,6 +42,8 @@ Inspiration was also drawn from the [Go port of LevelDB](https://github.com/gola
 A `Legacy` heading will be present in doc comments where tactical decisions were made to differ from
 LevelDB. This can include name changes so that parallels can still be drawn between RainDB and
 LevelDB.
+
+A lot of the tests are also taken from LevelDB to ensure behavioral fidelity.
 
 ### Other art
 
