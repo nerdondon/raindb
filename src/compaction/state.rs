@@ -81,11 +81,6 @@ impl CompactionState {
         self.table_builder.is_some()
     }
 
-    /// Set current the table builder.
-    pub(crate) fn set_table_builder(&mut self, builder: TableBuilder) {
-        self.table_builder = Some(builder);
-    }
-
     /// Get a mutable reference to the table builder currently being used.
     pub(crate) fn table_builder_mut(&mut self) -> &mut TableBuilder {
         self.table_builder.as_mut().unwrap()
