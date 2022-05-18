@@ -416,7 +416,11 @@ impl VersionSet {
             return Err(read_err);
         }
 
-        let mut recovered_version = version_builder.apply_changes(&mut self.compaction_pointers);
+        let mut recovered_version = version_builder.apply_changes(
+            maybe_curr_wal_num.unwrap(),
+            maybe_prev_sequence.unwrap(),
+            &mut self.compaction_pointers,
+        );
         recovered_version.finalize();
         self.append_new_version(recovered_version);
 
@@ -847,7 +851,11 @@ impl VersionSet {
         let current_version = version_set.get_current_version();
         let mut version_builder = VersionBuilder::new(current_version);
         version_builder.accumulate_changes(change_manifest);
-        let mut new_version = version_builder.apply_changes(&mut version_set.compaction_pointers);
+        let mut new_version = version_builder.apply_changes(
+            *change_manifest.wal_file_number.as_ref().unwrap(),
+            version_set.prev_sequence_number,
+            &mut version_set.compaction_pointers,
+        );
         new_version.finalize();
 
         let created_new_manifest_file: bool = version_set.maybe_manifest_file.is_none();

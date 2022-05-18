@@ -883,7 +883,8 @@ impl VersionBuilder {
     /**
     Apply the accumulated versions on the base version, returning a new [`Version`].
 
-    This method will also update the specified version set compaction pointers.
+    This method will also update the specified compaction pointers which usually come from the
+    version set that the new version is being added to.
 
     **A builder can not be called again after invoking this method.**
 
@@ -900,6 +901,8 @@ impl VersionBuilder {
     */
     pub(crate) fn apply_changes(
         &mut self,
+        wal_file_number: u64,
+        prev_sequence_number: u64,
         vset_compaction_pointers: &mut [Option<InternalKey>; MAX_NUM_LEVELS],
     ) -> Version {
         assert!(
@@ -918,10 +921,8 @@ impl VersionBuilder {
         let base = &self.base_version.read().element;
         let mut new_version = base.new_from_current();
         for level in 0..MAX_NUM_LEVELS {
-            let mut level_added_files: Vec<Arc<FileMetadata>> = self.added_files[level]
-                .iter()
-                .map(|file| Arc::clone(file))
-                .collect();
+            let mut level_added_files: Vec<Arc<FileMetadata>> =
+                self.added_files[level].iter().map(Arc::clone).collect();
             level_added_files.sort_by(|a, b| FileMetadataBySmallestKey::compare(a, b));
 
             // The files in the base version should be sorted already because all changes are made
@@ -940,7 +941,7 @@ impl VersionBuilder {
             {
                 let added_file = &level_added_files[added_files_idx];
                 let base_file = &sorted_base_files[base_files_idx];
-                if FileMetadataBySmallestKey::compare(&*base_file, &added_file) == Ordering::Less {
+                if FileMetadataBySmallestKey::compare(base_file, added_file) == Ordering::Less {
                     self.maybe_add_file(&mut new_version, level, Arc::clone(base_file));
                     base_files_idx += 1;
                 } else {
@@ -972,6 +973,9 @@ impl VersionBuilder {
                 }
             }
         }
+
+        new_version.wal_file_number = wal_file_number;
+        new_version.last_sequence_number = prev_sequence_number;
 
         new_version
     }
