@@ -1337,3 +1337,160 @@ mod some_file_overlaps_range_tests {
         InternalKey::new(user_key, 30, Operation::Put)
     }
 }
+
+#[cfg(test)]
+mod version_builder_tests {
+    use parking_lot::RwLock;
+    use pretty_assertions::assert_eq;
+
+    use crate::utils::linked_list::Node;
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn accumulates_changes_successfully() {
+        let db_options = create_testing_options();
+        let table_cache = Arc::new(TableCache::new(db_options.clone(), 10));
+        let base_version = Arc::new(RwLock::new(Node::new(Version::new(
+            db_options,
+            &table_cache,
+            1,
+            1,
+        ))));
+        let mut version_builder = VersionBuilder::new(base_version);
+        let mut change_manifest = VersionChangeManifest::default();
+        for idx in 0..4 {
+            change_manifest.add_file(
+                3,
+                2900 + idx,
+                4 * 1024 * 1024,
+                InternalKey::new(b"abc".to_vec(), idx, Operation::Put)
+                    ..InternalKey::new(b"xyz".to_vec(), 100 + idx, Operation::Delete),
+            );
+            change_manifest.remove_file(4, 2880 + idx);
+            change_manifest.add_compaction_pointer(
+                idx as usize,
+                InternalKey::new(b"rst".to_vec(), 100 + idx, Operation::Put),
+            );
+        }
+
+        version_builder.accumulate_changes(&change_manifest);
+
+        for idx in 0..4 {
+            assert!(version_builder.compaction_pointers[idx].is_some());
+            assert!(version_builder.deleted_files[4].contains(&(2880 + idx as u64)));
+        }
+        assert_eq!(version_builder.added_files[3].len(), 4);
+
+        assert_eq!(version_builder.added_files[4].len(), 0);
+        let mut change_manifest2 = VersionChangeManifest::default();
+        // Add a file that was previously marked for deletion
+        change_manifest2.add_file(
+            4,
+            2882,
+            4 * 1024 * 1024,
+            InternalKey::new(b"abc".to_vec(), 2, Operation::Put)
+                ..InternalKey::new(b"xyz".to_vec(), 102, Operation::Delete),
+        );
+        version_builder.accumulate_changes(&change_manifest2);
+
+        assert!(!version_builder.deleted_files[4].contains(&2882));
+        assert_eq!(version_builder.added_files[4].len(), 1);
+    }
+
+    #[test]
+    fn files_marked_to_be_added_and_compaction_pointers_are_added_to_new_version() {
+        let db_options = create_testing_options();
+        let table_cache = Arc::new(TableCache::new(db_options.clone(), 10));
+        let base_version = Arc::new(RwLock::new(Node::new(Version::new(
+            db_options,
+            &table_cache,
+            1,
+            1,
+        ))));
+        let mut version_builder = VersionBuilder::new(base_version);
+        let mut change_manifest = VersionChangeManifest::default();
+        for idx in 1..5 {
+            change_manifest.add_file(
+                3,
+                2900 + idx,
+                4 * 1024 * 1024,
+                InternalKey::new(
+                    (idx * 100).to_string().as_bytes().to_vec(),
+                    idx + 200,
+                    Operation::Put,
+                )
+                    ..InternalKey::new(
+                        (idx * 100 + 99).to_string().as_bytes().to_vec(),
+                        idx + 300,
+                        Operation::Delete,
+                    ),
+            );
+            change_manifest.remove_file(4, 2880 + idx);
+            change_manifest.add_compaction_pointer(
+                idx as usize,
+                InternalKey::new(b"rst".to_vec(), 100 + idx, Operation::Put),
+            );
+        }
+        version_builder.accumulate_changes(&change_manifest);
+
+        let mut compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS] = Default::default();
+        let new_version = version_builder.apply_changes(2899, 5000, &mut compaction_pointers);
+
+        for level in 1..5 {
+            let ptr = compaction_pointers[level].as_ref();
+            assert_eq!(
+                *ptr.unwrap(),
+                InternalKey::new(b"rst".to_vec(), (100 + level) as u64, Operation::Put)
+            );
+        }
+
+        assert!(version_builder.already_invoked);
+        assert_eq!(new_version.num_files_at_level(3), 4);
+    }
+
+    #[test]
+    fn files_marked_to_be_deleted_are_removed_in_the_new_version() {
+        let db_options = create_testing_options();
+        let table_cache = Arc::new(TableCache::new(db_options.clone(), 10));
+        let base_version = Arc::new(RwLock::new(Node::new(Version::new(
+            db_options,
+            &table_cache,
+            1,
+            1,
+        ))));
+        for idx in 1..5 {
+            let mut file = FileMetadata::new(2900 + idx);
+            file.set_smallest_key(Some(InternalKey::new(
+                (idx * 100).to_string().as_bytes().to_vec(),
+                idx + 200,
+                Operation::Put,
+            )));
+            file.set_largest_key(Some(InternalKey::new(
+                (idx * 100 + 99).to_string().as_bytes().to_vec(),
+                idx + 300,
+                Operation::Delete,
+            )));
+            base_version.write().element.files[3].push(Arc::new(file));
+        }
+
+        let mut version_builder = VersionBuilder::new(base_version);
+        let mut change_manifest = VersionChangeManifest::default();
+        change_manifest.remove_file(3, 2902);
+        version_builder.accumulate_changes(&change_manifest);
+
+        let mut compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS] = Default::default();
+        let new_version = version_builder.apply_changes(2899, 5000, &mut compaction_pointers);
+
+        assert_eq!(new_version.num_files_at_level(3), 3);
+    }
+
+    /// Create default options for testing versions.
+    fn create_testing_options() -> DbOptions {
+        let mut options = DbOptions::with_memory_env();
+        options.max_block_size = 256;
+
+        options
+    }
+}
