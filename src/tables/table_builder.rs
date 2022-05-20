@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::io::Write;
 use std::rc::Rc;
 
@@ -324,6 +325,19 @@ impl TableBuilder {
         self.current_offset += (block_contents.len() + BLOCK_DESCRIPTOR_SIZE_BYTES) as u64;
 
         Ok(())
+    }
+}
+
+impl Debug for TableBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TableBuilder")
+            .field("options", &self.options)
+            .field("file_closed", &self.file_closed)
+            .field("file_number", &self.file_number)
+            .field("current_offset", &self.current_offset)
+            .field("num_entries", &self.num_entries)
+            .field("maybe_last_key_added", &self.maybe_last_key_added)
+            .finish()
     }
 }
 
