@@ -1,4 +1,5 @@
 use std::cmp;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
@@ -243,6 +244,28 @@ where
     /// Return true if the block does not have any entries.
     pub(crate) fn is_empty(&self) -> bool {
         self.buffer.is_empty()
+    }
+}
+
+impl<K> Debug for BlockBuilder<K>
+where
+    K: RainDbKeyType,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockBuilder")
+            .field(
+                "prefix_compression_restart_interval",
+                &self.prefix_compression_restart_interval,
+            )
+            .field(
+                "buffer",
+                &format!("buffer[current len={}", self.buffer.len()),
+            )
+            .field("restart_points", &self.restart_points)
+            .field("curr_compressed_count", &self.curr_compressed_count)
+            .field("block_finalized", &self.block_finalized)
+            .field("key_type_marker", &self.key_type_marker)
+            .finish_non_exhaustive()
     }
 }
 
