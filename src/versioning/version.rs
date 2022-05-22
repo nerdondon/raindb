@@ -1339,6 +1339,245 @@ mod some_file_overlaps_range_tests {
 }
 
 #[cfg(test)]
+mod tests {
+
+    use std::rc::Rc;
+
+    use pretty_assertions::assert_eq;
+
+    use crate::tables::TableBuilder;
+    use crate::Operation;
+
+    use super::*;
+
+    fn setup() {
+        let _ = env_logger::builder()
+            // Include all events in tests
+            .filter_level(log::LevelFilter::max())
+            // Ensure events are captured by `cargo test`
+            .is_test(true)
+            // Ignore errors initializing the logger if tests race to configure it
+            .try_init();
+    }
+
+    /// Creates tables files for various levels and adds the file metadata to the provided version.
+    fn create_test_files_for_version(db_options: DbOptions, version: &mut Version) {
+        // Create files with file numbers in reverse chronological order since upper levels
+        // generally have more recently created files
+
+        // Level-0 allows overlapping files
+        let entries = vec![
+            (
+                ("a".as_bytes().to_vec(), Operation::Put),
+                ("a".as_bytes().to_vec()),
+            ),
+            (
+                ("b".as_bytes().to_vec(), Operation::Put),
+                ("b".as_bytes().to_vec()),
+            ),
+            (
+                ("c".as_bytes().to_vec(), Operation::Put),
+                ("c".as_bytes().to_vec()),
+            ),
+            (
+                ("d".as_bytes().to_vec(), Operation::Put),
+                ("d".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 90, 60);
+        version.files[0].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("c".as_bytes().to_vec(), Operation::Put),
+                ("c1".as_bytes().to_vec()),
+            ),
+            (
+                ("d".as_bytes().to_vec(), Operation::Put),
+                ("d1".as_bytes().to_vec()),
+            ),
+            (
+                ("e".as_bytes().to_vec(), Operation::Put),
+                ("e".as_bytes().to_vec()),
+            ),
+            (
+                ("f".as_bytes().to_vec(), Operation::Put),
+                ("f".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 100, 61);
+        version.files[0].push(Arc::new(table_file_meta));
+
+        // Other levels with no overlapping files
+        let entries = vec![
+            (
+                ("g".as_bytes().to_vec(), Operation::Put),
+                ("g".as_bytes().to_vec()),
+            ),
+            (
+                ("h".as_bytes().to_vec(), Operation::Put),
+                ("h".as_bytes().to_vec()),
+            ),
+            (
+                ("i".as_bytes().to_vec(), Operation::Put),
+                ("i".as_bytes().to_vec()),
+            ),
+            (
+                ("j".as_bytes().to_vec(), Operation::Put),
+                ("j".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 85, 59);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("r".as_bytes().to_vec(), Operation::Put),
+                ("r".as_bytes().to_vec()),
+            ),
+            (
+                ("s".as_bytes().to_vec(), Operation::Put),
+                ("s".as_bytes().to_vec()),
+            ),
+            (
+                ("t".as_bytes().to_vec(), Operation::Put),
+                ("t".as_bytes().to_vec()),
+            ),
+            (
+                ("u".as_bytes().to_vec(), Operation::Put),
+                ("u".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 81, 58);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("v".as_bytes().to_vec(), Operation::Put),
+                ("v".as_bytes().to_vec()),
+            ),
+            (
+                ("w".as_bytes().to_vec(), Operation::Put),
+                ("w".as_bytes().to_vec()),
+            ),
+            (("x".as_bytes().to_vec(), Operation::Delete), vec![]),
+            (
+                ("y".as_bytes().to_vec(), Operation::Put),
+                ("y".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 77, 57);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("k".as_bytes().to_vec(), Operation::Put),
+                ("k".as_bytes().to_vec()),
+            ),
+            (
+                ("l".as_bytes().to_vec(), Operation::Put),
+                ("l".as_bytes().to_vec()),
+            ),
+            (
+                ("m".as_bytes().to_vec(), Operation::Put),
+                ("m".as_bytes().to_vec()),
+            ),
+            (
+                ("n".as_bytes().to_vec(), Operation::Put),
+                ("n".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 65, 55);
+        version.files[2].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("o".as_bytes().to_vec(), Operation::Put),
+                ("o".as_bytes().to_vec()),
+            ),
+            (
+                ("p".as_bytes().to_vec(), Operation::Put),
+                ("p".as_bytes().to_vec()),
+            ),
+            (
+                ("r".as_bytes().to_vec(), Operation::Put),
+                ("r-1".as_bytes().to_vec()),
+            ),
+            (
+                ("s".as_bytes().to_vec(), Operation::Put),
+                ("s-1".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 60, 54);
+        version.files[2].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("v".as_bytes().to_vec(), Operation::Put),
+                ("v".as_bytes().to_vec()),
+            ),
+            (
+                ("w".as_bytes().to_vec(), Operation::Put),
+                ("w".as_bytes().to_vec()),
+            ),
+            (
+                ("x".as_bytes().to_vec(), Operation::Put),
+                ("x".as_bytes().to_vec()),
+            ),
+            (
+                ("y".as_bytes().to_vec(), Operation::Put),
+                ("y".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options, entries, 55, 53);
+        version.files[2].push(Arc::new(table_file_meta));
+    }
+
+    /**
+    Create a table with the provided entries (key-value pairs) with sequence numbers starting
+    from the provided start point.
+    */
+    fn create_table(
+        db_options: DbOptions,
+        entries: Vec<((Vec<u8>, Operation), Vec<u8>)>,
+        starting_sequence_num: u64,
+        file_number: u64,
+    ) -> FileMetadata {
+        let smallest_key = InternalKey::new(
+            entries.first().unwrap().0 .0.clone(),
+            starting_sequence_num,
+            entries.first().unwrap().0 .1,
+        );
+        let largest_key = InternalKey::new(
+            entries.last().unwrap().0 .0.clone(),
+            starting_sequence_num + (entries.len() as u64) - 1,
+            entries.last().unwrap().0 .1,
+        );
+
+        let mut table_builder = TableBuilder::new(db_options.clone(), file_number).unwrap();
+        let mut curr_sequence_num = starting_sequence_num;
+        for ((user_key, operation), value) in entries {
+            table_builder
+                .add_entry(
+                    Rc::new(InternalKey::new(user_key, curr_sequence_num, operation)),
+                    &value,
+                )
+                .unwrap();
+            curr_sequence_num += 1;
+        }
+
+        table_builder.finalize().unwrap();
+
+        let mut file_meta = FileMetadata::new(file_number);
+        file_meta.set_smallest_key(Some(smallest_key));
+        file_meta.set_largest_key(Some(largest_key));
+        file_meta.set_file_size(table_builder.file_size());
+
+        file_meta
+    }
+}
+
+#[cfg(test)]
 mod version_builder_tests {
     use parking_lot::RwLock;
     use pretty_assertions::assert_eq;
