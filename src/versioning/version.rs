@@ -399,7 +399,7 @@ impl Version {
         // newest file to oldest
         for file in self.files[0].iter() {
             if file.smallest_key().get_user_key() <= target_user_key
-                || file.largest_key().get_user_key() >= target_user_key
+                && file.largest_key().get_user_key() >= target_user_key
             {
                 files[0].push(file.clone());
             }
@@ -1358,6 +1358,48 @@ mod tests {
             .is_test(true)
             // Ignore errors initializing the logger if tests race to configure it
             .try_init();
+    }
+
+    #[test]
+    fn get_overlapping_files() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 16, 30);
+        create_test_files_for_version(options, &mut version);
+
+        // Test overlapping range in level 0
+        let overlapping_files = version
+            .get_overlapping_files(&InternalKey::new_for_seeking("d".as_bytes().to_vec(), 100));
+        let expected_file_numbers = [61, 60];
+        let actual_file_numbers = overlapping_files[0].iter().map(|file| file.file_number());
+        assert!(expected_file_numbers
+            .into_iter()
+            .zip(actual_file_numbers)
+            .all(|(expected, actual)| {
+                assert_eq!(expected, actual);
+                expected == actual
+            }), "Multiple files can be returned for level 0 and should be returned in descending order.");
+
+        // Test overlapping range in levels greater than 0
+        let overlapping_files = version
+            .get_overlapping_files(&InternalKey::new_for_seeking("x".as_bytes().to_vec(), 100));
+        assert_eq!(overlapping_files[1].len(), 1);
+        assert_eq!(overlapping_files[1][0].file_number(), 57);
+        assert_eq!(overlapping_files[2].len(), 1);
+        assert_eq!(overlapping_files[2][0].file_number(), 53);
+
+        // Test single match in level greater than 0
+        let overlapping_files = version
+            .get_overlapping_files(&InternalKey::new_for_seeking("k".as_bytes().to_vec(), 100));
+        assert_eq!(overlapping_files[2].len(), 1);
+        assert_eq!(overlapping_files[2][0].file_number(), 55);
+
+        // Test a target key that is not in the version keyspace
+        let overlapping_files = version
+            .get_overlapping_files(&InternalKey::new_for_seeking("z".as_bytes().to_vec(), 100));
+        assert!(overlapping_files
+            .iter()
+            .all(|files_overlapping_in_level| files_overlapping_in_level.is_empty()));
     }
 
     /// Creates tables files for various levels and adds the file metadata to the provided version.
