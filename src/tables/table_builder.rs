@@ -163,7 +163,8 @@ impl TableBuilder {
         self.data_block_builder.add_entry(key.clone(), value);
 
         // Add entry to the filter block
-        self.filter_block_builder.add_key(key.as_bytes());
+        self.filter_block_builder
+            .add_key(key.get_user_key().to_vec());
 
         Ok(())
     }

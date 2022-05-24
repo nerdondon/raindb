@@ -145,15 +145,16 @@ impl Table {
 
         let (_key, raw_handle) = maybe_raw_handle.unwrap();
         let block_handle = BlockHandle::try_from(raw_handle)?;
-        let serialized_key = Vec::<u8>::from(key);
 
-        // First check the filter to see if the key is actually in the block that was returned
+        // First check the filter to see if the user key is actually in the block that was returned.
+        // Only the user key is checked since the sequence number of the target key can be more
+        // recent.
         if self.maybe_filter_block.is_some()
             && !self
                 .maybe_filter_block
                 .as_ref()
                 .unwrap()
-                .key_may_match(block_handle.get_offset(), &serialized_key)
+                .key_may_match(block_handle.get_offset(), key.get_user_key())
         {
             // The key was not found in the filter so it is not in the block and hence not in the
             // table
@@ -964,12 +965,26 @@ mod table_tests {
         let found_value = table
             .get(
                 &ReadOptions::default(),
+                &InternalKey::new_for_seeking(b"robin".to_vec(), 20),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            b"3".to_vec(),
+            found_value,
+            "Using a much more recent sequence number in the key should find the key and return \
+            the most recent value"
+        );
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
                 &InternalKey::new(b"robin".to_vec(), 2, Operation::Delete),
             )
             .unwrap();
         assert_eq!(
             None, found_value,
-            "Looking exactly for a deleted key should find the key."
+            "Looking exactly for a deleted key should find the key"
         );
 
         let found_value = table
@@ -979,9 +994,8 @@ mod table_tests {
             )
             .err();
         assert_eq!(
-            Some(ReadError::KeyNotFound),
-            found_value,
-            "Using a seeking key should not find a deleted key in the table"
+            None, found_value,
+            "Using a seeking key should still find the key and return nothing for the value"
         );
 
         let found_value = table
@@ -1104,19 +1118,30 @@ mod table_tests {
             .unwrap();
         assert_eq!(
             None, found_value,
-            "Looking exactly for a deleted key should find the key."
+            "Looking exactly for a deleted key should find the key and return nothing for the value"
         );
 
         let found_value = table
             .get(
                 &ReadOptions::default(),
-                &InternalKey::new_for_seeking(user_key_to_find, 403),
+                &InternalKey::new_for_seeking(user_key_to_find.clone(), 403),
             )
             .err();
         assert_eq!(
-            Some(ReadError::KeyNotFound),
-            found_value,
-            "Using a seeking key should not find a deleted key in the table"
+            None, found_value,
+            "Using a seeking key should find the key and return nothing for the value"
+        );
+
+        let found_value = table
+            .get(
+                &ReadOptions::default(),
+                &InternalKey::new_for_seeking(user_key_to_find, 1000),
+            )
+            .err();
+        assert_eq!(
+            None, found_value,
+            "Using a much more recent sequence number in the key should find the key and return \
+            nothing for the value"
         );
     }
 }
