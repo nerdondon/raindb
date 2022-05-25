@@ -1402,6 +1402,83 @@ mod tests {
             .all(|files_overlapping_in_level| files_overlapping_in_level.is_empty()));
     }
 
+    #[test]
+    fn get_value_from_version() {
+        setup();
+
+        let read_options = ReadOptions::default();
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+
+        // Test retrieval of a value from level 0
+        let actual_response = version
+            .get(
+                &read_options,
+                &InternalKey::new_for_seeking("a".as_bytes().to_vec(), 100),
+            )
+            .unwrap();
+        assert_eq!(actual_response.value, Some("a".as_bytes().to_vec()));
+        assert!(actual_response.charge_metadata.seek_file.is_none());
+
+        // Test retrieval at an older level
+        let actual_response = version
+            .get(
+                &read_options,
+                &InternalKey::new_for_seeking("m".as_bytes().to_vec(), 100),
+            )
+            .unwrap();
+        assert_eq!(actual_response.value, Some("m".as_bytes().to_vec()));
+        assert!(actual_response.charge_metadata.seek_file().is_none());
+
+        // Test retrieval requiring read through multiple levels
+        let actual_response = version
+            .get(
+                &read_options,
+                &InternalKey::new_for_seeking("p".as_bytes().to_vec(), 100),
+            )
+            .unwrap();
+        assert_eq!(actual_response.value, Some("p".as_bytes().to_vec()));
+        assert_eq!(
+            actual_response
+                .charge_metadata
+                .seek_file()
+                .unwrap()
+                .file_number(),
+            58
+        );
+        assert_eq!(actual_response.charge_metadata.seek_file_level(), 1);
+
+        // Test retrieval at an older sequence number
+        let actual_response = version
+            .get(
+                &read_options,
+                &InternalKey::new_for_seeking("r".as_bytes().to_vec(), 64),
+            )
+            .unwrap();
+        assert_eq!(actual_response.value, Some("r-1".as_bytes().to_vec()));
+        assert_eq!(
+            actual_response
+                .charge_metadata
+                .seek_file()
+                .unwrap()
+                .file_number(),
+            58
+        );
+        assert_eq!(actual_response.charge_metadata.seek_file_level(), 1);
+
+        // Test retrieval of a deleted value
+        let actual_response = version
+            .get(
+                &read_options,
+                &InternalKey::new_for_seeking("x".as_bytes().to_vec(), 80),
+            )
+            .unwrap();
+        assert!(actual_response.value.is_none());
+        assert!(actual_response.charge_metadata.seek_file().is_none());
+    }
+
     /// Creates tables files for various levels and adds the file metadata to the provided version.
     fn create_test_files_for_version(db_options: DbOptions, version: &mut Version) {
         // Create files with file numbers in reverse chronological order since upper levels
@@ -1450,7 +1527,7 @@ mod tests {
         let table_file_meta = create_table(db_options.clone(), entries, 100, 61);
         version.files[0].push(Arc::new(table_file_meta));
 
-        // Other levels with no overlapping files
+        // Level 1
         let entries = vec![
             (
                 ("g".as_bytes().to_vec(), Operation::Put),
@@ -1474,6 +1551,10 @@ mod tests {
 
         let entries = vec![
             (
+                ("o".as_bytes().to_vec(), Operation::Put),
+                ("o".as_bytes().to_vec()),
+            ),
+            (
                 ("r".as_bytes().to_vec(), Operation::Put),
                 ("r".as_bytes().to_vec()),
             ),
@@ -1490,7 +1571,7 @@ mod tests {
                 ("u".as_bytes().to_vec()),
             ),
         ];
-        let table_file_meta = create_table(db_options.clone(), entries, 81, 58);
+        let table_file_meta = create_table(db_options.clone(), entries, 80, 58);
         version.files[1].push(Arc::new(table_file_meta));
 
         let entries = vec![
@@ -1508,9 +1589,10 @@ mod tests {
                 ("y".as_bytes().to_vec()),
             ),
         ];
-        let table_file_meta = create_table(db_options.clone(), entries, 77, 57);
+        let table_file_meta = create_table(db_options.clone(), entries, 76, 57);
         version.files[1].push(Arc::new(table_file_meta));
 
+        // Level 2
         let entries = vec![
             (
                 ("k".as_bytes().to_vec(), Operation::Put),
@@ -1535,7 +1617,7 @@ mod tests {
         let entries = vec![
             (
                 ("o".as_bytes().to_vec(), Operation::Put),
-                ("o".as_bytes().to_vec()),
+                ("o-1".as_bytes().to_vec()),
             ),
             (
                 ("p".as_bytes().to_vec(), Operation::Put),
