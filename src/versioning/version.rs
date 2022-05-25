@@ -190,11 +190,10 @@ impl Version {
 
         // Keep some state for charging seeks
         let mut last_file_read: Option<&Arc<FileMetadata>> = None;
-        let mut last_level_read: usize;
+        let mut last_level_read: usize = 0;
         let mut seek_charge_metadata = SeekChargeMetadata::new();
 
         for (level, files) in files_per_level.iter().enumerate() {
-            last_level_read = level;
             for file in files {
                 if seek_charge_metadata.seek_file.is_none() && last_file_read.is_some() {
                     // There was more than one disk seek for this get operation. Charge the first
@@ -204,6 +203,7 @@ impl Version {
                 }
 
                 last_file_read = Some(file);
+                last_level_read = level;
 
                 match self.table_cache.get(read_options, file.file_number(), key) {
                     Ok(maybe_val) => {
