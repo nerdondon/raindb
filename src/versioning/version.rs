@@ -245,6 +245,8 @@ impl Version {
                 self.seek_compaction_metadata.file_to_compact = Some(Arc::clone(file_to_charge));
                 self.seek_compaction_metadata.level_of_file_to_compact =
                     charging_metadata.seek_file_level.unwrap();
+
+                return true;
             }
         }
 
@@ -1477,6 +1479,45 @@ mod tests {
             .unwrap();
         assert!(actual_response.value.is_none());
         assert!(actual_response.charge_metadata.seek_file().is_none());
+    }
+
+    #[test]
+    fn update_stats_succeeds() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+        let mut seek_charge = SeekChargeMetadata::new();
+        seek_charge.seek_file = Some(Arc::clone(&version.files[1][1]));
+        seek_charge.seek_file_level = Some(1);
+
+        let needs_compaction = version.update_stats(&seek_charge);
+        assert!(
+            !needs_compaction,
+            "Should not need a compaction when there are still allowed seeks for a file."
+        );
+
+        // This is ugly but I don't really want to open up the visibility of the `allowed_seeks`
+        // field.
+        while seek_charge.seek_file().unwrap().allowed_seeks() > 0 {
+            seek_charge.seek_file().unwrap().decrement_allowed_seeks();
+        }
+
+        let needs_compaction = version.update_stats(&seek_charge);
+        assert!(
+            needs_compaction,
+            "Should need a compaction when there are no more allowed seeks for a file."
+        );
+        assert_eq!(
+            version.get_seek_compaction_metadata().file_to_compact,
+            Some(Arc::clone(&version.files[1][1]))
+        );
+        assert_eq!(
+            version
+                .get_seek_compaction_metadata()
+                .level_of_file_to_compact,
+            1
+        );
     }
 
     /// Creates tables files for various levels and adds the file metadata to the provided version.
