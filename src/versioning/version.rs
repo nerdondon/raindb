@@ -437,8 +437,7 @@ impl Version {
 
     # Panics
 
-    This method can only be called on levels greater than zero and below the maximum number of
-    levels [`MAX_NUM_LEVELS`].
+    This method can only be called on a valid level (i.e. > [`MAX_NUM_LEVELS`]).
 
     # Legacy
 
@@ -449,8 +448,7 @@ impl Version {
         level: usize,
         key_range: Range<Option<&InternalKey>>,
     ) -> Vec<&Arc<FileMetadata>> {
-        assert!(level > 0);
-        assert!(level <= MAX_NUM_LEVELS);
+        assert!(level < MAX_NUM_LEVELS);
 
         let mut overlapping_files = vec![];
         let mut start_user_key = key_range
@@ -469,8 +467,10 @@ impl Version {
             let is_file_range_after_target =
                 key_range.end.is_some() && end_user_key.unwrap() < file_range_start;
 
+            index += 1;
             if is_file_range_before_target || is_file_range_after_target {
-                index += 1;
+                // The file is completely before or completely after the target range. Don't do
+                // anything.
             } else {
                 overlapping_files.push(current_file);
 
@@ -496,8 +496,8 @@ impl Version {
     }
 
     /**
-    The same as [`Version::get_overlapping_files`] but returns owned references instead of a
-    reference to the `Arc`.
+    The same as `Version::get_overlapping_compaction_inputs` but returns owned references instead
+    of a reference to the [`Arc`].
     */
     pub(crate) fn get_overlapping_compaction_inputs_strong(
         &self,
@@ -506,7 +506,7 @@ impl Version {
     ) -> Vec<Arc<FileMetadata>> {
         self.get_overlapping_compaction_inputs(level, key_range)
             .into_iter()
-            .map(|file| Arc::clone(file))
+            .map(Arc::clone)
             .collect()
     }
 
@@ -1366,7 +1366,7 @@ mod tests {
     fn get_overlapping_files() {
         let options = DbOptions::with_memory_env();
         let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
-        let mut version = Version::new(options.clone(), &table_cache, 16, 30);
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
         create_test_files_for_version(options, &mut version);
 
         // Test overlapping range in level 0
@@ -1418,7 +1418,7 @@ mod tests {
         let actual_response = version
             .get(
                 &read_options,
-                &InternalKey::new_for_seeking("a".as_bytes().to_vec(), 100),
+                &InternalKey::new_for_seeking("a".as_bytes().to_vec(), 300),
             )
             .unwrap();
         assert_eq!(actual_response.value, Some("a".as_bytes().to_vec()));
@@ -1428,7 +1428,7 @@ mod tests {
         let actual_response = version
             .get(
                 &read_options,
-                &InternalKey::new_for_seeking("m".as_bytes().to_vec(), 100),
+                &InternalKey::new_for_seeking("m".as_bytes().to_vec(), 300),
             )
             .unwrap();
         assert_eq!(actual_response.value, Some("m".as_bytes().to_vec()));
@@ -1438,7 +1438,7 @@ mod tests {
         let actual_response = version
             .get(
                 &read_options,
-                &InternalKey::new_for_seeking("p".as_bytes().to_vec(), 100),
+                &InternalKey::new_for_seeking("p".as_bytes().to_vec(), 300),
             )
             .unwrap();
         assert_eq!(actual_response.value, Some("p".as_bytes().to_vec()));
@@ -1520,6 +1520,105 @@ mod tests {
         );
     }
 
+    #[test]
+    fn get_overlapping_compaction_inputs_expands_level_0_search_range() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+
+        // Open start range
+        let end_key = InternalKey::new("a".as_bytes().to_vec(), 105, Operation::Put);
+        let key_range = None..Some(&end_key);
+        let actual_inputs = version.get_overlapping_compaction_inputs(0, key_range);
+        assert!(
+            [60, 61, 62]
+                .into_iter()
+                .zip(actual_inputs)
+                .all(|(expected, actual)| {
+                    assert_eq!(expected, actual.file_number());
+                    expected == actual.file_number()
+                }),
+            "Multiple files can be returned for level 0."
+        );
+
+        // Open end range
+        let start_key = InternalKey::new("e".as_bytes().to_vec(), 105, Operation::Put);
+        let key_range = Some(&start_key)..None;
+        let actual_inputs = version.get_overlapping_compaction_inputs(0, key_range);
+        assert!(
+            [60, 61, 62]
+                .into_iter()
+                .zip(actual_inputs)
+                .all(|(expected, actual)| {
+                    assert_eq!(expected, actual.file_number());
+                    expected == actual.file_number()
+                }),
+            "Multiple files can be returned for level 0."
+        );
+
+        // Closed range
+        let start_key = InternalKey::new("c".as_bytes().to_vec(), 105, Operation::Put);
+        let end_key = InternalKey::new("e".as_bytes().to_vec(), 105, Operation::Put);
+        let key_range = Some(&start_key)..Some(&end_key);
+        let actual_inputs = version.get_overlapping_compaction_inputs(0, key_range);
+        assert!(
+            [60, 61, 62]
+                .into_iter()
+                .zip(actual_inputs)
+                .all(|(expected, actual)| {
+                    assert_eq!(expected, actual.file_number());
+                    expected == actual.file_number()
+                }),
+            "Multiple files can be returned for level 0."
+        );
+    }
+
+    #[test]
+    fn get_overlapping_compaction_inputs_gets_correct_files_for_levels_older_than_zero() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+
+        // Open start range
+        let end_key = InternalKey::new("s".as_bytes().to_vec(), 105, Operation::Put);
+        let key_range = None..Some(&end_key);
+        let actual_inputs = version.get_overlapping_compaction_inputs(1, key_range);
+        assert!([59, 58]
+            .into_iter()
+            .zip(actual_inputs)
+            .all(|(expected, actual)| {
+                assert_eq!(expected, actual.file_number());
+                expected == actual.file_number()
+            }), "Multiple files can be returned for level 0 and should be returned in descending order.");
+
+        // Open end range
+        let start_key = InternalKey::new("v".as_bytes().to_vec(), 105, Operation::Put);
+        let key_range = Some(&start_key)..None;
+        let actual_inputs = version.get_overlapping_compaction_inputs(1, key_range);
+        assert!([57]
+            .into_iter()
+            .zip(actual_inputs)
+            .all(|(expected, actual)| {
+                assert_eq!(expected, actual.file_number());
+                expected == actual.file_number()
+            }), "Multiple files can be returned for level 0 and should be returned in descending order.");
+
+        // Closed range
+        let start_key = InternalKey::new("h".as_bytes().to_vec(), 105, Operation::Put);
+        let end_key = InternalKey::new("r".as_bytes().to_vec(), 105, Operation::Put);
+        let key_range = Some(&start_key)..Some(&end_key);
+        let actual_inputs = version.get_overlapping_compaction_inputs(1, key_range);
+        assert!([59, 58]
+            .into_iter()
+            .zip(actual_inputs)
+            .all(|(expected, actual)| {
+                assert_eq!(expected, actual.file_number());
+                expected == actual.file_number()
+            }));
+    }
+
     /// Creates tables files for various levels and adds the file metadata to the provided version.
     fn create_test_files_for_version(db_options: DbOptions, version: &mut Version) {
         // Create files with file numbers in reverse chronological order since upper levels
@@ -1566,6 +1665,27 @@ mod tests {
             ),
         ];
         let table_file_meta = create_table(db_options.clone(), entries, 100, 61);
+        version.files[0].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("f".as_bytes().to_vec(), Operation::Put),
+                ("f-2".as_bytes().to_vec()),
+            ),
+            (
+                ("f1".as_bytes().to_vec(), Operation::Put),
+                ("f1".as_bytes().to_vec()),
+            ),
+            (
+                ("f2".as_bytes().to_vec(), Operation::Put),
+                ("f2".as_bytes().to_vec()),
+            ),
+            (
+                ("f3".as_bytes().to_vec(), Operation::Put),
+                ("f3".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 105, 62);
         version.files[0].push(Arc::new(table_file_meta));
 
         // Level 1
