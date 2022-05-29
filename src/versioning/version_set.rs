@@ -23,7 +23,8 @@ use crate::{DbOptions, DB};
 
 use super::errors::{RecoverResult, WriteResult};
 use super::file_metadata::FileMetadata;
-use super::version::{Version, VersionBuilder};
+use super::version::Version;
+use super::version_builder::VersionBuilder;
 use super::VersionChangeManifest;
 
 /// Manages the versions of the database.
