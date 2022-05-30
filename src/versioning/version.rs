@@ -1127,11 +1127,10 @@ mod some_file_overlaps_range_tests {
 }
 
 #[cfg(test)]
-mod tests {
-
-    use std::rc::Rc;
+mod version_tests {
 
     use pretty_assertions::assert_eq;
+    use std::rc::Rc;
 
     use crate::tables::TableBuilder;
     use crate::Operation;
@@ -1405,6 +1404,22 @@ mod tests {
             }));
     }
 
+    #[test]
+    fn pick_level_for_memtable_output_picks_the_correct_level() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+
+        // Test when overlap with level 0
+        let actual_level = version.pick_level_for_memtable_output("b".as_bytes(), "e".as_bytes());
+        assert_eq!(actual_level, 0);
+
+        // Test when there is an overlap in the L+1 level
+        let actual_level = version.pick_level_for_memtable_output("l".as_bytes(), "n".as_bytes());
+        assert_eq!(actual_level, 1);
+    }
+
     /// Creates tables files for various levels and adds the file metadata to the provided version.
     fn create_test_files_for_version(db_options: DbOptions, version: &mut Version) {
         // Create files with file numbers in reverse chronological order since upper levels
@@ -1625,7 +1640,7 @@ mod tests {
             entries.last().unwrap().0 .1,
         );
 
-        let mut table_builder = TableBuilder::new(db_options.clone(), file_number).unwrap();
+        let mut table_builder = TableBuilder::new(db_options, file_number).unwrap();
         let mut curr_sequence_num = starting_sequence_num;
         for ((user_key, operation), value) in entries {
             table_builder
