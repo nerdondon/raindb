@@ -149,6 +149,7 @@ pub(crate) struct Version {
 
 /// Crate-only methods
 impl Version {
+    /// Create a new instance of [`Version`].
     pub(crate) fn new(
         db_options: DbOptions,
         table_cache: &Arc<TableCache>,
@@ -166,6 +167,25 @@ impl Version {
             last_sequence_number,
             wal_file_number,
         }
+    }
+
+    /// Clones the current version while resetting certain state.
+    pub(crate) fn new_from_current(
+        &self,
+        last_sequence_number: u64,
+        wal_file_number: u64,
+    ) -> Version {
+        let mut new_version = self.clone();
+
+        // Reset compaction metadata
+        new_version.set_seek_compaction_metadata(SeekCompactionMetadata::default());
+        new_version.set_size_compaction_metadata(None);
+
+        // Set debugging info for new version
+        new_version.wal_file_number = wal_file_number;
+        new_version.last_sequence_number = last_sequence_number;
+
+        new_version
     }
 
     /**
@@ -287,15 +307,6 @@ impl Version {
     /// Get a reference to the WAL file number that the version was created at.
     pub(crate) fn wal_file_number(&self) -> u64 {
         self.wal_file_number
-    }
-
-    /// Clones the current version while resetting compaction metadata.
-    pub(crate) fn new_from_current(&self) -> Version {
-        let mut new_version = self.clone();
-        new_version.set_seek_compaction_metadata(SeekCompactionMetadata::default());
-        new_version.set_size_compaction_metadata(None);
-
-        new_version
     }
 
     /**
