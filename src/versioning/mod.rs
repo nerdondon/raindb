@@ -27,3 +27,4 @@ pub(crate) mod file_iterators;
 pub(crate) mod file_metadata;
 pub(crate) mod utils;
 pub(crate) mod version;
+pub(crate) mod version_builder;
