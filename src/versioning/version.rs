@@ -1420,6 +1420,19 @@ mod version_tests {
         assert_eq!(actual_level, 1);
     }
 
+    #[test]
+    fn pick_level_for_memtable_output_when_there_are_overlapping_bytes_picks_the_correct_level() {
+        // Test when the L+2 level is at the max level size
+        let mut options = DbOptions::with_memory_env();
+        options.max_file_size = 20;
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+
+        let actual_level = version.pick_level_for_memtable_output("z1".as_bytes(), "z7".as_bytes());
+        assert_eq!(actual_level, 1);
+    }
+
     /// Creates tables files for various levels and adds the file metadata to the provided version.
     fn create_test_files_for_version(db_options: DbOptions, version: &mut Version) {
         // Create files with file numbers in reverse chronological order since upper levels
@@ -1615,8 +1628,42 @@ mod version_tests {
                 ("y".as_bytes().to_vec()),
             ),
         ];
-        let table_file_meta = create_table(db_options, entries, 55, 53);
+        let table_file_meta = create_table(db_options.clone(), entries, 55, 53);
         version.files[2].push(Arc::new(table_file_meta));
+
+        // Level 3
+        let entries = vec![
+            (
+                ("z1".as_bytes().to_vec(), Operation::Put),
+                ("z1".as_bytes().to_vec()),
+            ),
+            (
+                ("z2".as_bytes().to_vec(), Operation::Put),
+                ("z2".as_bytes().to_vec()),
+            ),
+            (
+                ("z3".as_bytes().to_vec(), Operation::Put),
+                ("z3".as_bytes().to_vec()),
+            ),
+            (
+                ("z4".as_bytes().to_vec(), Operation::Put),
+                ("z4".as_bytes().to_vec()),
+            ),
+            (
+                ("z5".as_bytes().to_vec(), Operation::Put),
+                ("z5".as_bytes().to_vec()),
+            ),
+            (
+                ("z6".as_bytes().to_vec(), Operation::Put),
+                ("z6".as_bytes().to_vec()),
+            ),
+            (
+                ("z7".as_bytes().to_vec(), Operation::Put),
+                ("z7".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options, entries, 45, 52);
+        version.files[3].push(Arc::new(table_file_meta));
     }
 
     /**
