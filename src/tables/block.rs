@@ -344,7 +344,8 @@ where
             }
         }
 
-        // Binary search to find a key <= `target` since block entries are sorted
+        // Binary search to find a key >= `target` since block entries are sorted (a.k.a. the
+        // leftmost element)
         let mut left = 0;
         let mut right = self.block_entries.len();
         while left < right {
@@ -360,7 +361,7 @@ where
                 }
                 Ordering::Greater | Ordering::Equal => {
                     // The key at `mid` is >= the `target`. So, shift the search space left to see
-                    // if we can find a key that is smaller than `target` in the case that the
+                    // if we can find a key that is greater than `target` in the case that the
                     // `target` does not exist.
                     right = mid;
                 }
@@ -585,7 +586,84 @@ mod tests {
     }
 
     #[test]
-    fn block_iterator_can_seek_to_targets() {
+    fn block_iterator_with_one_entry_can_seek_to_targets() {
+        let mut block_builder: BlockBuilder<InternalKey> =
+            BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
+        let num: u64 = 100_000;
+        let key = InternalKey::new(num.to_string().as_bytes().to_vec(), 100, Operation::Put);
+        block_builder.add_entry(Rc::new(key), &u64::encode_fixed_vec(num));
+        let finalized_block = block_builder.finalize();
+
+        let block_reader: BlockReader<InternalKey> = BlockReader::new(finalized_block).unwrap();
+        let mut block_iter = block_reader.iter();
+
+        // Start the iterator at an arbitrary position
+        block_iter.seek_to_last().unwrap();
+
+        // Seek key that exists
+        block_iter
+            .seek(&InternalKey::new(
+                100_000.to_string().as_bytes().to_vec(),
+                100,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(100_000.to_string().as_bytes().to_vec(), 100, Operation::Put,),
+            "Found an incorrect key"
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_000),
+            "Found an incorrect value"
+        );
+
+        // Seeking a key that does not exist should end at an entry greater than the target
+        block_iter
+            .seek(&InternalKey::new(
+                0_usize.to_string().as_bytes().to_vec(),
+                // Sequence numbers are sorted in descending order so this is greater than what
+                // exists in the block
+                100,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(
+                100_000_usize.to_string().as_bytes().to_vec(),
+                100,
+                Operation::Put,
+            ),
+            "Found an incorrect key. Should have found a key greater than the target."
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_000),
+            "Found an incorrect value. Should have found the value for a key greater than the \
+            target."
+        );
+
+        // Seeking a key that does not exist and there are no more files should return `None`
+        block_iter
+            .seek(&InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                // Sequence numbers are sorted in descending order so this is greater than what
+                // exists in the block
+                116,
+                Operation::Put,
+            ))
+            .unwrap();
+        assert!(block_iter.current().is_none());
+    }
+
+    #[test]
+    fn block_iterator_with_multiple_entries_can_seek_to_targets() {
         let mut block_builder: BlockBuilder<InternalKey> =
             BlockBuilder::new(PREFIX_COMPRESSION_RESTART_INTERVAL);
         for idx in 0..2_000_usize {
@@ -630,7 +708,7 @@ mod tests {
             "Found an incorrect value"
         );
 
-        // Seeking a key that does not exist should end at an entry less than the target
+        // Seeking a key that does not exist should end at an entry greater than the target
         block_iter
             .seek(&InternalKey::new(
                 100_117_usize.to_string().as_bytes().to_vec(),
@@ -649,12 +727,38 @@ mod tests {
                 117,
                 Operation::Put,
             ),
-            "Found an incorrect key. Should have found a key less than the target."
+            "Found an incorrect key. Should have found a key greater than the target."
         );
         assert_eq!(
             target_val,
             &u64::encode_fixed_vec(100_117),
-            "Found an incorrect key. Should have found a key less than the target."
+            "Found an incorrect key. Should have found a key greater than the target."
+        );
+
+        block_iter
+            .seek(&InternalKey::new(
+                100_117_usize.to_string().as_bytes().to_vec(),
+                // Sequence numbers are sorted in descending order so this is greater than what
+                // exists in the block
+                116,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (target_key, target_val) = block_iter.current().unwrap();
+
+        assert_eq!(
+            target_key,
+            &InternalKey::new(
+                100_118_usize.to_string().as_bytes().to_vec(),
+                118,
+                Operation::Put,
+            ),
+            "Found an incorrect key. Should have found a key greater than the target."
+        );
+        assert_eq!(
+            target_val,
+            &u64::encode_fixed_vec(100_118),
+            "Found an incorrect value. Should have found a value for a key greater than the target."
         );
     }
 
@@ -726,7 +830,7 @@ mod tests {
             "Found an incorrect value"
         );
 
-        // Seeking a key that does not exist should end at an entry less than the target
+        // Seeking a key that does not exist should end at an entry greater than the target
         block_iter
             .seek(&InternalKey::new(
                 100_117_usize.to_string().as_bytes().to_vec(),
@@ -745,12 +849,12 @@ mod tests {
                 117,
                 Operation::Put,
             ),
-            "Found an incorrect key. Should have found a key less than the target."
+            "Found an incorrect key. Should have found a key greater than the target."
         );
         assert_eq!(
             target_val,
             &u64::encode_fixed_vec(100_117),
-            "Found an incorrect value. Should have found a value less than the target."
+            "Found an incorrect value. Should have found a value greater than the target."
         );
     }
 }
