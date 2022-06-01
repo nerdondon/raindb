@@ -911,13 +911,57 @@ mod table_tests {
                 1117,
                 Operation::Put,
             ),
-            "Found an incorrect key. Should have found a key less than the target."
+            "Found an incorrect key. Should have found a key greater than the target."
         );
         assert_eq!(
             actual_val,
             &u64::encode_fixed_vec(101_117),
-            "Found an incorrect value. Should have found a value less than the target."
+            "Found an incorrect value. Should have found the value of a key greater than the \
+            target key."
         );
+
+        table_iter
+            .seek(&InternalKey::new(
+                101_117_usize.to_string().as_bytes().to_vec(),
+                1116,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (actual_key, actual_val) = table_iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new(
+                101_118_usize.to_string().as_bytes().to_vec(),
+                1118,
+                Operation::Put,
+            ),
+            "Found an incorrect key. Should have found a key greater than the target."
+        );
+        assert_eq!(
+            actual_val,
+            &u64::encode_fixed_vec(101_118),
+            "Found an incorrect value. Should have found the value of a key greater than the \
+            target key."
+        );
+
+        // Seek a key in the first block
+        table_iter
+            .seek(&InternalKey::new(
+                100_002_usize.to_string().as_bytes().to_vec(),
+                2,
+                Operation::Put,
+            ))
+            .unwrap();
+        let (actual_key, actual_val) = table_iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new(
+                100_002_usize.to_string().as_bytes().to_vec(),
+                2,
+                Operation::Put,
+            ),
+        );
+        assert_eq!(actual_val, &u64::encode_fixed_vec(100_002));
     }
 
     #[test]
