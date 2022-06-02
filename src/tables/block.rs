@@ -386,8 +386,10 @@ where
     }
 
     fn next(&mut self) -> Option<(&K, &Vec<u8>)> {
-        // Don't do anything if we are just past the last element
-        if self.current_index == self.block_entries.len() {
+        if self.current_index == self.block_entries.len() || !self.is_valid() {
+            // Set the index to an invalid value if we are at the boundaries
+            self.current_index = self.block_entries.len();
+
             return None;
         }
 
@@ -402,8 +404,10 @@ where
     }
 
     fn prev(&mut self) -> Option<(&K, &Vec<u8>)> {
-        // Don't do anything if we are the first element
-        if self.current_index == 0 {
+        if self.current_index == 0 || !self.is_valid() {
+            // Set the index to an invalid value if we are at the boundaries
+            self.current_index = self.block_entries.len();
+
             return None;
         }
 
@@ -545,6 +549,10 @@ mod tests {
             "Arrived at the last element early (index {idx}). Expected last element at iteration \
             2,000."
         );
+        assert!(
+            !block_iter.is_valid(),
+            "The block iterator should not be valid after moving past the end of the iterator"
+        );
     }
 
     #[test]
@@ -582,7 +590,14 @@ mod tests {
             "Found an incorrect last value"
         );
         assert!(block_iter.next().is_none());
-        assert!(block_iter.prev().is_some());
+        assert!(
+            !block_iter.is_valid(),
+            "The block iterator should not be valid after moving past the end of the iterator."
+        );
+        assert!(
+            block_iter.prev().is_none(),
+            "Must use one of the seek to reset an invalid iterator."
+        );
     }
 
     #[test]
