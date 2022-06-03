@@ -965,6 +965,51 @@ mod table_tests {
     }
 
     #[test]
+    fn given_a_table_with_multiple_entries_the_table_iterator_can_be_completely_iterated_in_reverse(
+    ) {
+        setup();
+
+        const MAX_BLOCK_SIZE_BYTES: usize = 256;
+        let mut options = DbOptions::with_memory_env();
+        // Use smaller block size to exercise block boundary conditions more often
+        options.max_block_size = MAX_BLOCK_SIZE_BYTES;
+
+        let mut table_builder = TableBuilder::new(options.clone(), 55).unwrap();
+        for idx in 0..2000_usize {
+            let num = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            table_builder
+                .add_entry(Rc::new(key), &u64::encode_fixed_vec(num as u64))
+                .unwrap();
+        }
+        table_builder.finalize().unwrap();
+        drop(table_builder);
+
+        let file_path = FileNameHandler::new(options.db_path().to_string()).get_table_file_path(55);
+        let file = options.filesystem_provider().open_file(&file_path).unwrap();
+        let table = Table::open(options.clone(), file).unwrap();
+        let mut table_iter = Table::iter_with(Arc::new(table), ReadOptions::default());
+        table_iter.seek_to_last().unwrap();
+
+        let mut idx: usize = 0;
+        while table_iter.is_valid() && idx < 2000 {
+            // Move to the previous entry
+            idx += 1;
+            table_iter.prev();
+        }
+
+        assert!(
+            table_iter.prev().is_none() && idx == 2000,
+            "Arrived at the last element early (index {idx}). Expected last element at iteration \
+            2000."
+        );
+    }
+
+    #[test]
     fn given_a_table_with_one_block_get_can_filter_out_deleted_values() {
         setup();
 
