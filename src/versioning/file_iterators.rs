@@ -65,11 +65,6 @@ impl FilesEntryIterator {
 
 /// Private methods
 impl FilesEntryIterator {
-    /// Check if the index into the file list is pointing at valid location.
-    fn is_file_index_valid(&self) -> bool {
-        self.current_file_index == self.file_list.len()
-    }
-
     /// Set the table iterator to be used for iteration.
     fn set_table_iter(&mut self, maybe_new_index: Option<usize>) -> RainDBResult<()> {
         if maybe_new_index.is_none() || maybe_new_index.unwrap() == self.file_list.len() {
@@ -97,7 +92,7 @@ impl FilesEntryIterator {
         while self.current_table_iter.is_none()
             || !self.current_table_iter.as_mut().unwrap().is_valid()
         {
-            if !self.is_file_index_valid() {
+            if self.current_file_index == self.file_list.len() {
                 // We've reached the end of the file list so there are no more tables to iterate
                 self.current_table_iter = None;
                 return Ok(());
@@ -120,7 +115,7 @@ impl FilesEntryIterator {
         while self.current_table_iter.is_none()
             || !self.current_table_iter.as_mut().unwrap().is_valid()
         {
-            if !self.is_file_index_valid() {
+            if self.current_file_index == 0 {
                 // We've reached the end of the file list so there are no more tables to iterate
                 self.current_table_iter = None;
                 return Ok(());
