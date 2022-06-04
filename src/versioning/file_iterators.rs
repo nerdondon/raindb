@@ -32,7 +32,12 @@ pub(crate) struct FilesEntryIterator {
     /// The ordered list of files to iterate.
     file_list: Vec<Arc<FileMetadata>>,
 
-    /// The current index into the file list that the cursor is at.
+    /**
+    The current index into the file list that the cursor is at.
+
+    This value needs to stay in sync with the current table iterator. To ensure this, we only set
+    this value in `FilesEntryIterator::set_table_iter`.
+    */
     current_file_index: usize,
 
     /// The current table being iterated for entries.
@@ -81,8 +86,9 @@ impl FilesEntryIterator {
 
             let table = self
                 .table_cache
-                .find_table(self.file_list[self.current_file_index].file_number())?;
+                .find_table(self.file_list[new_index].file_number())?;
             self.current_table_iter = Some(Table::iter_with(table, self.read_options.clone()));
+            self.current_file_index = new_index;
         }
         Ok(())
     }
@@ -99,8 +105,7 @@ impl FilesEntryIterator {
             }
 
             // Move index iterator to check for the next data block handle
-            self.current_file_index += 1;
-            self.set_table_iter(Some(self.current_file_index))?;
+            self.set_table_iter(Some(self.current_file_index + 1))?;
 
             if self.current_table_iter.is_some() {
                 self.current_table_iter.as_mut().unwrap().seek_to_first()?;
@@ -116,14 +121,13 @@ impl FilesEntryIterator {
             || !self.current_table_iter.as_mut().unwrap().is_valid()
         {
             if self.current_file_index == 0 {
-                // We've reached the end of the file list so there are no more tables to iterate
+                // We've reached the start of the file list so there are no more tables to iterate
                 self.current_table_iter = None;
                 return Ok(());
             }
 
             // Move index iterator to check for the next data block handle
-            self.current_file_index -= 1;
-            self.set_table_iter(Some(self.current_file_index))?;
+            self.set_table_iter(Some(self.current_file_index - 1))?;
 
             if self.current_table_iter.is_some() {
                 self.current_table_iter.as_mut().unwrap().seek_to_last()?;
@@ -158,8 +162,8 @@ impl RainDbIterator for FilesEntryIterator {
     }
 
     fn seek_to_first(&mut self) -> Result<(), Self::Error> {
-        self.current_file_index = 0;
-        self.set_table_iter(Some(self.current_file_index))?;
+        let new_file_index = 0;
+        self.set_table_iter(Some(new_file_index))?;
 
         if self.current_table_iter.is_some() {
             self.current_table_iter.as_mut().unwrap().seek_to_first()?;
@@ -171,12 +175,12 @@ impl RainDbIterator for FilesEntryIterator {
     }
 
     fn seek_to_last(&mut self) -> Result<(), Self::Error> {
-        self.current_file_index = if self.file_list.is_empty() {
+        let new_file_index = if self.file_list.is_empty() {
             0
         } else {
             self.file_list.len() - 1
         };
-        self.set_table_iter(Some(self.current_file_index))?;
+        self.set_table_iter(Some(new_file_index))?;
 
         if self.current_table_iter.is_some() {
             self.current_table_iter.as_mut().unwrap().seek_to_last()?;
