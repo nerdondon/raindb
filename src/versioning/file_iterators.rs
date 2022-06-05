@@ -79,7 +79,7 @@ impl FilesEntryIterator {
         }
 
         if let Some(new_index) = maybe_new_index {
-            if new_index == self.current_file_index {
+            if new_index == self.current_file_index && self.current_table_iter.is_some() {
                 // The file we need to iterate is the same as the current one. No update necessary
                 return Ok(());
             }
