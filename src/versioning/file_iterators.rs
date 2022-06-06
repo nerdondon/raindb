@@ -206,7 +206,11 @@ impl RainDbIterator for FilesEntryIterator {
             }
         }
 
-        self.current_table_iter.as_mut().unwrap().current()
+        if self.is_valid() {
+            return self.current_table_iter.as_mut().unwrap().current();
+        }
+
+        None
     }
 
     fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
@@ -224,7 +228,11 @@ impl RainDbIterator for FilesEntryIterator {
             }
         }
 
-        self.current_table_iter.as_mut().unwrap().current()
+        if self.is_valid() {
+            return self.current_table_iter.as_mut().unwrap().current();
+        }
+
+        None
     }
 
     fn current(&self) -> Option<(&Self::Key, &Vec<u8>)> {
