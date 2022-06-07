@@ -156,7 +156,7 @@ impl RainDbIterator for FilesEntryIterator {
             self.current_table_iter.as_mut().unwrap().seek(target)?;
         }
 
-        self.skip_empty_table_files_backward()?;
+        self.skip_empty_table_files_forward()?;
 
         Ok(())
     }
