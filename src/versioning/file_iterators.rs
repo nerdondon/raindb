@@ -553,3 +553,295 @@ impl Drop for MergingIterator {
         }
     }
 }
+
+#[cfg(test)]
+mod files_entry_iterator_tests {
+    use pretty_assertions::assert_eq;
+    use std::rc::Rc;
+
+    use crate::tables::TableBuilder;
+    use crate::versioning::version::Version;
+    use crate::{DbOptions, Operation};
+
+    use super::*;
+
+    #[test]
+    fn files_entry_iterator_with_an_empty_file_list_does_not_become_valid() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let mut iter = FilesEntryIterator::new(
+            version.files[4].clone(),
+            Arc::clone(&table_cache),
+            ReadOptions::default(),
+        );
+
+        assert!(!iter.is_valid());
+        assert!(iter.next().is_none());
+        assert!(iter.prev().is_none());
+        assert!(iter
+            .seek(&InternalKey::new(
+                "a".as_bytes().to_vec(),
+                100,
+                Operation::Put
+            ))
+            .is_ok());
+        assert!(iter.current().is_none());
+        assert!(iter.seek_to_first().is_ok());
+        assert!(iter.current().is_none());
+        assert!(iter.seek_to_last().is_ok());
+        assert!(iter.current().is_none());
+    }
+
+    #[test]
+    fn files_entry_iterator_can_seek_to_specific_targets() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let mut iter = FilesEntryIterator::new(
+            version.files[1].clone(),
+            Arc::clone(&table_cache),
+            ReadOptions::default(),
+        );
+
+        assert!(
+            !iter.is_valid(),
+            "The iterator should not be valid until its first seek"
+        );
+        assert!(iter
+            .seek(&InternalKey::new(
+                "h".as_bytes().to_vec(),
+                100,
+                Operation::Put
+            ))
+            .is_ok());
+        let (actual_key, actual_val) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("h".as_bytes().to_vec(), 86, Operation::Put)
+        );
+        assert_eq!(actual_val, "h".as_bytes());
+
+        assert!(iter
+            .seek(&InternalKey::new(
+                "w".as_bytes().to_vec(),
+                20,
+                Operation::Put
+            ))
+            .is_ok());
+        let (actual_key, actual_val) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("x".as_bytes().to_vec(), 78, Operation::Delete)
+        );
+        assert_eq!(actual_val, &[]);
+
+        let (actual_key, actual_val) = iter.next().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("y".as_bytes().to_vec(), 79, Operation::Put)
+        );
+        assert_eq!(actual_val, "y".as_bytes());
+
+        assert!(iter.seek_to_first().is_ok());
+        let (actual_key, actual_val) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("g".as_bytes().to_vec(), 85, Operation::Put)
+        );
+        assert_eq!(actual_val, "g".as_bytes());
+
+        assert!(iter.seek_to_last().is_ok());
+        let (actual_key, actual_val) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("y".as_bytes().to_vec(), 79, Operation::Put)
+        );
+        assert_eq!(actual_val, "y".as_bytes());
+    }
+
+    #[test]
+    fn files_entry_iterator_can_be_iterated_forward_completely() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let mut iter = FilesEntryIterator::new(
+            version.files[1].clone(),
+            Arc::clone(&table_cache),
+            ReadOptions::default(),
+        );
+
+        assert!(iter.seek_to_first().is_ok());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("g".as_bytes().to_vec(), 85, Operation::Put)
+        );
+
+        while iter.next().is_some() {
+            assert!(
+                iter.current().is_some(),
+                "Iteration did not yield a value but one was expected."
+            );
+        }
+
+        assert!(
+            iter.next().is_none(),
+            "Calling `next` after consuming all the values should not return a value"
+        );
+        assert!(
+            !iter.is_valid(),
+            "The block iterator should not be valid after moving past the end of the iterator"
+        );
+    }
+
+    #[test]
+    fn files_entry_iterator_can_be_iterated_backward_completely() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let mut iter = FilesEntryIterator::new(
+            version.files[1].clone(),
+            Arc::clone(&table_cache),
+            ReadOptions::default(),
+        );
+
+        assert!(iter.seek_to_last().is_ok());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("y".as_bytes().to_vec(), 79, Operation::Put)
+        );
+
+        while iter.prev().is_some() {
+            assert!(
+                iter.current().is_some(),
+                "Iteration did not yield a value but one was expected."
+            );
+        }
+
+        assert!(
+            iter.prev().is_none(),
+            "Calling `prev` after consuming all the values should not return a value"
+        );
+        assert!(
+            !iter.is_valid(),
+            "The block iterator should not be valid after moving past the end of the iterator"
+        );
+    }
+
+    /// Creates version used to hold files for testing.
+    fn create_test_version(db_options: DbOptions, table_cache: &Arc<TableCache>) -> Version {
+        let mut version = Version::new(db_options.clone(), table_cache, 200, 30);
+
+        // Level 1
+        let entries = vec![
+            (
+                ("g".as_bytes().to_vec(), Operation::Put),
+                ("g".as_bytes().to_vec()),
+            ),
+            (
+                ("h".as_bytes().to_vec(), Operation::Put),
+                ("h".as_bytes().to_vec()),
+            ),
+            (
+                ("i".as_bytes().to_vec(), Operation::Put),
+                ("i".as_bytes().to_vec()),
+            ),
+            (
+                ("j".as_bytes().to_vec(), Operation::Put),
+                ("j".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 85, 59);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("o".as_bytes().to_vec(), Operation::Put),
+                ("o".as_bytes().to_vec()),
+            ),
+            (
+                ("r".as_bytes().to_vec(), Operation::Put),
+                ("r".as_bytes().to_vec()),
+            ),
+            (
+                ("s".as_bytes().to_vec(), Operation::Put),
+                ("s".as_bytes().to_vec()),
+            ),
+            (
+                ("t".as_bytes().to_vec(), Operation::Put),
+                ("t".as_bytes().to_vec()),
+            ),
+            (
+                ("u".as_bytes().to_vec(), Operation::Put),
+                ("u".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 80, 58);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("v".as_bytes().to_vec(), Operation::Put),
+                ("v".as_bytes().to_vec()),
+            ),
+            (
+                ("w".as_bytes().to_vec(), Operation::Put),
+                ("w".as_bytes().to_vec()),
+            ),
+            (("x".as_bytes().to_vec(), Operation::Delete), vec![]),
+            (
+                ("y".as_bytes().to_vec(), Operation::Put),
+                ("y".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options, entries, 76, 57);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        version
+    }
+
+    /**
+    Create a table with the provided entries (key-value pairs) with sequence numbers starting
+    from the provided start point.
+    */
+    fn create_table(
+        db_options: DbOptions,
+        entries: Vec<((Vec<u8>, Operation), Vec<u8>)>,
+        starting_sequence_num: u64,
+        file_number: u64,
+    ) -> FileMetadata {
+        let smallest_key = InternalKey::new(
+            entries.first().unwrap().0 .0.clone(),
+            starting_sequence_num,
+            entries.first().unwrap().0 .1,
+        );
+        let largest_key = InternalKey::new(
+            entries.last().unwrap().0 .0.clone(),
+            starting_sequence_num + (entries.len() as u64) - 1,
+            entries.last().unwrap().0 .1,
+        );
+
+        let mut table_builder = TableBuilder::new(db_options, file_number).unwrap();
+        let mut curr_sequence_num = starting_sequence_num;
+        for ((user_key, operation), value) in entries {
+            table_builder
+                .add_entry(
+                    Rc::new(InternalKey::new(user_key, curr_sequence_num, operation)),
+                    &value,
+                )
+                .unwrap();
+            curr_sequence_num += 1;
+        }
+
+        table_builder.finalize().unwrap();
+
+        let mut file_meta = FileMetadata::new(file_number);
+        file_meta.set_smallest_key(Some(smallest_key));
+        file_meta.set_largest_key(Some(largest_key));
+        file_meta.set_file_size(table_builder.file_size());
+
+        file_meta
+    }
+}
