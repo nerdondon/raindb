@@ -251,11 +251,16 @@ enum IterationDirection {
 }
 
 /**
-An iterator that merges the output of a list of iterators sorted order.
+An iterator that merges the output of a list of iterators in sorted order.
 
 This iterator does not do any sort of de-duplication.
 
-A heap is not used to merge the inputs because
+# Legacy
+
+As in LevelDB, a heap is not used to merge the inputs because the number of iterators that would be
+merged by the heap/priority queue is small. The only level where multiple iterators is created is
+level 0 which has a maximum of 12 files. This means that at most 12 + 1 iterator from the parent
+level will need to merged.
 */
 pub(crate) struct MergingIterator {
     /// The underlying iterators.
@@ -277,6 +282,7 @@ pub(crate) struct MergingIterator {
     */
     errors: Vec<Option<RainDBError>>,
 
+    /// Functions called to perform cleanup tasks when the iterator is dropped.
     cleanup_callbacks: Vec<Box<dyn FnOnce()>>,
 }
 
