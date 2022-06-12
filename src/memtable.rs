@@ -208,3 +208,147 @@ impl RainDbIterator for SkipListMemTableIter {
             .map(|(key_ref, value_ref)| (key_ref, value_ref))
     }
 }
+
+#[cfg(test)]
+mod skiplist_memtable_tests {
+    use integer_encoding::FixedInt;
+    use pretty_assertions::assert_eq;
+
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn can_insert_and_retrieve_elements() {
+        let memtable = SkipListMemTable::new();
+        for idx in 1..30 {
+            let num: u64 = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            memtable.insert(key, u64::encode_fixed_vec(num));
+        }
+
+        assert_eq!(memtable.len(), 29);
+
+        for idx in 1..30 {
+            let num: u64 = idx + 100_000;
+            let key = InternalKey::new(num.to_string().as_bytes().to_vec(), idx, Operation::Put);
+            let actual = memtable.get(&key).unwrap().unwrap();
+
+            assert_eq!(actual, &u64::encode_fixed_vec(num));
+        }
+
+        // Should find the most recent value if a sequence number is not exact
+        memtable.insert(
+            InternalKey::new(
+                100_020_u64.to_string().as_bytes().to_vec(),
+                31,
+                Operation::Put,
+            ),
+            "something new".as_bytes().to_vec(),
+        );
+        let actual = memtable
+            .get(&InternalKey::new_for_seeking(
+                100_020_u64.to_string().as_bytes().to_vec(),
+                100,
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual, &"something new".as_bytes().to_vec());
+
+        // Should find a deletion marker if it is the most recent value
+        memtable.insert(
+            InternalKey::new(
+                100_020_u64.to_string().as_bytes().to_vec(),
+                31,
+                Operation::Delete,
+            ),
+            vec![],
+        );
+        let actual = memtable
+            .get(&InternalKey::new_for_seeking(
+                100_020_u64.to_string().as_bytes().to_vec(),
+                100,
+            ))
+            .unwrap();
+        assert!(actual.is_none());
+
+        // Get's a `KeyNoteFound` error when searching for a key that doesn't exist
+        let actual = memtable
+            .get(&InternalKey::new_for_seeking(
+                200_000_u64.to_string().as_bytes().to_vec(),
+                100,
+            ))
+            .err()
+            .unwrap();
+        assert_eq!(
+            actual.to_string(),
+            "The specified key could not be found in the database."
+        );
+    }
+
+    #[test]
+    fn can_iterate_all_elements_forward() {
+        let memtable = SkipListMemTable::new();
+        for idx in 1..30 {
+            let num: u64 = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            memtable.insert(key, u64::encode_fixed_vec(num));
+        }
+
+        let mut iter = memtable.iter();
+        while iter.is_valid() {
+            iter.next();
+        }
+
+        assert!(
+            iter.next().is_none(),
+            "Calling `next` after consuming all the values should not return a value"
+        );
+    }
+
+    #[test]
+    fn can_iterate_all_elements_backward() {
+        let memtable = SkipListMemTable::new();
+        for idx in 1..30 {
+            let num: u64 = idx + 100_000;
+            let key = InternalKey::new(
+                num.to_string().as_bytes().to_vec(),
+                idx as u64,
+                Operation::Put,
+            );
+            memtable.insert(key, u64::encode_fixed_vec(num));
+        }
+
+        let mut iter = memtable.iter();
+
+        assert!(iter.seek_to_last().is_ok());
+
+        let (actual_key, actual_val) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new(
+                100_029_u64.to_string().as_bytes().to_vec(),
+                29,
+                Operation::Put
+            )
+        );
+        assert_eq!(actual_val, &u64::encode_fixed_vec(100_029));
+
+        while iter.is_valid() {
+            iter.prev();
+        }
+
+        assert!(
+            iter.prev().is_none(),
+            "Calling `prev` after consuming all the values should not return a value"
+        );
+    }
+}
