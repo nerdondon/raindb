@@ -40,13 +40,6 @@ pub(crate) struct VersionSet {
     file_name_handler: Arc<FileNameHandler>,
 
     /**
-    A cache for accessing table files.
-
-    This will be shared with the child versions.
-    */
-    table_cache: Arc<TableCache>,
-
-    /**
     The most recently used file number.
 
     This is a counter that is incremented as new files are crated. File numbers can be re-used when
@@ -123,7 +116,6 @@ impl VersionSet {
             options,
             filesystem_provider,
             file_name_handler,
-            table_cache,
             curr_file_number: 1,
             // This will be updated by [`VersionSet::recover`]
             manifest_file_number: 0,
@@ -208,11 +200,6 @@ impl VersionSet {
     /// Get the file number of the current manifest file.
     pub fn get_manifest_file_number(&self) -> u64 {
         self.manifest_file_number
-    }
-
-    /// Get an owned reference to the table cache.
-    pub fn get_table_cache(&self) -> Arc<TableCache> {
-        Arc::clone(&self.table_cache)
     }
 
     /// Returns true if a level on the current version needs compaction.
