@@ -182,16 +182,6 @@ impl VersionSet {
         self.prev_wal_number
     }
 
-    /**
-    Set the version set's previous WAL number.
-
-    This number must only be populated if there is a memtable that is currently undergoing
-    compaction.
-    */
-    pub fn set_prev_wal_number(&mut self, prev_wal_number: Option<u64>) {
-        self.prev_wal_number = prev_wal_number;
-    }
-
     /// Get the file number of the current write-ahead log.
     pub fn get_curr_wal_number(&self) -> u64 {
         self.curr_wal_number
