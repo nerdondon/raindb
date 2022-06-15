@@ -80,22 +80,13 @@ pub(crate) struct SizeCompactionMetadata {
 Metadata used for scoring the necessity of compacting a version based on the number of disk seeks
 being performed during read operations within the version.
 */
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SeekCompactionMetadata {
     /// The next file to compact based on seek stats.
     pub(crate) file_to_compact: Option<Arc<FileMetadata>>,
 
     /// The level of the next file to compact.
     pub(crate) level_of_file_to_compact: usize,
-}
-
-impl Default for SeekCompactionMetadata {
-    fn default() -> Self {
-        Self {
-            file_to_compact: None,
-            level_of_file_to_compact: 0,
-        }
-    }
 }
 
 /// Version contains information that represents a point in time state of the database.
@@ -538,13 +529,12 @@ impl Version {
         let mut best_score: f64 = -1.;
 
         for level in 0..MAX_NUM_LEVELS {
-            let new_score: f64;
-            if level == 0 {
-                new_score = (self.files[level].len() / L0_COMPACTION_TRIGGER) as f64;
+            let new_score: f64 = if level == 0 {
+                (self.files[level].len() / L0_COMPACTION_TRIGGER) as f64
             } else {
                 let level_file_size = super::utils::sum_file_sizes(&self.files[level]) as f64;
-                new_score = level_file_size / Version::max_bytes_for_level(level);
-            }
+                level_file_size / Version::max_bytes_for_level(level)
+            };
 
             if new_score > best_score {
                 best_score = new_score;
@@ -1431,6 +1421,18 @@ mod version_tests {
 
         let actual_level = version.pick_level_for_memtable_output("z1".as_bytes(), "z7".as_bytes());
         assert_eq!(actual_level, 1);
+    }
+
+    #[test]
+    fn get_representative_iterators_returns_the_correct_number_of_iterators() {
+        let options = DbOptions::with_memory_env();
+        let read_options = ReadOptions::default();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let mut version = Version::new(options.clone(), &table_cache, 99, 30);
+        create_test_files_for_version(options, &mut version);
+
+        let iters = version.get_representative_iterators(&read_options).unwrap();
+        assert_eq!(iters.len(), 6);
     }
 
     /// Creates tables files for various levels and adds the file metadata to the provided version.
