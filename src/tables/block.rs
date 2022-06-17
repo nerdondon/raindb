@@ -312,17 +312,6 @@ where
     block_entries: Arc<Vec<BlockEntry<K>>>,
 }
 
-/// Private methods
-impl<K> BlockIter<K>
-where
-    K: RainDbKeyType,
-{
-    /// Update iterator adapter state to point at the entry at the specified restart point.
-    fn seek_to_restart_point(&mut self, restart_point_index: usize) {
-        self.current_index = restart_point_index;
-    }
-}
-
 impl<K> RainDbIterator for BlockIter<K>
 where
     K: RainDbKeyType,
