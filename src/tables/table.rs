@@ -238,7 +238,7 @@ impl Table {
         let checksum_on_disk = u32::decode_fixed(&raw_block_data[offset_to_checksum..]);
         let unmasked_stored_checksum = crc::unmask_checksum(checksum_on_disk);
         let calculated_block_checksum =
-            CRC_CALCULATOR.checksum(&raw_block_data[0..offset_to_checksum]);
+            CRC_CALCULATOR.checksum(&raw_block_data[..offset_to_checksum]);
         if unmasked_stored_checksum != calculated_block_checksum {
             return Err(ReadError::FailedToParse(
                 "Failed to parse the block. There was a mismatch in the checksum".to_string(),
@@ -249,15 +249,14 @@ impl Table {
         let compression_type_offset = total_block_size - BLOCK_DESCRIPTOR_SIZE_BYTES;
         let maybe_compression_type: RainDBResult<TableFileCompressionType> =
             raw_block_data[compression_type_offset].try_into();
-        let compression_type: TableFileCompressionType;
-        match maybe_compression_type {
+        let compression_type: TableFileCompressionType = match maybe_compression_type {
             Err(error) => {
                 return Err(ReadError::BlockDecompression(DBIOError::new(
                     io::ErrorKind::InvalidData,
                     error.to_string(),
                 )));
             }
-            Ok(encoded_compression_type) => compression_type = encoded_compression_type,
+            Ok(encoded_compression_type) => encoded_compression_type,
         };
 
         let raw_block_contents = &raw_block_data[..compression_type_offset];
