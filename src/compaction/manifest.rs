@@ -573,6 +573,8 @@ impl CompactionManifest {
                     if file.smallest_key() < current_boundary_key {
                         smallest_boundary_file = Some(Arc::clone(file));
                     }
+                } else {
+                    smallest_boundary_file = Some(Arc::clone(file));
                 }
             }
         }
