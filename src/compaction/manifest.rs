@@ -592,3 +592,51 @@ impl CompactionManifest {
         self.max_output_file_size_bytes * 25
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use parking_lot::RwLock;
+    use pretty_assertions::assert_eq;
+
+    use crate::tables::TableBuilder;
+    use crate::utils::linked_list::Node;
+    use crate::Operation;
+
+    use super::*;
+
+    #[test]
+    fn is_trivial_move_given_compaction_inputs_that_can_be_trivially_moved_returns_true() {
+        let mut options = DbOptions::with_memory_env();
+        options.max_file_size = 20;
+        let mut manifest = CompactionManifest::new(&options, 3);
+        let mut compaction_file = FileMetadata::new(30);
+        compaction_file.set_file_size(20);
+        let compaction_files: Vec<Arc<FileMetadata>> =
+            vec![compaction_file].into_iter().map(Arc::new).collect();
+        manifest.set_compaction_level_files(compaction_files);
+
+        assert!(manifest.is_trivial_move());
+    }
+
+    #[test]
+    fn is_trivial_move_given_compaction_inputs_with_too_much_overlap_with_grandparents_returns_false(
+    ) {
+        let mut options = DbOptions::with_memory_env();
+        options.max_file_size = 20;
+        let mut manifest = CompactionManifest::new(&options, 3);
+        let mut compaction_file = FileMetadata::new(30);
+        compaction_file.set_file_size(20);
+        let compaction_files: Vec<Arc<FileMetadata>> =
+            vec![compaction_file].into_iter().map(Arc::new).collect();
+        manifest.set_compaction_level_files(compaction_files);
+
+        let mut grandparent_file = FileMetadata::new(10);
+        grandparent_file.set_file_size(300);
+        manifest.overlapping_grandparents =
+            vec![grandparent_file].into_iter().map(Arc::new).collect();
+
+        assert!(!manifest.is_trivial_move());
+    }
+}
