@@ -538,7 +538,7 @@ impl CompactionManifest {
     }
 
     /// Find the largest key stored in the provided files.
-    fn find_largest_key(files: &mut Vec<Arc<FileMetadata>>) -> Option<&InternalKey> {
+    fn find_largest_key(files: &mut [Arc<FileMetadata>]) -> Option<&InternalKey> {
         if files.is_empty() {
             return None;
         }
