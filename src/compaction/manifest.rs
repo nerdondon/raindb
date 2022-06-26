@@ -639,4 +639,117 @@ mod tests {
 
         assert!(!manifest.is_trivial_move());
     }
+
+    #[test]
+    fn add_boundary_inputs_does_not_add_extra_files_for_empty_compaction_inputs() {
+        let level_files: &[Arc<FileMetadata>] = &[];
+        let mut compaction_files: Vec<Arc<FileMetadata>> = vec![];
+
+        CompactionManifest::add_boundary_inputs(level_files, &mut compaction_files);
+
+        assert!(compaction_files.is_empty());
+    }
+
+    #[test]
+    fn add_boundary_inputs_with_empty_level_files_does_not_add_extra_files_for_compaction_inputs() {
+        let level_files: &[Arc<FileMetadata>] = &[];
+        let mut compaction_files: Vec<Arc<FileMetadata>> = vec![create_file_metadata(
+            100,
+            InternalKey::new("a".as_bytes().to_vec(), 2, Operation::Put),
+            InternalKey::new("a".as_bytes().to_vec(), 1, Operation::Put),
+        )]
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+
+        CompactionManifest::add_boundary_inputs(level_files, &mut compaction_files);
+
+        assert_eq!(compaction_files.len(), 1);
+        assert_eq!(compaction_files[0].file_number(), 100);
+    }
+
+    #[test]
+    fn add_boundary_inputs_with_empty_compaction_files_and_single_level_file_does_not_add_additional_files(
+    ) {
+        let level_files: Vec<Arc<FileMetadata>> = vec![create_file_metadata(
+            100,
+            InternalKey::new("a".as_bytes().to_vec(), 2, Operation::Put),
+            InternalKey::new("a".as_bytes().to_vec(), 1, Operation::Put),
+        )]
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+        let mut compaction_files: Vec<Arc<FileMetadata>> = vec![];
+
+        CompactionManifest::add_boundary_inputs(&level_files, &mut compaction_files);
+
+        assert!(compaction_files.is_empty());
+    }
+
+    #[test]
+    fn add_boundary_inputs_adds_a_boundary_file_if_one_exists() {
+        let initial_file = Arc::new(create_file_metadata(
+            100,
+            InternalKey::new("a".as_bytes().to_vec(), 29, Operation::Put),
+            InternalKey::new("a".as_bytes().to_vec(), 20, Operation::Put),
+        ));
+        let mut level_files: Vec<Arc<FileMetadata>> = vec![
+            create_file_metadata(
+                101,
+                InternalKey::new("a".as_bytes().to_vec(), 1, Operation::Put),
+                InternalKey::new("b".as_bytes().to_vec(), 10, Operation::Put),
+            ),
+            create_file_metadata(
+                102,
+                InternalKey::new("c".as_bytes().to_vec(), 30, Operation::Put),
+                InternalKey::new("g".as_bytes().to_vec(), 50, Operation::Put),
+            ),
+        ]
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+        level_files.push(Arc::clone(&initial_file));
+
+        let mut compaction_files: Vec<Arc<FileMetadata>> = vec![initial_file];
+
+        CompactionManifest::add_boundary_inputs(&level_files, &mut compaction_files);
+
+        assert_eq!(compaction_files.len(), 2);
+        assert_eq!(compaction_files[0].file_number(), 100);
+        assert_eq!(compaction_files[1].file_number(), 101);
+    }
+
+    #[test]
+    fn add_boundary_inputs_adds_multiple_boundary_files_if_they_exist() {
+        let initial_file = Arc::new(create_file_metadata(
+            100,
+            InternalKey::new("a".as_bytes().to_vec(), 6, Operation::Put),
+            InternalKey::new("a".as_bytes().to_vec(), 5, Operation::Put),
+        ));
+        let mut level_files: Vec<Arc<FileMetadata>> = vec![
+            create_file_metadata(
+                101,
+                InternalKey::new("a".as_bytes().to_vec(), 2, Operation::Put),
+                InternalKey::new("b".as_bytes().to_vec(), 1, Operation::Put),
+            ),
+            create_file_metadata(
+                102,
+                InternalKey::new("a".as_bytes().to_vec(), 4, Operation::Put),
+                InternalKey::new("a".as_bytes().to_vec(), 3, Operation::Put),
+            ),
+        ]
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+        level_files.push(Arc::clone(&initial_file));
+
+        let mut compaction_files: Vec<Arc<FileMetadata>> = vec![initial_file];
+
+        CompactionManifest::add_boundary_inputs(&level_files, &mut compaction_files);
+
+        assert_eq!(compaction_files.len(), 3);
+        assert_eq!(compaction_files[0].file_number(), 100);
+        assert_eq!(compaction_files[1].file_number(), 102);
+        assert_eq!(compaction_files[2].file_number(), 101);
+    }
 }
