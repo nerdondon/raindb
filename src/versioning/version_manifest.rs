@@ -69,11 +69,7 @@ pub(crate) struct VersionChangeManifest {
     /// New files to add to the next version with the level the file should be added at.
     pub(crate) new_files: Vec<(usize, FileMetadata)>,
 
-    /**
-    Deleted files per level that will be removed in the next version.
-
-    Deleted files are marked by a tuple of
-    */
+    /// Deleted files per level that will be removed in the next version.
     pub(crate) deleted_files: HashSet<DeletedFile>,
 
     /**
