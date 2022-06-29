@@ -197,7 +197,7 @@ impl From<TryFromIntError> for LogIOError {
 }
 
 /// Wrapper for [`std::io::Error`] that implements [`Clone`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DBIOError {
     error_kind: io::ErrorKind,
 
