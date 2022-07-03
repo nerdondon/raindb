@@ -319,7 +319,7 @@ impl Table {
                 let reader: DataBlockReader =
                     Table::get_data_block_reader_from_disk(&*self.file, block_handle)?;
                 if read_options.fill_cache {
-                    let cache_entry = self.cache_block_reader(reader, &block_handle);
+                    let cache_entry = self.cache_block_reader(reader, block_handle);
                     return Ok(Arc::clone(&cache_entry.get_value()));
                 }
 
@@ -363,7 +363,7 @@ impl fmt::Debug for Table {
         f.debug_struct("Table")
             .field("cache_partition_id", &self.cache_partition_id)
             .field("footer", &self.footer)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
