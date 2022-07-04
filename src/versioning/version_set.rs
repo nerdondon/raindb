@@ -379,8 +379,8 @@ impl VersionSet {
                 maybe_prev_wal_num = Some(0);
             }
 
-            self.mark_file_number_used(maybe_prev_wal_num.clone().unwrap());
-            self.mark_file_number_used(maybe_curr_wal_num.clone().unwrap_or(0));
+            self.mark_file_number_used(maybe_prev_wal_num.unwrap());
+            self.mark_file_number_used(maybe_curr_wal_num.unwrap_or(0));
         }
 
         if let Some(read_err) = maybe_manifest_read_error {
@@ -468,7 +468,11 @@ impl VersionSet {
                     let remove_file_result =
                         version_set.filesystem_provider.remove_file(&manifest_path);
                     if let Err(remove_file_error) = remove_file_result {
-                        log::error!("There was an error cleaning up the newly created manifest file after encountering a different error. Error: {}.", &remove_file_error);
+                        log::error!(
+                            "There was an error cleaning up the newly created manifest file after \
+                            encountering a different error. Error: {}.",
+                            &remove_file_error
+                        );
                         return Err(WriteError::ManifestWrite(
                             ManifestWriteErrorKind::ManifestErrorCleanup(remove_file_error.into()),
                         ));
