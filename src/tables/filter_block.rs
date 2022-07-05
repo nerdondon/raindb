@@ -10,7 +10,7 @@ A reader for filter blocks.
 
 # Layout
 
-Filter blocks are layed out in the following format:
+Filter blocks are laid out in the following format:
 
 1. A sequence of filters
 1. A sequence of 4 byte offsets to the filters
