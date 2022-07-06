@@ -38,8 +38,12 @@ impl<T> Node<T>
 where
     T: Debug,
 {
-    /// Create a new [`Node`] that with empty next and previous links.
-    pub fn new(element: T) -> Self {
+    /**
+    Create a new [`Node`] that with empty next and previous links.
+
+    **NOTE**: This is accessible to the crate only for testing purposes.
+    */
+    pub(crate) fn new(element: T) -> Self {
         Self {
             element,
             next: None,
