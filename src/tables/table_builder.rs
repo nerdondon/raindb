@@ -9,7 +9,7 @@ use crate::config::{TableFileCompressionType, PREFIX_COMPRESSION_RESTART_INTERVA
 use crate::file_names::FileNameHandler;
 use crate::filter_policy;
 use crate::fs::RandomAccessFile;
-use crate::key::{InternalKey, RainDbKeyType};
+use crate::key::InternalKey;
 use crate::utils::bytes::BinarySeparable;
 use crate::utils::crc;
 use crate::DbOptions;
