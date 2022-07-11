@@ -301,7 +301,7 @@ impl DatabaseIterator {
         self.bytes_until_read_sampling -= bytes_read;
     }
 
-    /// Picks a random number of bytes that can be read before a compaction is scheduled
+    /// Picks a random number of bytes that can be read before a compaction is scheduled.
     fn random_compaction_period(&mut self) -> usize {
         self.distribution.sample(&mut self.rng) as usize
     }
