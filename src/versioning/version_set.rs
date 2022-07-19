@@ -719,7 +719,7 @@ impl VersionSet {
     }
 }
 
-/// Crate-only methods
+/// Private methods
 impl VersionSet {
     /// Add a new version to the version set.
     fn append_new_version(&mut self, new_version: Version) {
@@ -728,10 +728,7 @@ impl VersionSet {
 
         self.release_version(old_version);
     }
-}
 
-/// Private methods
-impl VersionSet {
     /**
     If possible, reuse the existing manifest file. Returns true if the manifest was reused.
 
