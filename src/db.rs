@@ -94,6 +94,8 @@ pub(crate) struct GuardedDbFields {
     /**
     The current write-ahead log (WAL) number.
 
+    # Legacy
+
     This field is synonomous with the `leveldb::DBImpl::logfile_number_` field.
     */
     pub(crate) curr_wal_file_number: u64,
@@ -141,7 +143,7 @@ pub(crate) struct GuardedDbFields {
     */
     pub(crate) version_set: VersionSet,
 
-    /// The ongoing compaction statistics per level.
+    /// Accumulator for compaction operation metrics and statistics per level.
     pub(crate) compaction_stats: [LevelCompactionStats; MAX_NUM_LEVELS],
 
     /**
@@ -1150,7 +1152,7 @@ impl DB {
 
     # Legacy
 
-    This method is synonymous with [`leveldb::DBImpl::Write`] in LevelDB.
+    This method is synonymous with [`DBImpl::Write`] in LevelDB.
 
     [commit that added it]: https://github.com/google/leveldb/commit/d79762e27369365a7ffe1f2e3a5c64b0632079e1
     [`DBImpl::Write`]: https://github.com/google/leveldb/blob/e426c83e88c4babc785098d905c2dcb4f4e884af/db/db_impl.cc#L1200
