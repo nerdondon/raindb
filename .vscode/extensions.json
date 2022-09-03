@@ -5,7 +5,7 @@
   // List of extensions which should be recommended for users of this workspace.
   "recommendations": [
     "esbenp.prettier-vscode",
-    "matklad.rust-analyzer",
+    "rust-lang.rust-analyzer",
     "DavidAnson.vscode-markdownlint"
   ],
   // List of extensions recommended by VS Code that should not be recommended for users of this workspace.
