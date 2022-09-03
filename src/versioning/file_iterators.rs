@@ -499,8 +499,8 @@ impl RainDbIterator for MergingIterator {
         explicitly position the non-current iterators.
         */
         if let IterationDirection::Forward = self.direction {
-            let current_key = self.current().unwrap().0.clone();
             for index in 0..self.iterators.len() {
+                let current_key = self.current().unwrap().0.clone();
                 let mut maybe_error: Option<RainDBError> = None;
                 if let Some(current_index) = self.current_iterator_index {
                     if index == current_index {
