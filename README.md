@@ -62,3 +62,7 @@ A lot of the tests are also taken from LevelDB to ensure behavioral fidelity.
   [my blog](https://blog.nerdondon.com)
 - Database Internals by Alex Petrov
 - [Oren Eini - Blog Series - Reviewing LevelDB](https://ayende.com/blog/posts/series/161410/reviewing-leveldb)
+- [MrCroxx - Blog Series](https://mrcroxx.github.io/categories/%E6%B7%B1%E5%85%A5%E6%B5%85%E5%87%BAleveldb/)
+  - This is in Chinese but Google translate actually does a good job here. Only skimmed a bit of the
+    compaction article but it was very well done and seems like a great learning resource for
+    understanding LevelDB.
