@@ -160,14 +160,14 @@ impl RainDbIterator for CachingIterator {
     }
 
     fn next(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
-        self.iterator.next()?;
+        self.iterator.next();
         self.update_cached_values();
 
         self.current()
     }
 
     fn prev(&mut self) -> Option<(&Self::Key, &Vec<u8>)> {
-        self.iterator.prev()?;
+        self.iterator.prev();
         self.update_cached_values();
 
         self.current()
