@@ -331,7 +331,10 @@ impl MergingIterator {
 impl MergingIterator {
     /// Find the iterator with the currently smallest key and update the merging iterator state.
     fn find_smallest(&mut self) {
-        let mut smallest_iterator_index: usize = 0;
+        if self.iterators.is_empty() {
+            return;
+        }
+
         for (index, iter) in self.iterators.iter().enumerate() {
             if !iter.is_valid() {
                 continue;
@@ -349,7 +352,10 @@ impl MergingIterator {
 
     /// Find the iterator with the currently largest key and update the merging iterator state.
     fn find_largest(&mut self) {
-        let mut largest_iterator_index: usize = 0;
+        if self.iterators.is_empty() {
+            return;
+        }
+
         for (index, iter) in self.iterators.iter().rev().enumerate() {
             if !iter.is_valid() {
                 continue;
