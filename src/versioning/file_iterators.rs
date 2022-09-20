@@ -335,19 +335,27 @@ impl MergingIterator {
             return;
         }
 
+        let mut maybe_smallest_iterator_index: Option<usize> = None;
         for (index, iter) in self.iterators.iter().enumerate() {
             if !iter.is_valid() {
                 continue;
             }
 
             if let Some((key, _)) = iter.current() {
-                if key < self.iterators[smallest_iterator_index].current().unwrap().0 {
-                    smallest_iterator_index = index;
+                if maybe_smallest_iterator_index.is_none() {
+                    maybe_smallest_iterator_index = Some(index);
+                } else if let Some(smallest_iterator_index) = maybe_smallest_iterator_index {
+                    let current_smallest_key =
+                        self.iterators[smallest_iterator_index].current().unwrap().0;
+
+                    if key < current_smallest_key {
+                        maybe_smallest_iterator_index = Some(index);
+                    }
                 }
             }
         }
 
-        self.current_iterator_index = Some(smallest_iterator_index);
+        self.current_iterator_index = maybe_smallest_iterator_index;
     }
 
     /// Find the iterator with the currently largest key and update the merging iterator state.
@@ -356,19 +364,27 @@ impl MergingIterator {
             return;
         }
 
+        let mut maybe_largest_iterator_index: Option<usize> = None;
         for (index, iter) in self.iterators.iter().rev().enumerate() {
             if !iter.is_valid() {
                 continue;
             }
 
             if let Some((key, _)) = iter.current() {
-                if key > self.iterators[largest_iterator_index].current().unwrap().0 {
-                    largest_iterator_index = index;
+                if maybe_largest_iterator_index.is_none() {
+                    maybe_largest_iterator_index = Some(index);
+                } else if let Some(largest_iterator_index) = maybe_largest_iterator_index {
+                    let current_largest_key =
+                        self.iterators[largest_iterator_index].current().unwrap().0;
+
+                    if key > current_largest_key {
+                        maybe_largest_iterator_index = Some(index);
+                    }
                 }
             }
         }
 
-        self.current_iterator_index = Some(largest_iterator_index);
+        self.current_iterator_index = maybe_largest_iterator_index;
     }
 
     /// Store the error at the specified index.
