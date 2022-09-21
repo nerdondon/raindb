@@ -873,3 +873,366 @@ mod files_entry_iterator_tests {
         file_meta
     }
 }
+
+#[cfg(test)]
+mod merging_iterator_tests {
+    use pretty_assertions::assert_eq;
+    use std::rc::Rc;
+
+    use crate::tables::TableBuilder;
+    use crate::versioning::version::Version;
+    use crate::{DbOptions, Operation};
+
+    use super::*;
+
+    #[test]
+    fn with_an_empty_list_of_iterators_does_not_become_valid() {
+        let mut iter = MergingIterator::new(vec![]);
+
+        assert!(!iter.is_valid());
+        assert!(iter.next().is_none());
+        assert!(iter.prev().is_none());
+        assert!(iter
+            .seek(&InternalKey::new(
+                "a".as_bytes().to_vec(),
+                100,
+                Operation::Put
+            ))
+            .is_ok());
+        assert!(iter.current().is_none());
+        assert!(iter.seek_to_first().is_ok());
+        assert!(iter.current().is_none());
+        assert!(iter.seek_to_last().is_ok());
+        assert!(iter.current().is_none());
+        assert!(!iter.is_valid());
+    }
+
+    #[test]
+    fn can_be_iterated_forward_completely() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let version_iterators = version
+            .get_representative_iterators(&ReadOptions::default())
+            .unwrap();
+        let mut iter = MergingIterator::new(version_iterators);
+
+        assert!(iter.seek_to_first().is_ok());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("a".as_bytes().to_vec(), 90, Operation::Put)
+        );
+
+        let mut expected_value_counter: usize = 2;
+        while iter.next().is_some() {
+            let (current_key, current_val) = iter.current().unwrap();
+            if current_key.get_operation() == Operation::Put {
+                assert_eq!(
+                    current_val,
+                    expected_value_counter.to_string().as_bytes(),
+                    "Expecting value to be {:?} but got {current_val:?}",
+                    expected_value_counter.to_string().as_bytes()
+                );
+            }
+
+            expected_value_counter += 1;
+        }
+
+        assert!(
+            iter.next().is_none(),
+            "Calling `next` after consuming all the values should not return a value"
+        );
+        assert!(
+            !iter.is_valid(),
+            "The block iterator should not be valid after moving past the end of the iterator"
+        );
+    }
+
+    /// Creates version used to hold files for testing.
+    fn create_test_version(db_options: DbOptions, table_cache: &Arc<TableCache>) -> Version {
+        let mut version = Version::new(db_options.clone(), table_cache, 200, 30);
+
+        // Level 0 allows overlapping files
+        let entries = vec![
+            (
+                ("a".as_bytes().to_vec(), Operation::Put),
+                ("1".as_bytes().to_vec()),
+            ),
+            (
+                ("b".as_bytes().to_vec(), Operation::Put),
+                ("2".as_bytes().to_vec()),
+            ),
+            (
+                ("c".as_bytes().to_vec(), Operation::Put),
+                ("4".as_bytes().to_vec()),
+            ),
+            (
+                ("d".as_bytes().to_vec(), Operation::Put),
+                ("6".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 90, 60);
+        version.files[0].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("c".as_bytes().to_vec(), Operation::Put),
+                ("3".as_bytes().to_vec()),
+            ),
+            (
+                ("d".as_bytes().to_vec(), Operation::Put),
+                ("5".as_bytes().to_vec()),
+            ),
+            (
+                ("e".as_bytes().to_vec(), Operation::Put),
+                ("7".as_bytes().to_vec()),
+            ),
+            (
+                ("f".as_bytes().to_vec(), Operation::Put),
+                ("9".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 100, 61);
+        version.files[0].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("f".as_bytes().to_vec(), Operation::Put),
+                ("8".as_bytes().to_vec()),
+            ),
+            (
+                ("f1".as_bytes().to_vec(), Operation::Put),
+                ("10".as_bytes().to_vec()),
+            ),
+            (
+                ("f2".as_bytes().to_vec(), Operation::Put),
+                ("11".as_bytes().to_vec()),
+            ),
+            (
+                ("f3".as_bytes().to_vec(), Operation::Put),
+                ("12".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 105, 62);
+        version.files[0].push(Arc::new(table_file_meta));
+
+        // Level 1
+        let entries = vec![
+            (
+                ("g".as_bytes().to_vec(), Operation::Put),
+                ("13".as_bytes().to_vec()),
+            ),
+            (
+                ("h".as_bytes().to_vec(), Operation::Put),
+                ("14".as_bytes().to_vec()),
+            ),
+            (
+                ("i".as_bytes().to_vec(), Operation::Put),
+                ("15".as_bytes().to_vec()),
+            ),
+            (
+                ("j".as_bytes().to_vec(), Operation::Put),
+                ("16".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 85, 59);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("o".as_bytes().to_vec(), Operation::Put),
+                ("21".as_bytes().to_vec()),
+            ),
+            (
+                ("r".as_bytes().to_vec(), Operation::Put),
+                ("24".as_bytes().to_vec()),
+            ),
+            (
+                ("s".as_bytes().to_vec(), Operation::Put),
+                ("26".as_bytes().to_vec()),
+            ),
+            (
+                ("t".as_bytes().to_vec(), Operation::Put),
+                ("28".as_bytes().to_vec()),
+            ),
+            (
+                ("u".as_bytes().to_vec(), Operation::Put),
+                ("29".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 80, 58);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("v".as_bytes().to_vec(), Operation::Put),
+                ("30".as_bytes().to_vec()),
+            ),
+            (
+                ("w".as_bytes().to_vec(), Operation::Put),
+                ("32".as_bytes().to_vec()),
+            ),
+            (("x".as_bytes().to_vec(), Operation::Delete), vec![]),
+            (
+                ("y".as_bytes().to_vec(), Operation::Put),
+                ("36".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 76, 57);
+        version.files[1].push(Arc::new(table_file_meta));
+
+        // Level 2
+        let entries = vec![
+            (
+                ("k".as_bytes().to_vec(), Operation::Put),
+                ("17".as_bytes().to_vec()),
+            ),
+            (
+                ("l".as_bytes().to_vec(), Operation::Put),
+                ("18".as_bytes().to_vec()),
+            ),
+            (
+                ("m".as_bytes().to_vec(), Operation::Put),
+                ("19".as_bytes().to_vec()),
+            ),
+            (
+                ("n".as_bytes().to_vec(), Operation::Put),
+                ("20".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 65, 55);
+        version.files[2].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("o".as_bytes().to_vec(), Operation::Put),
+                ("22".as_bytes().to_vec()),
+            ),
+            (
+                ("p".as_bytes().to_vec(), Operation::Put),
+                ("23".as_bytes().to_vec()),
+            ),
+            (
+                ("r".as_bytes().to_vec(), Operation::Put),
+                ("25".as_bytes().to_vec()),
+            ),
+            (
+                ("s".as_bytes().to_vec(), Operation::Put),
+                ("27".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 60, 54);
+        version.files[2].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("v".as_bytes().to_vec(), Operation::Put),
+                ("31".as_bytes().to_vec()),
+            ),
+            (
+                ("w".as_bytes().to_vec(), Operation::Put),
+                ("33".as_bytes().to_vec()),
+            ),
+            (
+                ("x".as_bytes().to_vec(), Operation::Put),
+                ("35".as_bytes().to_vec()),
+            ),
+            (
+                ("y".as_bytes().to_vec(), Operation::Put),
+                ("37".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 55, 53);
+        version.files[2].push(Arc::new(table_file_meta));
+
+        // Level 3
+        let entries = vec![
+            (
+                ("z1".as_bytes().to_vec(), Operation::Put),
+                ("38".as_bytes().to_vec()),
+            ),
+            (
+                ("z2".as_bytes().to_vec(), Operation::Put),
+                ("39".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 45, 52);
+        version.files[3].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("z3".as_bytes().to_vec(), Operation::Put),
+                ("40".as_bytes().to_vec()),
+            ),
+            (
+                ("z4".as_bytes().to_vec(), Operation::Put),
+                ("41".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options.clone(), entries, 47, 51);
+        version.files[3].push(Arc::new(table_file_meta));
+
+        let entries = vec![
+            (
+                ("z5".as_bytes().to_vec(), Operation::Put),
+                ("42".as_bytes().to_vec()),
+            ),
+            (
+                ("z6".as_bytes().to_vec(), Operation::Put),
+                ("43".as_bytes().to_vec()),
+            ),
+            (
+                ("z7".as_bytes().to_vec(), Operation::Put),
+                ("44".as_bytes().to_vec()),
+            ),
+        ];
+        let table_file_meta = create_table(db_options, entries, 49, 50);
+        version.files[3].push(Arc::new(table_file_meta));
+
+        version
+    }
+
+    /**
+    Create a table with the provided entries (key-value pairs) with sequence numbers starting
+    from the provided start point.
+    */
+    fn create_table(
+        db_options: DbOptions,
+        entries: Vec<((Vec<u8>, Operation), Vec<u8>)>,
+        starting_sequence_num: u64,
+        file_number: u64,
+    ) -> FileMetadata {
+        let smallest_key = InternalKey::new(
+            entries.first().unwrap().0 .0.clone(),
+            starting_sequence_num,
+            entries.first().unwrap().0 .1,
+        );
+        let largest_key = InternalKey::new(
+            entries.last().unwrap().0 .0.clone(),
+            starting_sequence_num + (entries.len() as u64) - 1,
+            entries.last().unwrap().0 .1,
+        );
+
+        let mut table_builder = TableBuilder::new(db_options, file_number).unwrap();
+        let mut curr_sequence_num = starting_sequence_num;
+        for ((user_key, operation), value) in entries {
+            table_builder
+                .add_entry(
+                    Rc::new(InternalKey::new(user_key, curr_sequence_num, operation)),
+                    &value,
+                )
+                .unwrap();
+            curr_sequence_num += 1;
+        }
+
+        table_builder.finalize().unwrap();
+
+        let mut file_meta = FileMetadata::new(file_number);
+        file_meta.set_smallest_key(Some(smallest_key));
+        file_meta.set_largest_key(Some(largest_key));
+        file_meta.set_file_size(table_builder.file_size());
+
+        file_meta
+    }
+}
