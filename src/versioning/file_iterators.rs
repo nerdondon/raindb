@@ -253,7 +253,7 @@ enum IterationDirection {
 /**
 An iterator that merges the output of a list of iterators in sorted order.
 
-This iterator does not do any sort of de-duplication.
+This iterator does not do any sort of deduplication or filtering of sequence numbers.
 
 # Legacy
 
