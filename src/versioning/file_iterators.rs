@@ -931,8 +931,9 @@ mod merging_iterator_tests {
                 assert_eq!(
                     current_val,
                     expected_value_counter.to_string().as_bytes(),
-                    "Expecting value to be {:?} but got {current_val:?}",
-                    expected_value_counter.to_string().as_bytes()
+                    "Expecting value to be {} but got {}",
+                    expected_value_counter.to_string(),
+                    String::from_utf8_lossy(current_val)
                 );
             }
 
@@ -942,6 +943,49 @@ mod merging_iterator_tests {
         assert!(
             iter.next().is_none(),
             "Calling `next` after consuming all the values should not return a value"
+        );
+        assert!(
+            !iter.is_valid(),
+            "The block iterator should not be valid after moving past the end of the iterator"
+        );
+    }
+
+    #[test]
+    fn can_be_iterated_backward_completely() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let version_iterators = version
+            .get_representative_iterators(&ReadOptions::default())
+            .unwrap();
+        let mut iter = MergingIterator::new(version_iterators);
+
+        assert!(iter.seek_to_last().is_ok());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("z7".as_bytes().to_vec(), 51, Operation::Put)
+        );
+
+        let mut expected_value_counter: usize = 43;
+        while iter.prev().is_some() {
+            let (current_key, current_val) = iter.current().unwrap();
+            if current_key.get_operation() == Operation::Put {
+                assert_eq!(
+                    current_val,
+                    expected_value_counter.to_string().as_bytes(),
+                    "Expecting value to be {} but got {}",
+                    expected_value_counter.to_string(),
+                    String::from_utf8_lossy(current_val)
+                );
+            }
+
+            expected_value_counter -= 1;
+        }
+
+        assert!(
+            iter.prev().is_none(),
+            "Calling `prev` after consuming all the values should not return a value"
         );
         assert!(
             !iter.is_valid(),
