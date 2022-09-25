@@ -224,7 +224,11 @@ impl std::error::Error for DBIOError {}
 
 impl fmt::Display for DBIOError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+        write!(
+            f,
+            "error kind: {}. custom message: {}",
+            self.error_kind, self.custom_message
+        )
     }
 }
 
