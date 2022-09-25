@@ -372,13 +372,13 @@ impl MergingIterator {
 
             if let Some((key, _)) = iter.current() {
                 if maybe_largest_iterator_index.is_none() {
-                    maybe_largest_iterator_index = Some(index);
+                    maybe_largest_iterator_index = Some(self.iterators.len() - index - 1);
                 } else if let Some(largest_iterator_index) = maybe_largest_iterator_index {
                     let current_largest_key =
                         self.iterators[largest_iterator_index].current().unwrap().0;
 
                     if key > current_largest_key {
-                        maybe_largest_iterator_index = Some(index);
+                        maybe_largest_iterator_index = Some(self.iterators.len() - index - 1);
                     }
                 }
             }
