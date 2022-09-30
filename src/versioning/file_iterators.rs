@@ -1047,6 +1047,54 @@ mod merging_iterator_tests {
         assert_eq!(actual_val, "41".as_bytes());
     }
 
+    #[test]
+    fn can_iterate_backwards_after_iterating_forward() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let version_iterators = version
+            .get_representative_iterators(&ReadOptions::default())
+            .unwrap();
+        let mut iter = MergingIterator::new(version_iterators);
+
+        assert!(iter
+            .seek(&InternalKey::new(
+                "f1".as_bytes().to_vec(),
+                200,
+                Operation::Put
+            ))
+            .is_ok());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("f1".as_bytes().to_vec(), 106, Operation::Put)
+        );
+
+        assert!(iter.next().is_some());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("f2".as_bytes().to_vec(), 107, Operation::Put),
+            "Expected to seek to next after a random seek"
+        );
+
+        assert!(iter.prev().is_some());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("f1".as_bytes().to_vec(), 106, Operation::Put),
+            "Expected to seek to previous from an iterator that was iterating forward"
+        );
+
+        assert!(iter.prev().is_some());
+        let (actual_key, _) = iter.current().unwrap();
+        assert_eq!(
+            actual_key,
+            &InternalKey::new("f".as_bytes().to_vec(), 103, Operation::Put),
+            "Expected other child iterators to be correctly set after changing iteration direction"
+        );
+    }
+
     /// Creates version used to hold files for testing.
     fn create_test_version(db_options: DbOptions, table_cache: &Arc<TableCache>) -> Version {
         let mut version = Version::new(db_options.clone(), table_cache, 200, 30);
