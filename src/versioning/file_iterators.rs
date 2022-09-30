@@ -543,8 +543,7 @@ impl RainDbIterator for MergingIterator {
                 } else {
                     // The child iterator has no entries with keys >= the current key. Position at
                     // the last entry.
-                    let seek_result = iter.seek(&current_key);
-                    if let Err(error) = seek_result {
+                    if let Err(error) = iter.seek_to_last() {
                         maybe_error = Some(error);
                     }
                 }
