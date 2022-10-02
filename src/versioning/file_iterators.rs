@@ -876,6 +876,7 @@ mod files_entry_iterator_tests {
 #[cfg(test)]
 mod merging_iterator_tests {
     use pretty_assertions::assert_eq;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     use crate::tables::TableBuilder;
@@ -1140,6 +1141,31 @@ mod merging_iterator_tests {
             actual_key,
             &InternalKey::new("z1".as_bytes().to_vec(), 45, Operation::Put),
             "Expected other child iterators to be correctly set after changing iteration direction"
+        );
+    }
+
+    #[test]
+    fn calls_cleanup_callbacks_when_dropped() {
+        let options = DbOptions::with_memory_env();
+        let table_cache = Arc::new(TableCache::new(options.clone(), 1000));
+        let version = create_test_version(options, &table_cache);
+        let version_iterators = version
+            .get_representative_iterators(&ReadOptions::default())
+            .unwrap();
+        let num_times_callback_called: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+        let cloned_counter = Rc::clone(&num_times_callback_called);
+        let callback = move || {
+            *cloned_counter.borrow_mut() += 1;
+        };
+        let mut iter = MergingIterator::new(version_iterators);
+
+        iter.register_cleanup_method(Box::new(callback));
+        drop(iter);
+
+        assert_eq!(
+            *num_times_callback_called.borrow(),
+            1,
+            "Expected cleanup callbacks to have been called once."
         );
     }
 
