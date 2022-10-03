@@ -13,7 +13,7 @@ use super::footer::SIZE_OF_FOOTER_BYTES;
 pub type TableReadResult<T> = Result<T, ReadError>;
 
 /// Errors that can result from a read operation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadError {
     /// Variant for parsing errors.
     FailedToParse(String),
@@ -72,7 +72,7 @@ impl From<FooterError> for ReadError {
 }
 
 /// Errors that can result from operations involving the table file footer.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FooterError {
     /// Variant for footer serialiation errors where the value is the size of the serialized buffer.
     FooterSerialization(usize),
@@ -91,7 +91,7 @@ impl fmt::Display for FooterError {
 }
 
 /// Errors that can result from a table file builder operations.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BuilderError {
     /// Variant for IO errors.
     IO(DBIOError),
