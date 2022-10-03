@@ -8,7 +8,7 @@ use crate::versioning::errors::WriteError;
 pub(crate) type CompactionWorkerResult<T> = Result<T, CompactionWorkerError>;
 
 /// Errors that occur during compaction worker operations.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CompactionWorkerError {
     /// Variant for IO errors encountered during worker operations.
     IO(DBIOError),

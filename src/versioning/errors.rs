@@ -43,7 +43,7 @@ impl fmt::Display for ReadError {
 }
 
 /// Errors that can result from a write operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteError {
     /// Variant for errors writing to the manifest.
     ManifestWrite(ManifestWriteErrorKind),
@@ -60,7 +60,7 @@ impl fmt::Display for WriteError {
 }
 
 /// Different errors that can occur when writing to a manifest file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ManifestWriteErrorKind {
     /// Variant for errors stemming from log I/O operations.
     LogIO(LogIOError),
@@ -82,7 +82,7 @@ impl From<LogIOError> for WriteError {
 }
 
 /// Errors that can result from a recovery operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecoverError {
     /// Variant for issues reading and parsing the CURRENT file.
     CurrentFileRead(CurrentFileReadErrorKind),
@@ -102,7 +102,7 @@ pub enum RecoverError {
 }
 
 /// Enum to describe various kinds of errors when reading the CURRENT file
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CurrentFileReadErrorKind {
     /// Variant for IO errors reading the file from disk.
     IO(DBIOError),

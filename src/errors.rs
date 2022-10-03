@@ -25,7 +25,7 @@ Consider restructuring based on analysis in [this post] on Rust error handling i
 
 [this post]: https://matklad.github.io/2020/10/15/study-of-std-io-error.html
 */
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RainDBError {
     /// Variant for errors stemming from top-level I/O operations.
     IO(DBIOError),
@@ -136,14 +136,14 @@ impl From<RecoverError> for RainDBError {
 }
 
 /// Metadata describing the corruption detected in a log file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogCorruptionErrorMetadata {
     bytes_corrupted: u64,
     reason: String,
 }
 
 /// Errors related to writing to a log file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogIOError {
     /**
     Variant for errors that are related to IO.
@@ -166,7 +166,7 @@ pub enum LogIOError {
 Different kinds of errors that can arise from serialization and deserialization activities in the
 WAL.
 */
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogSerializationErrorKind {
     FromInt(TryFromIntError),
     Other(String),
@@ -197,7 +197,7 @@ impl From<TryFromIntError> for LogIOError {
 }
 
 /// Wrapper for [`std::io::Error`] that implements [`Clone`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DBIOError {
     error_kind: io::ErrorKind,
 
