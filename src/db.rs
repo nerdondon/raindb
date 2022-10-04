@@ -836,11 +836,21 @@ impl DB {
                             the provided path."
                         );
                         self.initialize_as_new_db()?;
+                    } else {
+                        let error_message =
+                            "Did not find the current manifest file. Ending initialization \
+                            because `DbOptions::create_if_missing` is false.";
+                        log::error!(
+                            "{msg} Error: {error}",
+                            msg = error_message,
+                            error = &io_error
+                        );
+                        return Err(io::Error::new(io_error.kind(), error_message).into());
                     }
                 } else {
                     let error_message =
-                        "There was an error checking for database existence. Ending initialization \
-                        because `DbOptions::create_if_missing` is false.";
+                            "There was an error checking for database existence. Ending initialization \
+                            because `DbOptions::create_if_missing` is false.";
                     log::error!(
                         "{msg} Error: {error}",
                         msg = error_message,
