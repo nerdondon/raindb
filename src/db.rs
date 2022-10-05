@@ -2120,9 +2120,11 @@ impl Drop for DB {
         self.db_lock.take();
 
         // Clean-up WAL pointer
-        let _wal = unsafe {
-            // SAFETY: The WAL pointer is never null after `DB` has been initialized.
-            Box::from_raw(self.wal.load(Ordering::SeqCst))
+        unsafe {
+            // SAFETY: We do a null check before loading and dropping the memory reference.
+            if !self.wal.load(Ordering::SeqCst).is_null() {
+                Box::from_raw(self.wal.load(Ordering::SeqCst));
+            }
         };
 
         log::info!("Terminating the compaction worker background thread.");
