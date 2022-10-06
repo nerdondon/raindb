@@ -241,7 +241,18 @@ impl FileSystem for InMemoryFileSystem {
     }
 
     fn lock_file(&self, path: &Path) -> io::Result<super::FileLock> {
-        Ok(FileLock::new(Box::new(self.open_mem_file(path)?)))
+        let lock_file: LockableInMemoryFile = match self.open_mem_file(path) {
+            Err(io_error) => match io_error.kind() {
+                io::ErrorKind::NotFound => {
+                    self.create_file(path, false)?;
+                    Ok(self.open_mem_file(path)?)
+                }
+                _ => Err(io::Error::new(io_error.kind(), io_error.to_string())),
+            },
+            Ok(file) => Ok(file),
+        }?;
+
+        Ok(FileLock::new(Box::new(lock_file)))
     }
 }
 
