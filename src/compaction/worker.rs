@@ -87,14 +87,14 @@ impl CompactionWorker {
                         let task = task_queue.pop_front().unwrap();
                         match task {
                             TaskKind::Compaction => {
-                                log::info!("Compaction thread receieved the compaction command.");
+                                log::info!("Compaction thread received the compaction command.");
                                 if CompactionWorker::compaction_task(&database_state) {
                                     task_queue.push_back(TaskKind::Compaction);
                                 }
                             }
                             TaskKind::Terminate => {
                                 log::info!(
-                                    "Compaction thread receieved the termination command. \
+                                    "Compaction thread received the termination command. \
                                     Shutting down the thread."
                                 );
                                 break;
@@ -112,6 +112,11 @@ impl CompactionWorker {
                                 // TODO: Handle if the error is a disconnect vs an empty buffer
                             }
                         }
+                    }
+
+                    if database_state.is_shutting_down.load(Ordering::Acquire) {
+                        log::info!("Compaction thread terminated.");
+                        break;
                     }
                 }
             })?;
