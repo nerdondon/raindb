@@ -128,7 +128,7 @@ level using only bulk reads and writes (i.e., minimizing expensive seeks).
 
 Manifest files list the set of table files that make up each level, the corresponding key ranges,
 and other important metadata. A new manifest file is created whenever the database is reopened and
-the current manifest file number is written to a file named _CURRENT_. The manifest file is append
+the current manifest file name is written to a file named _CURRENT_. The manifest file is append
 only. File removals are indicated by tombstones. In LevelDB, a manifest file is also known as a
 descriptor log file.
 
