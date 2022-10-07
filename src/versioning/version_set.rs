@@ -280,20 +280,33 @@ impl VersionSet {
         }
 
         current_file_contents.truncate(current_file_contents.len() - 1);
-        let manifest_file_number = match current_file_contents.parse::<u64>() {
-            Ok(file_num) => file_num,
-            Err(parse_err) => {
-                let err_msg = format!(
-                    "There was an error parsing the file number from the CURRENT file. Error: \
+        let manifest_file_number =
+            match FileNameHandler::get_file_type_from_name(Path::new(&current_file_contents)) {
+                Ok(file_type) => match file_type {
+                    ParsedFileType::ManifestFile(file_num) => file_num,
+                    _ => {
+                        let err_msg = format!(
+                            "Found an unexpected file name in the CURRENT file. Found: \
+                        {current_file_contents}"
+                        );
+                        log::error!("{}", &err_msg);
+                        return Err(RecoverError::CurrentFileRead(
+                            CurrentFileReadErrorKind::Parse(err_msg),
+                        ));
+                    }
+                },
+                Err(parse_err) => {
+                    let err_msg = format!(
+                        "There was an error parsing the file number from the CURRENT file. Error: \
                     {err}",
-                    err = parse_err
-                );
-                log::error!("{}", &err_msg);
-                return Err(RecoverError::CurrentFileRead(
-                    CurrentFileReadErrorKind::Parse(err_msg),
-                ));
-            }
-        };
+                        err = parse_err
+                    );
+                    log::error!("{}", &err_msg);
+                    return Err(RecoverError::CurrentFileRead(
+                        CurrentFileReadErrorKind::Parse(err_msg),
+                    ));
+                }
+            };
         let manifest_file_path = self
             .file_name_handler
             .get_manifest_file_path(manifest_file_number);
