@@ -367,6 +367,13 @@ impl VersionSet {
                     if version_manifest.prev_sequence_number.is_some() {
                         maybe_prev_sequence = version_manifest.prev_sequence_number
                     }
+
+                    match manifest_reader.read_record() {
+                        Ok(record) => manifest_record = record,
+                        Err(log_err) => {
+                            maybe_manifest_read_error = Some(RecoverError::ManifestRead(log_err))
+                        }
+                    }
                 }
             }
         }
