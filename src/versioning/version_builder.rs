@@ -17,9 +17,6 @@ Accumulates changes from multiple change manifests to apply to a base version an
 new version.
 */
 pub(crate) struct VersionBuilder {
-    /// The base version to apply on top of.
-    base_version: SharedNode<Version>,
-
     /**
     The per level, set of files (represented by their file number) that will be deleted from a
     version.
@@ -53,9 +50,8 @@ pub(crate) struct VersionBuilder {
 /// Crate-only methods
 impl VersionBuilder {
     /// Create a new instance of [`VersionBuilder`].
-    pub(crate) fn new(base_version: SharedNode<Version>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            base_version,
             deleted_files: Default::default(),
             added_files: Default::default(),
             compaction_pointers: Default::default(),
@@ -94,7 +90,7 @@ impl VersionBuilder {
     }
 
     /**
-    Apply the accumulated versions on the base version, returning a new [`Version`].
+    Apply the accumulated versions on the provided base version, returning a new [`Version`].
 
     This method will also update the specified compaction pointers which usually come from the
     version set that the new version is being added to.
@@ -114,6 +110,7 @@ impl VersionBuilder {
     */
     pub(crate) fn apply_changes(
         &mut self,
+        base_version: &SharedNode<Version>,
         wal_file_number: u64,
         prev_sequence_number: u64,
         vset_compaction_pointers: &mut [Option<InternalKey>; MAX_NUM_LEVELS],
@@ -131,7 +128,7 @@ impl VersionBuilder {
             }
         }
 
-        let base = &self.base_version.read().element;
+        let base = &base_version.read().element;
         let mut new_version = base.new_from_current(wal_file_number, prev_sequence_number);
         for level in 0..MAX_NUM_LEVELS {
             let mut level_added_files: Vec<Arc<FileMetadata>> =
@@ -242,15 +239,7 @@ mod version_builder_tests {
 
     #[test]
     fn accumulates_changes_successfully() {
-        let db_options = create_testing_options();
-        let table_cache = Arc::new(TableCache::new(db_options.clone(), 10));
-        let base_version = Arc::new(RwLock::new(Node::new(Version::new(
-            db_options,
-            &table_cache,
-            1,
-            1,
-        ))));
-        let mut version_builder = VersionBuilder::new(base_version);
+        let mut version_builder = VersionBuilder::new();
         let mut change_manifest = VersionChangeManifest::default();
         for idx in 0..4 {
             change_manifest.add_file(
@@ -301,7 +290,7 @@ mod version_builder_tests {
             1,
             1,
         ))));
-        let mut version_builder = VersionBuilder::new(base_version);
+        let mut version_builder = VersionBuilder::new();
         let mut change_manifest = VersionChangeManifest::default();
         for idx in 1..5 {
             change_manifest.add_file(
@@ -328,7 +317,8 @@ mod version_builder_tests {
         version_builder.accumulate_changes(&change_manifest);
 
         let mut compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS] = Default::default();
-        let new_version = version_builder.apply_changes(2899, 5000, &mut compaction_pointers);
+        let new_version =
+            version_builder.apply_changes(&base_version, 2899, 5000, &mut compaction_pointers);
 
         for level in 1..5 {
             let ptr = compaction_pointers[level].as_ref();
@@ -367,13 +357,14 @@ mod version_builder_tests {
             base_version.write().element.files[3].push(Arc::new(file));
         }
 
-        let mut version_builder = VersionBuilder::new(base_version);
+        let mut version_builder = VersionBuilder::new();
         let mut change_manifest = VersionChangeManifest::default();
         change_manifest.remove_file(3, 2902);
         version_builder.accumulate_changes(&change_manifest);
 
         let mut compaction_pointers: [Option<InternalKey>; MAX_NUM_LEVELS] = Default::default();
-        let new_version = version_builder.apply_changes(2899, 5000, &mut compaction_pointers);
+        let new_version =
+            version_builder.apply_changes(&base_version, 2899, 5000, &mut compaction_pointers);
 
         assert_eq!(new_version.num_files_at_level(3), 3);
     }
