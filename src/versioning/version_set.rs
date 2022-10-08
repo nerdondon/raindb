@@ -331,7 +331,7 @@ impl VersionSet {
         let mut maybe_prev_sequence: Option<u64> = None;
         let mut maybe_curr_wal_num: Option<u64> = None;
         let mut maybe_prev_wal_num: Option<u64> = None;
-        let mut version_builder = VersionBuilder::new(self.get_current_version());
+        let mut version_builder = VersionBuilder::new();
 
         let mut manifest_record: Vec<u8> = vec![];
         let mut maybe_manifest_read_error: Option<RecoverError> = None;
@@ -414,12 +414,15 @@ impl VersionSet {
             return Err(read_err);
         }
 
+        let base_version = self.get_current_version();
         let mut recovered_version = version_builder.apply_changes(
+            &base_version,
             maybe_curr_wal_num.unwrap(),
             maybe_prev_sequence.unwrap(),
             &mut self.compaction_pointers,
         );
         recovered_version.finalize();
+        self.release_version(base_version);
         self.append_new_version(recovered_version);
 
         self.curr_file_number = maybe_curr_file_num.unwrap();
@@ -847,15 +850,18 @@ impl VersionSet {
         );
         change_manifest.curr_file_number = Some(version_set.curr_file_number);
         change_manifest.prev_sequence_number = Some(version_set.prev_sequence_number);
-        let current_version = version_set.get_current_version();
-        let mut version_builder = VersionBuilder::new(current_version);
+        let mut version_builder = VersionBuilder::new();
         version_builder.accumulate_changes(change_manifest);
+
+        let current_version = version_set.get_current_version();
         let mut new_version = version_builder.apply_changes(
+            &current_version,
             *change_manifest.wal_file_number.as_ref().unwrap(),
             version_set.prev_sequence_number,
             &mut version_set.compaction_pointers,
         );
         new_version.finalize();
+        version_set.release_version(current_version);
 
         let created_new_manifest_file: bool = version_set.maybe_manifest_file.is_none();
         if version_set.maybe_manifest_file.is_none() {
