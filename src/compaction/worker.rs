@@ -443,13 +443,13 @@ impl CompactionWorker {
 
         // The memtable was converted to a table file so the associated WAL is also obsolete.
         // Remove references via the change manifest.
-        change_manifest.prev_wal_file_number = Some(0);
+        change_manifest.prev_wal_file_number = None;
         // The `curr_wal_file_number` field was optimistically updated prior to compaction
         // (e.g. see `DB::make_room_for_write`)
         change_manifest.wal_file_number = Some(db_fields_guard.curr_wal_file_number);
 
         log::info!(
-            "Compaction thread is applying changes memtable compaction change to the current \
+            "Compaction thread is applying memtable compaction change manifest to the current \
             version."
         );
 
