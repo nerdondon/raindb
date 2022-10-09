@@ -395,11 +395,10 @@ impl VersionSet {
                 ));
             }
 
-            if maybe_prev_wal_num.is_none() {
-                maybe_prev_wal_num = Some(0);
+            if let Some(prev_wal_num) = maybe_prev_wal_num {
+                self.mark_file_number_used(prev_wal_num);
             }
 
-            self.mark_file_number_used(maybe_prev_wal_num.unwrap());
             self.mark_file_number_used(maybe_curr_wal_num.unwrap_or(0));
         }
 
