@@ -772,11 +772,15 @@ impl DB {
         let old_wal_ptr = self
             .wal
             .swap(Box::into_raw(new_wal_writer), Ordering::AcqRel);
-        // Box the old WAL reader again to drop the memory
-        let _old_wal = unsafe {
-            // SAFETY: The WAL is never null after the database has been initialized.
-            Box::from_raw(old_wal_ptr)
-        };
+
+        if !old_wal_ptr.is_null() {
+            // Box the old WAL reader again to drop the memory
+            unsafe {
+                // SAFETY: We do a null check before loading and dropping the memory reference.
+                Box::from_raw(old_wal_ptr)
+            };
+        }
+
         db_fields_guard.curr_wal_file_number = new_wal_number;
     }
 
