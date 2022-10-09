@@ -827,11 +827,24 @@ impl VersionSet {
         let version_set = &mut db_fields_guard.version_set;
 
         if change_manifest.wal_file_number.is_some() {
-            let wal_file_number = *change_manifest.wal_file_number.as_ref().unwrap();
-            assert!(wal_file_number >= version_set.curr_wal_number);
+            let new_wal_file_number = *change_manifest.wal_file_number.as_ref().unwrap();
+            assert!(
+                new_wal_file_number >= version_set.curr_wal_number,
+                "Expected the new WAL file number to be greater than the current WAL file number. \
+                Got: {}, Expected {}",
+                new_wal_file_number,
+                version_set.curr_wal_number
+            );
+
             // The new WAL file number must have been one that was handed out by the version set
             // via `VersionSet::get_new_file_number`
-            assert!(wal_file_number < version_set.curr_wal_number + 1);
+            assert!(
+                new_wal_file_number < version_set.curr_file_number + 1,
+                "Expected the new WAL file number to be less than the next available file number. \
+                Got: {}, Expected {} + 1",
+                new_wal_file_number,
+                version_set.curr_file_number + 1
+            );
         } else {
             // The WAL file number may not be set when performing a recovery operation
             change_manifest.wal_file_number = Some(version_set.curr_wal_number);
