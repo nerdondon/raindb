@@ -2165,3 +2165,6 @@ pub enum DatabaseDescriptor {
     */
     SSTables,
 }
+
+#[cfg(test)]
+mod db_test;
