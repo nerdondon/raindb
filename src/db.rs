@@ -903,6 +903,7 @@ impl DB {
     */
     fn initialize_as_new_db(&self) -> RainDBResult<()> {
         let new_db_manifest = VersionChangeManifest {
+            wal_file_number: Some(0),
             curr_file_number: Some(1),
             prev_sequence_number: Some(0),
             ..VersionChangeManifest::default()
