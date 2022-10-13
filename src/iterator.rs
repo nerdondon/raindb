@@ -331,32 +331,31 @@ impl DatabaseIterator {
             let curr_operation = current_key.get_operation();
             if curr_sequence_num > self.sequence_snapshot {
                 // This record is more recent than our snapshot allows, don't process it
-                continue;
-            }
+            } else {
+                match curr_operation {
+                    Operation::Delete => {
+                        // Skip all upcoming entries for this user key because they are hidden by this
+                        // deletion
+                        is_skipping = true;
 
-            match curr_operation {
-                Operation::Delete => {
-                    // Skip all upcoming entries for this user key because they are hidden by this
-                    // deletion
-                    is_skipping = true;
+                        let current_user_key =
+                            self.inner_iter.current().unwrap().0.get_user_key().to_vec();
+                        self.cached_user_key = Some(current_user_key);
+                    }
+                    Operation::Put => {
+                        let (current_key, _) = self.inner_iter.current().unwrap();
+                        if is_skipping && current_key.get_user_key() == current_key.get_user_key() {
+                            // This entry is hidden by more recent updates to the same user key.
+                            // Shadowed values (i.e. older records) may be hit first before a different
+                            // user key is found because internal keys are sorted in decreasing order
+                            // for sequence numbers.
+                        } else {
+                            // Found the most up-to-date value for a key
+                            self.is_valid = true;
+                            self.cached_user_key = None;
 
-                    let current_user_key =
-                        self.inner_iter.current().unwrap().0.get_user_key().to_vec();
-                    self.cached_user_key = Some(current_user_key);
-                }
-                Operation::Put => {
-                    let (current_key, _) = self.inner_iter.current().unwrap();
-                    if is_skipping && current_key.get_user_key() == current_key.get_user_key() {
-                        // This entry is hidden by more recent updates to the same user key.
-                        // Shadowed values (i.e. older records) may be hit first before a different
-                        // user key is found because internal keys are sorted in decreasing order
-                        // for sequence numbers.
-                    } else {
-                        // Found the most up-to-date value for a key
-                        self.is_valid = true;
-                        self.cached_user_key = None;
-
-                        return;
+                            return;
+                        }
                     }
                 }
             }
@@ -391,28 +390,27 @@ impl DatabaseIterator {
                 let curr_operation = current_key.get_operation();
                 if curr_sequence_num > self.sequence_snapshot {
                     // This record is more recent than our snapshot allows, don't process it
-                    continue;
-                }
-
-                if last_operation_type != Operation::Delete
-                    && current_key.get_user_key() < self.cached_user_key.as_ref().unwrap()
-                {
-                    // Encountered a non-deleted value in records for the previous user key
-                    break;
-                }
-
-                last_operation_type = curr_operation;
-                match curr_operation {
-                    Operation::Delete => {
-                        // Encountered a more recent deletion for the user, so clear the cached
-                        // values
-                        self.cached_user_key = None;
-                        self.cached_value = None;
+                } else {
+                    if last_operation_type != Operation::Delete
+                        && current_key.get_user_key() < self.cached_user_key.as_ref().unwrap()
+                    {
+                        // Encountered a non-deleted value in records for the previous user key
+                        break;
                     }
-                    Operation::Put => {
-                        let (current_key, current_val) = self.inner_iter.current().unwrap();
-                        self.cached_user_key = Some(current_key.get_user_key().to_vec());
-                        self.cached_value = Some(current_val.clone());
+
+                    last_operation_type = curr_operation;
+                    match curr_operation {
+                        Operation::Delete => {
+                            // Encountered a more recent deletion for the user, so clear the cached
+                            // values
+                            self.cached_user_key = None;
+                            self.cached_value = None;
+                        }
+                        Operation::Put => {
+                            let (current_key, current_val) = self.inner_iter.current().unwrap();
+                            self.cached_user_key = Some(current_key.get_user_key().to_vec());
+                            self.cached_value = Some(current_val.clone());
+                        }
                     }
                 }
 
