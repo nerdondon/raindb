@@ -207,6 +207,7 @@ impl CompactionWorker {
             return true;
         }
 
+        log::debug!("No follow-up compaction work detected.");
         false
     }
 
