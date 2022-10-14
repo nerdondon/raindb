@@ -291,6 +291,8 @@ impl CompactionWorker {
                 // A trivial move can be performed to complete the compaction i.e. we just need to
                 // move the file to the next level
                 assert!(compaction_manifest.get_compaction_level_files().len() == 1);
+
+                log::debug!("Determined that the compaction can be completed with a trival move");
                 compaction_manifest.set_change_manifest_for_trivial_move();
                 let apply_result = VersionSet::log_and_apply(
                     db_fields_guard,
