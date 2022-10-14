@@ -444,7 +444,7 @@ impl DB {
                 && DB::should_schedule_compaction(&db_state, &mut db_fields_guard)
             {
                 log::info!(
-                    "Determined that a version is ready for compaction after too many seeks for \
+                    "Determined that a version is ready for compaction after too many seeks were \
                     charged to file number {file_num} at level {level}. The file's allowed seeks \
                     was at {allowed_seeks}.",
                     file_num = seek_charge.seek_file().unwrap().file_number(),
