@@ -728,7 +728,7 @@ impl DB {
                 }
 
                 let num_files = db_fields_guard.version_set.num_files_at_level(level);
-                Ok(format!("Level {level} has {num_files} files."))
+                Ok(num_files.to_string())
             }
             DatabaseDescriptor::Stats => {
                 let db_stats = self.summarize_compaction_stats();
