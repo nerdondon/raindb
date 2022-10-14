@@ -2053,7 +2053,7 @@ impl DB {
         }
 
         if db_fields_guard.maybe_manual_compaction.is_some()
-            & Arc::ptr_eq(
+            && Arc::ptr_eq(
                 &wrapped_manual_compaction,
                 db_fields_guard.maybe_manual_compaction.as_ref().unwrap(),
             )
