@@ -185,6 +185,10 @@ impl FileMetadata {
         let mut largest = first_range.end;
 
         for files in multi_level_files.iter().skip(1) {
+            if files.is_empty() {
+                continue;
+            }
+
             let files_key_range = FileMetadata::get_key_range_for_files(files);
 
             if files_key_range.start < smallest {
