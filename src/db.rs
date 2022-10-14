@@ -2150,6 +2150,7 @@ impl Drop for DB {
 }
 
 /// Various statistics and summaries that can be requested from the database.
+#[derive(Debug, PartialEq, Eq)]
 pub enum DatabaseDescriptor {
     /// Get the number of files at the specified level.
     NumFilesAtLevel(usize),
