@@ -630,14 +630,20 @@ impl VersionSet {
     pub fn pick_compaction(&self) -> Option<CompactionManifest> {
         // Prefer compactions triggered by too much data in a level over the compactions triggered
         // by seeks.
+        let mut compaction_manifest: CompactionManifest;
         let current_version_node = self.get_current_version();
+
+        {
+            // Isolate the scope of the guard holding a lock on the current version. Compaction
+            // manifest finalization requires getting a lock on the version node as well.
         let current_version = &current_version_node.read().element;
+
         let needs_size_compaction = current_version.requires_size_compaction();
         let needs_seek_compaction = current_version.requires_seek_compaction();
-        let mut compaction_manifest: CompactionManifest;
         let level_to_compact: usize;
 
         if needs_size_compaction {
+                log::debug!("Determined that a size triggered compaction is neccessary");
             level_to_compact = current_version
                 .get_size_compaction_metadata()
                 .unwrap()
@@ -660,12 +666,13 @@ impl VersionSet {
             }
 
             if compaction_manifest.get_compaction_level_files().is_empty() {
-                // Wrap-around to the beginning of the key space
+                    // Wrap around to the beginning of the key space
                 compaction_manifest
                     .get_mut_compaction_level_files()
                     .push(Arc::clone(&current_version.files[level_to_compact][0]));
             }
         } else if needs_seek_compaction {
+                log::debug!("Determined that a seek triggered compaction is neccessary");
             let seek_compaction_metadata = current_version.get_seek_compaction_metadata();
             level_to_compact = seek_compaction_metadata.level_of_file_to_compact;
             compaction_manifest = CompactionManifest::new(&self.options, level_to_compact);
@@ -688,7 +695,8 @@ impl VersionSet {
             let mut new_compaction_files = current_version
                 .get_overlapping_compaction_inputs_strong(
                     level_to_compact,
-                    Some(&compaction_level_key_range.start)..Some(&compaction_level_key_range.end),
+                        Some(&compaction_level_key_range.start)
+                            ..Some(&compaction_level_key_range.end),
                 );
 
             // We clear the current set of compaction files first. This is ok because the previous
@@ -698,6 +706,7 @@ impl VersionSet {
             compaction_manifest
                 .get_mut_compaction_level_files()
                 .append(&mut new_compaction_files);
+            }
         }
 
         compaction_manifest.finalize_compaction_inputs();
