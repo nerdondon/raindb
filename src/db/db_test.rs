@@ -66,3 +66,49 @@ fn can_write_to_and_read_from_the_database() {
         RainDBError::KeyNotFound
     );
 }
+
+#[test]
+fn can_delete_values_from_the_database() {
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    assert!(db
+        .put(
+            WriteOptions::default(),
+            "batmann".as_bytes().to_vec(),
+            "lab".as_bytes().to_vec(),
+        )
+        .is_ok());
+
+    let actual_read = db
+        .get(ReadOptions::default(), "batmann".as_bytes())
+        .unwrap();
+
+    assert_eq!(actual_read, "lab".as_bytes());
+
+    assert!(db
+        .put(
+            WriteOptions::default(),
+            "batmann".as_bytes().to_vec(),
+            "lab retriever".as_bytes().to_vec(),
+        )
+        .is_ok());
+
+    let actual_read = db
+        .get(ReadOptions::default(), "batmann".as_bytes())
+        .unwrap();
+    assert_eq!(actual_read, "lab retriever".as_bytes());
+
+    assert!(db
+        .delete(WriteOptions::default(), "batmann".as_bytes().to_vec())
+        .is_ok());
+
+    assert_eq!(
+        db.get(ReadOptions::default(), "batmann".as_bytes())
+            .err()
+            .unwrap(),
+        RainDBError::KeyNotFound
+    );
+}
+
