@@ -1824,12 +1824,26 @@ impl DB {
         // Check WAL file directory for stale files
         if let Ok(wal_files) = filesystem_provider.list_dir(&file_name_handler.get_wal_dir()) {
             for file in wal_files {
-                if file.is_dir() {
-                    log::warn!(
-                        "Found an unexpected directory in the WAL folder. Skipping it. Path: {:?}",
-                        &file
-                    );
-                    continue;
+                match filesystem_provider.is_dir(&file) {
+                    Ok(is_dir) => {
+                        if is_dir {
+                            log::warn!(
+                                "Found an unexpected directory in the WAL folder. Skipping it. \
+                                Path: {:?}",
+                                &file
+                            );
+                            continue;
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Encountered an error checking if a path pointed at a directory in the \
+                            WAL database folder. Path: {:?}. Error: {}",
+                            &file,
+                            error
+                        );
+                        continue;
+                    }
                 }
 
                 match FileNameHandler::get_file_type_from_name(file.as_path()) {
@@ -1872,12 +1886,26 @@ impl DB {
         // Check data directory for stale table files
         if let Ok(data_files) = filesystem_provider.list_dir(&file_name_handler.get_data_dir()) {
             for file in data_files {
-                if file.is_dir() {
-                    log::warn!(
-                        "Found an unexpected directory in the data folder. Skipping it. Path: {:?}",
-                        &file
-                    );
-                    continue;
+                match filesystem_provider.is_dir(&file) {
+                    Ok(is_dir) => {
+                        if is_dir {
+                            log::warn!(
+                                "Found an unexpected directory in the data folder. Skipping it. \
+                                Path: {:?}",
+                                &file
+                            );
+                            continue;
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Encountered an error checking if a path pointed at a directory in the \
+                            data folder. Path: {:?}. Error: {}",
+                            &file,
+                            error
+                        );
+                        continue;
+                    }
                 }
 
                 match FileNameHandler::get_file_type_from_name(file.as_path()) {
@@ -1916,8 +1944,21 @@ impl DB {
         // Check main directory for stale files
         if let Ok(files) = filesystem_provider.list_dir(&file_name_handler.get_db_path()) {
             for file in files {
-                if file.is_dir() {
-                    continue;
+                match filesystem_provider.is_dir(&file) {
+                    Ok(is_dir) => {
+                        if is_dir {
+                            continue;
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Encountered an error checking if a path pointed at a directory in \
+                            the main database folder. Path: {:?}. Error: {}",
+                            &file,
+                            error
+                        );
+                        continue;
+                    }
                 }
 
                 match FileNameHandler::get_file_type_from_name(file.as_path()) {
