@@ -1106,7 +1106,7 @@ impl DB {
             if memtable.approximate_memory_usage() >= self.options.max_memtable_size() {
                 num_compactions += 1;
                 use_new_manifest = true;
-                DB::write_level0_table(
+                DB::convert_memtable_to_file(
                     &db_state,
                     db_fields_guard,
                     Arc::clone(&memtable),
@@ -1139,7 +1139,13 @@ impl DB {
         if !was_memtable_reused {
             // The memtable was not reused so compact it
             use_new_manifest = true;
-            DB::write_level0_table(&db_state, db_fields_guard, memtable, None, change_manifest)?;
+            DB::convert_memtable_to_file(
+                &db_state,
+                db_fields_guard,
+                memtable,
+                None,
+                change_manifest,
+            )?;
         }
 
         Ok((use_new_manifest, last_sequence_number))
@@ -1658,8 +1664,16 @@ impl DB {
         true
     }
 
-    /// Convert the immutable memtable to a table file.
-    pub(crate) fn write_level0_table(
+    /**
+    Convert the memtable to a table file.
+
+    # Legacy
+
+    This method is synonomous with LevelDB's `DBImpl::WriteLevel0Table`. This was renamed to be
+    more specific to its actual function of converting memtables to table files. It does not always
+    place the generated file at level 0.
+    */
+    pub(crate) fn convert_memtable_to_file(
         db_state: &PortableDatabaseState,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
         memtable: Arc<Box<dyn MemTable>>,
@@ -1673,7 +1687,7 @@ impl DB {
         db_fields_guard.tables_in_use.insert(file_number);
 
         log::info!(
-            "Starting to build level-0 table file with file number {}.",
+            "Starting to build convert memtable to a table file with file number {}.",
             file_number
         );
         parking_lot::MutexGuard::<'_, GuardedDbFields>::unlocked_fair(
@@ -1689,7 +1703,7 @@ impl DB {
         )?;
 
         log::info!(
-            "Level-0 table file {} created with a file size of {}.",
+            "Memtable table file {} created with a file size of {}.",
             file_number,
             file_metadata.get_file_size()
         );
@@ -1717,7 +1731,7 @@ impl DB {
             );
         }
         log::info!(
-            "Level-0 table file {} will be placed at level {}.",
+            "Memtable table file {} will be placed at level {}.",
             file_number,
             file_level
         );

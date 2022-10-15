@@ -407,7 +407,7 @@ impl CompactionWorker {
         let mut change_manifest = VersionChangeManifest::default();
         let base_version = db_fields_guard.version_set.get_current_version();
         let immutable_memtable = db_fields_guard.maybe_immutable_memtable.clone().unwrap();
-        let write_table_result = DB::write_level0_table(
+        let write_table_result = DB::convert_memtable_to_file(
             db_state,
             db_fields_guard,
             Arc::clone(&immutable_memtable),
