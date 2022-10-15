@@ -112,3 +112,31 @@ fn can_delete_values_from_the_database() {
     );
 }
 
+#[test]
+fn can_get_values_after_compaction_to_disk() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(
+        WriteOptions::default(),
+        "tums".as_bytes().to_vec(),
+        "pom".as_bytes().to_vec(),
+    )
+    .unwrap();
+
+    let actual_read = db.get(ReadOptions::default(), "tums".as_bytes()).unwrap();
+    assert_eq!(actual_read, "pom".as_bytes());
+
+    let compaction_result = db.force_memtable_compaction();
+    assert!(
+        compaction_result.is_ok(),
+        "Error forcing compaction of the memtable: {}",
+        compaction_result.err().unwrap(),
+    );
+
+    let actual_read = db.get(ReadOptions::default(), "tums".as_bytes()).unwrap();
+    assert_eq!(actual_read, "pom".as_bytes());
+}
+
