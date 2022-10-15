@@ -589,7 +589,7 @@ impl VersionSet {
             let file_size_limit = self.options.max_file_size();
             let mut curr_compaction_size: u64 = 0;
             let mut file_index: usize = 0;
-            while !compaction_input_files.is_empty() {
+            while file_index < compaction_input_files.len() {
                 curr_compaction_size += compaction_input_files[file_index].get_file_size();
                 if curr_compaction_size >= file_size_limit {
                     compaction_input_files.truncate(file_index + 1);
