@@ -312,4 +312,3 @@ fn can_get_multiple_snapshots_of_the_same_state() {
 
     db.release_snapshot(snapshot3);
 }
-
