@@ -209,3 +209,107 @@ fn can_get_expected_values_with_snapshots() {
     db.release_snapshot(snapshot1);
 }
 
+#[test]
+fn can_get_multiple_snapshots_of_the_same_state() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(
+        WriteOptions::default(),
+        "some key that i want to store".into(),
+        "v1".into(),
+    )
+    .unwrap();
+    let snapshot1 = db.get_snapshot();
+    let snapshot2 = db.get_snapshot();
+    let snapshot3 = db.get_snapshot();
+
+    db.put(
+        WriteOptions::default(),
+        "some key that i want to store".into(),
+        "v2".into(),
+    )
+    .unwrap();
+
+    let actual_read = db
+        .get(
+            ReadOptions::default(),
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v2".as_bytes());
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot1.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot2.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot3.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+
+    // Make sure that snapshots remain valid even after a compaction
+    db.release_snapshot(snapshot1);
+    let compaction_result = db.force_memtable_compaction();
+    assert!(
+        compaction_result.is_ok(),
+        "Error forcing compaction of the memtable: {}",
+        compaction_result.err().unwrap(),
+    );
+
+    let actual_read = db
+        .get(
+            ReadOptions::default(),
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v2".as_bytes());
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot2.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+    db.release_snapshot(snapshot2);
+
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot3.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+
+    db.release_snapshot(snapshot3);
+}
+
