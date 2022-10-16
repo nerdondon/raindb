@@ -480,7 +480,7 @@ impl RainDbIterator for MergingIterator {
                 /*
                 We are forced to do this obtuse error saving because Rust can't handle multiple
                 mutable borrows to fields we use disjointly. It is also because of this that we
-                use indexes instead of `.iter_mut` to iterator the child iterators.
+                use indexes instead of `.iter_mut` to iterate the child iterators.
                 */
                 let mut maybe_error: Option<RainDBError> = None;
                 if let Some(current_index) = self.current_iterator_index {
