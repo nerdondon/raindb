@@ -343,8 +343,10 @@ impl DatabaseIterator {
                         self.cached_user_key = Some(current_user_key);
                     }
                     Operation::Put => {
-                        let (current_key, _) = self.inner_iter.current().unwrap();
-                        if is_skipping && current_key.get_user_key() == current_key.get_user_key() {
+                        if is_skipping
+                            && self.cached_user_key.is_some()
+                            && current_key.get_user_key() <= self.cached_user_key.as_ref().unwrap()
+                        {
                             // This entry is hidden by more recent updates to the same user key.
                             // Shadowed values (i.e. older records) may be hit first before a different
                             // user key is found because internal keys are sorted in decreasing order
