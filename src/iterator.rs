@@ -522,6 +522,10 @@ impl RainDbIterator for DatabaseIterator {
 
         self.find_next_client_entry(true);
 
+        if !self.is_valid() {
+            return None;
+        }
+
         self.current()
     }
 
@@ -551,6 +555,10 @@ impl RainDbIterator for DatabaseIterator {
         }
 
         self.find_prev_client_entry();
+
+        if !self.is_valid() {
+            return None;
+        }
 
         self.current()
     }
