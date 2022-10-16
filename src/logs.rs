@@ -306,7 +306,7 @@ impl LogWriter {
         let data_length = u16::try_from(data_chunk.len())?;
         let block = BlockRecord::new(data_length, block_type, data_chunk.to_vec());
 
-        log::info!(
+        log::debug!(
             "Writing new record to log file at {:?} with length {} and block type {:?}.",
             self.log_file_path,
             data_length,
@@ -318,7 +318,7 @@ impl LogWriter {
 
         let bytes_written = HEADER_LENGTH_BYTES + data_chunk.len();
         self.current_block_offset += bytes_written;
-        log::info!("Wrote {} bytes to the log file.", bytes_written);
+        log::debug!("Wrote {} bytes to the log file.", bytes_written);
         Ok(())
     }
 
