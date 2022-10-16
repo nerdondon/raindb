@@ -140,3 +140,72 @@ fn can_get_values_after_compaction_to_disk() {
     assert_eq!(actual_read, "pom".as_bytes());
 }
 
+#[test]
+fn can_get_expected_values_with_snapshots() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(
+        WriteOptions::default(),
+        "some key that i want to store".as_bytes().to_vec(),
+        "v1".as_bytes().to_vec(),
+    )
+    .unwrap();
+    let snapshot1 = db.get_snapshot();
+
+    db.put(
+        WriteOptions::default(),
+        "some key that i want to store".as_bytes().to_vec(),
+        "v2".as_bytes().to_vec(),
+    )
+    .unwrap();
+
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot1.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+    let actual_read = db
+        .get(
+            ReadOptions::default(),
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v2".as_bytes());
+
+    // Make sure that snapshots remain valid even after a compaction
+    let compaction_result = db.force_memtable_compaction();
+    assert!(
+        compaction_result.is_ok(),
+        "Error forcing compaction of the memtable: {}",
+        compaction_result.err().unwrap(),
+    );
+
+    let actual_read = db
+        .get(
+            ReadOptions {
+                snapshot: Some(snapshot1.clone()),
+                ..ReadOptions::default()
+            },
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v1".as_bytes());
+    let actual_read = db
+        .get(
+            ReadOptions::default(),
+            "some key that i want to store".as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(actual_read, "v2".as_bytes());
+
+    db.release_snapshot(snapshot1);
+}
+
