@@ -29,7 +29,7 @@ When serialized a [`BatchElement`] will have the following format:
 1. If the operation is a `Put` operation, the value is encoded in the same way as the key and
    appended
 */
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchElement {
     /// The operation for this batch element.
     operation: Operation,
@@ -165,7 +165,7 @@ A batch has the following layout when serialized:
 1. The number operations in the batch as a 32-bit fixed-length integer
 1. Serialized [`BatchElement`]'s. See the [`BatchElement`] docs their serialization format.
 */
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub struct Batch {
     /**
     The starting sequence number for this batch of operations.
