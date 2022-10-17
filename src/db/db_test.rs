@@ -312,3 +312,68 @@ fn can_get_multiple_snapshots_of_the_same_state() {
 
     db.release_snapshot(snapshot3);
 }
+
+#[test]
+fn can_iterate_with_a_snapshot_of_empty_state() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    let empty_snapshot = db.get_snapshot();
+
+    db.put(
+        WriteOptions::default(),
+        "thisissomerandomkey".into(),
+        "v1".into(),
+    )
+    .unwrap();
+    db.put(
+        WriteOptions::default(),
+        "thisissomerandomkey".into(),
+        "v2".into(),
+    )
+    .unwrap();
+
+    let mut iter = db
+        .new_iterator(ReadOptions {
+            snapshot: Some(empty_snapshot.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    let seek_result = iter.seek_to_first();
+    assert!(
+        seek_result.is_ok(),
+        "Expected to be able to seek to the first element but got error: {}",
+        seek_result.err().unwrap()
+    );
+    assert!(
+        !iter.is_valid(),
+        "Expected iterator over empty database to be invalid after seeking"
+    );
+    drop(iter);
+
+    // Check stability of snapshot through compaction
+    db.force_memtable_compaction().unwrap();
+
+    let mut iter = db
+        .new_iterator(ReadOptions {
+            snapshot: Some(empty_snapshot.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    let seek_result = iter.seek_to_first();
+    assert!(
+        seek_result.is_ok(),
+        "Expected to be able to seek to the first element but got error: {}",
+        seek_result.err().unwrap()
+    );
+    assert!(
+        !iter.is_valid(),
+        "Expected iterator over empty database to be invalid after seeking"
+    );
+
+    db.release_snapshot(empty_snapshot);
+}
+
