@@ -481,7 +481,7 @@ impl RainDbIterator for DatabaseIterator {
     fn seek_to_last(&mut self) -> Result<(), Self::Error> {
         self.direction = DbIterationDirection::Backward;
         self.cached_value = None;
-        self.inner_iter.seek_to_first()?;
+        self.inner_iter.seek_to_last()?;
         self.find_prev_client_entry();
 
         Ok(())
