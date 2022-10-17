@@ -498,7 +498,7 @@ impl RainDbIterator for DatabaseIterator {
             first seek into the run of records for the cached user key before we can use the
             `find_next_client_entry` to find valid records.
             */
-            if self.inner_iter.is_valid() {
+            if !self.inner_iter.is_valid() {
                 let _seek_result = self.inner_iter.seek_to_first();
             } else {
                 self.inner_iter.next();
