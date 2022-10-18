@@ -377,3 +377,43 @@ fn can_iterate_with_a_snapshot_of_empty_state() {
     db.release_snapshot(empty_snapshot);
 }
 
+#[test]
+fn get_with_key_with_values_spread_over_multiple_levels_succeeds() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    db.put(WriteOptions::default(), "foo".into(), "v1".into())
+        .unwrap();
+
+    // Generate a table file by forcing a memtable compaction
+    db.compact_range(Some("a".as_bytes())..Some("z".as_bytes()));
+
+    let read_result = db.get(ReadOptions::default(), "foo".as_bytes()).unwrap();
+    assert_eq!(
+        read_result,
+        "v1".as_bytes().to_vec(),
+        "Expected to still be able to get the value after compaction"
+    );
+
+    db.put(WriteOptions::default(), "foo".into(), "v2".into())
+        .unwrap();
+
+    let read_result = db.get(ReadOptions::default(), "foo".as_bytes()).unwrap();
+    assert_eq!(
+        read_result,
+        "v2".as_bytes().to_vec(),
+        "Expected to be able to get newest version of the key in the memtable"
+    );
+
+    db.force_memtable_compaction().unwrap();
+
+    let read_result = db.get(ReadOptions::default(), "foo".as_bytes()).unwrap();
+    assert_eq!(
+        read_result,
+        "v2".as_bytes().to_vec(),
+        "Expected to be able to get newest version of the key in the memtable"
+    );
+}
