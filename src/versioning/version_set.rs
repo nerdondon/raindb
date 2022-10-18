@@ -773,7 +773,9 @@ impl VersionSet {
             "Checking if the manifest at the provided path can be reused. Provided path: {path:?}",
             path = manifest_path
         );
-        if let Ok(ParsedFileType::ManifestFile(_manifest_number)) =
+
+        let maybe_existing_manifest_number: Option<u64>;
+        if let Ok(ParsedFileType::ManifestFile(manifest_number)) =
             FileNameHandler::get_file_type_from_name(manifest_path)
         {
             if let Ok(file_size) = self
@@ -785,6 +787,8 @@ impl VersionSet {
                 if file_size >= self.options.max_file_size() {
                     return false;
                 }
+
+                maybe_existing_manifest_number = Some(manifest_number);
             } else {
                 return false;
             }
@@ -797,6 +801,7 @@ impl VersionSet {
         match LogWriter::new(self.options.filesystem_provider(), manifest_path, true) {
             Ok(manifest_writer) => {
                 self.maybe_manifest_file = Some(Arc::new(Mutex::new(manifest_writer)));
+                self.manifest_file_number = maybe_existing_manifest_number.unwrap();
 
                 true
             }
