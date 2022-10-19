@@ -67,7 +67,7 @@ pub(crate) struct VersionSet {
     /**
     The ID of the previous write-ahead log.
 
-    This number is only populated if there is a memtable that is currenly undergoing the compaction
+    This number is only populated if there is a memtable that is currently undergoing the compaction
     process.
     */
     prev_wal_number: Option<u64>,
@@ -244,7 +244,7 @@ impl VersionSet {
     }
 
     /**
-    Load version information saved stored in the manifest file on persistent storage.
+    Load version information saved in the manifest file on persistent storage.
 
     Returns true if the existing manifest file was reused.
     */
@@ -555,7 +555,7 @@ impl VersionSet {
         live_files
     }
 
-    /// Compact the specified key range in the specified level.
+    /// Generate a [`CompactionManifest`] for the specified key range in the specified level.
     pub fn compact_range(
         &mut self,
         level_to_compact: usize,
