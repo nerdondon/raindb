@@ -60,7 +60,7 @@ impl MemTable for SkipListMemTable {
         SAFETY:
         RainDB enforces that there is only a single writer adding to the memtable at a time.
         */
-        unsafe { self.store.insert(key, value) }
+        unsafe { self.store.insert_with_size(key, value) }
     }
 
     fn get(&self, key: &InternalKey) -> RainDBResult<Option<&Vec<u8>>> {
