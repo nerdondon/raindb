@@ -16,9 +16,11 @@ The sequence number is used to denote which of the stored records is the most re
 */
 
 use integer_encoding::FixedInt;
+use nerdondon_hopscotch::Sizeable;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::mem;
 
 use crate::errors::{RainDBError, RainDBResult};
 use crate::utils::bytes::BinarySeparable;
@@ -60,6 +62,10 @@ operation takes up the last 8 bits.
 */
 #[derive(Clone, Eq)]
 pub struct InternalKey {
+    /*
+    TODO: Make a version of InternalKey that is tied to the lifetime of a slice to reduce the need
+    to clone slices for ownership.
+    */
     /// The user suplied key.
     user_key: Vec<u8>,
     /// The sequence number of the operation associated with this generated key.
@@ -280,6 +286,15 @@ impl BinarySeparable for &InternalKey {
         }
 
         value.as_bytes()
+    }
+}
+
+impl Sizeable for InternalKey {
+    fn get_approx_size(&self) -> usize {
+        mem::size_of::<u64>()
+            + mem::size_of::<Operation>()
+            + mem::size_of::<Vec<u8>>()
+            + self.user_key.len()
     }
 }
 
