@@ -299,7 +299,7 @@ impl CompactionWorker {
                 compaction_manifest.set_change_manifest_for_trivial_move();
                 let apply_result = VersionSet::log_and_apply(
                     db_fields_guard,
-                    &mut compaction_manifest.get_change_manifest_mut(),
+                    compaction_manifest.get_change_manifest_mut(),
                 );
                 if let Err(error) = apply_result {
                     log::error!(
