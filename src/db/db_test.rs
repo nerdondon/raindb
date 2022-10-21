@@ -417,3 +417,32 @@ fn get_with_key_with_values_spread_over_multiple_levels_succeeds() {
         "Expected to be able to get newest version of the key in the memtable"
     );
 }
+
+#[test]
+fn get_with_multiple_table_files_in_a_non_level_zero_level_succeeds() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    // Force compactions to generate multiple files in a non-level 0 level
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+    db.compact_range(Some("a".as_bytes())..Some("b".as_bytes()));
+
+    db.put(WriteOptions::default(), "x".into(), "x".into())
+        .unwrap();
+    db.compact_range(Some("x".as_bytes())..Some("y".as_bytes()));
+
+    db.put(WriteOptions::default(), "f".into(), "f".into())
+        .unwrap();
+    db.compact_range(Some("f".as_bytes())..Some("g".as_bytes()));
+
+    let read_result = db.get(ReadOptions::default(), "a".as_bytes()).unwrap();
+    assert_eq!(&read_result, "a".as_bytes());
+    let read_result = db.get(ReadOptions::default(), "f".as_bytes()).unwrap();
+    assert_eq!(&read_result, "f".as_bytes());
+    let read_result = db.get(ReadOptions::default(), "x".as_bytes()).unwrap();
+    assert_eq!(&read_result, "x".as_bytes());
+}
