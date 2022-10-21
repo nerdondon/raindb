@@ -150,7 +150,10 @@ impl CompactionWorker {
     */
     pub(crate) fn stop_worker_thread(&mut self) -> Option<JoinHandle<()>> {
         if let Some(compaction_thread_handle) = self.maybe_background_compaction_handle.take() {
-            self.schedule_task(TaskKind::Terminate);
+            if self.task_sender.send(TaskKind::Terminate).is_err() {
+                log::debug!("Compaction worker thread has already been terminated.");
+            }
+
             return Some(compaction_thread_handle);
         }
 
