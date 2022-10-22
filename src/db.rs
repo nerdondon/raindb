@@ -1375,7 +1375,13 @@ impl DB {
                     return Err(RainDBError::Write(error_msg.to_string()));
                 }
 
-                log::info!("Memtable is full. Attempting compaction.");
+                if force_compaction {
+                    log::info!(
+                        "Received the `force_compaction` flag, forcing a memtable compaction."
+                    );
+                } else {
+                    log::info!("Memtable is full. Attempting compaction.");
+                }
 
                 // First create a new WAL file.
                 let new_wal_number = mutex_guard.version_set.get_new_file_number();
