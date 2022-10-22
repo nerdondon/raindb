@@ -446,3 +446,66 @@ fn get_with_multiple_table_files_in_a_non_level_zero_level_succeeds() {
     let read_result = db.get(ReadOptions::default(), "x".as_bytes()).unwrap();
     assert_eq!(&read_result, "x".as_bytes());
 }
+
+#[test]
+fn get_when_there_is_an_empty_level_between_relevant_files_seeks_trigger_compaction_at_the_younger_level(
+) {
+    /*
+    Per the `GetEncountersEmptyLevel` test in LevelDB, we will generate the following setup of
+    table files in levels:
+    1. table file 1 in level 0
+    2. empty level 1
+    3. table file 2 in level 2
+    After setup, perform a series of `get` calls that will trigger a compaction. The compaction
+    should be triggered at level 0. If the compaction was triggered at level 1, this would be
+    indicative of a bug.
+    */
+
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    // Place table files in levels 0 and 2
+    let mut num_compactions: usize = 0;
+    while test_utils::num_files_at_level(&db, 0) == 0 || test_utils::num_files_at_level(&db, 2) == 0
+    {
+        assert!(
+            num_compactions <= 100,
+            "Could not put files in levels 0 and 2. Level 0 had {} files and level 2 had {} files",
+            test_utils::num_files_at_level(&db, 0),
+            test_utils::num_files_at_level(&db, 2)
+        );
+
+        num_compactions += 1;
+
+        db.put(WriteOptions::default(), "a".into(), "a".into())
+            .unwrap();
+        db.put(WriteOptions::default(), "z".into(), "z".into())
+            .unwrap();
+
+        db.force_memtable_compaction().unwrap();
+    }
+
+    // Clear level 1 of any files by forcing a compaction of the level
+    db.force_level_compaction(1, &(None..None));
+    assert_eq!(test_utils::num_files_at_level(&db, 0), 1);
+    assert_eq!(test_utils::num_files_at_level(&db, 1), 0);
+    assert_eq!(test_utils::num_files_at_level(&db, 2), 1);
+
+    // Do a bunch of reads to force a compaction of the level 0 file
+    for _ in 0..1000 {
+        assert_eq!(
+            db.get(ReadOptions::default(), "missing".as_bytes())
+                .err()
+                .unwrap(),
+            RainDBError::KeyNotFound
+        );
+    }
+
+    // Wait for compactions to finish
+    thread::sleep(Duration::from_millis(1000));
+
+    assert_eq!(test_utils::num_files_at_level(&db, 0), 0);
+}
