@@ -509,3 +509,23 @@ fn get_when_there_is_an_empty_level_between_relevant_files_seeks_trigger_compact
 
     assert_eq!(test_utils::num_files_at_level(&db, 0), 0);
 }
+
+#[test]
+fn db_iter_with_empty_database_remains_invalid() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+
+    assert!(iter.seek_to_first().is_ok());
+    assert!(!iter.is_valid());
+
+    assert!(iter.seek_to_last().is_ok());
+    assert!(!iter.is_valid());
+
+    assert!(iter.seek(&"target".into()).is_ok());
+    assert!(!iter.is_valid());
+}
+
