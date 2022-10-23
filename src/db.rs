@@ -1807,9 +1807,10 @@ impl DB {
         if db_fields_guard.maybe_bad_database_state.is_some() {
             // After a background error, we don't know whether a new version may or may not have
             // been committed so we cannot safely garbage collect.
-            log::warn!(
-                "Encountered a catastrophic background error while attempting to remove obsolete \
-                files. Aborting file removal."
+            log::error!(
+                "Encountered a background error while attempting to remove obsolete \
+                files. Aborting file removal. Error: {}",
+                db_fields_guard.maybe_bad_database_state.clone().unwrap()
             );
             return;
         }
