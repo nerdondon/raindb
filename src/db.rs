@@ -878,7 +878,7 @@ impl DB {
 
         /*
         A new manifest file and version would need to be created if any of the following conditions
-        occurred
+        occurred:
 
         1. The version set recovery operation did NOT reuse an existing manifest file
         2. Recovery operations caused new files to be added to the database (e.g. compactions
