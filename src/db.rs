@@ -2232,3 +2232,6 @@ pub enum DatabaseDescriptor {
 
 #[cfg(test)]
 mod db_test;
+
+#[cfg(test)]
+mod test_utils;

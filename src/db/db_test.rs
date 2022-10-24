@@ -528,4 +528,3 @@ fn db_iter_with_empty_database_remains_invalid() {
     assert!(iter.seek(&"target".into()).is_ok());
     assert!(!iter.is_valid());
 }
-
