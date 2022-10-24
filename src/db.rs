@@ -2044,16 +2044,22 @@ impl DB {
         Ok(all_files)
     }
 
-    /// Force the compaction of the current memtable.
+    /**
+    Force the compaction of the current memtable.
+
+    # Legacy
+
+    This method is synonomous to LevelDB's `DBImple::TEST_CompactMemTable` method.
+    */
     fn force_memtable_compaction(&self) -> RainDBResult<()> {
         // Force a compaction by calling `apply_changes` with no batch
         self.apply_changes(WriteOptions::default(), None)?;
 
         let mut db_fields_guard = self.guarded_fields.lock();
-        // Wait until the forced compaction completes
         while db_fields_guard.maybe_immutable_memtable.is_some()
             && db_fields_guard.maybe_bad_database_state.is_none()
         {
+            log::debug!("Waiting for the forced compaction to complete");
             self.background_work_finished_signal
                 .wait(&mut db_fields_guard);
         }
