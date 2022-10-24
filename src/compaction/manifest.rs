@@ -346,9 +346,9 @@ impl CompactionManifest {
             }
 
             if self.level + input_files_index == 0 {
-                log::info!(
-                    "Making a merging iterator with a level at level 0. Adding iterators for all \
-                    files at the level."
+                log::debug!(
+                    "Making a merging iterator with level 0 as an input level. Adding iterators \
+                    for all files at the level."
                 );
                 let files = &self.input_files[input_files_index];
                 for file in files {
