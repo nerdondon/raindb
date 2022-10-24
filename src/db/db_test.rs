@@ -648,3 +648,45 @@ fn db_iter_with_empty_database_remains_invalid() {
     assert!(iter.seek(&"target".into()).is_ok());
     assert!(!iter.is_valid());
 }
+
+#[test]
+fn db_iter_with_a_single_value_can_seek_randomly() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+
+    assert!(iter.seek_to_first().is_ok());
+    assert!(iter.is_valid());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+    assert!(
+        iter.next().is_none(),
+        "Expected that a `next` call at the single element would not return a value."
+    );
+    assert!(!iter.is_valid());
+
+    assert!(iter.seek_to_last().is_ok());
+    assert!(iter.is_valid());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+
+    assert!(
+        iter.prev().is_none(),
+        "Expected that a `prev` call at the single element should not return a value"
+    );
+
+    assert!(iter.seek(&"".into()).is_ok());
+    assert!(iter.is_valid());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+
+    assert!(iter.seek(&"a".into()).is_ok());
+    assert!(iter.is_valid());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+
+    assert!(iter.seek(&"b".into()).is_ok());
+    assert!(!iter.is_valid());
+}
