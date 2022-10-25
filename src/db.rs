@@ -2082,6 +2082,10 @@ impl DB {
 
     This method will panic if it is given an invalid level. The level provided cannot be the last
     level because there is no next level to compact to.
+
+    # Legacy
+
+    This method is synonomous to LevelDB's `DBImple::TEST_CompactRange` method.
     */
     fn force_level_compaction(&self, level: usize, key_range: &Range<Option<&[u8]>>) {
         assert!(level + 1 < MAX_NUM_LEVELS);
