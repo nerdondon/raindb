@@ -749,3 +749,35 @@ fn db_iter_with_multiple_values_can_seek_randomly() {
     assert!(iter.seek(&"z".into()).is_ok());
     assert!(!iter.is_valid());
 }
+
+#[test]
+fn db_iter_with_multiple_values_can_switch_iteration_direction() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "b".into(), "b".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "c".into(), "c".into())
+        .unwrap();
+
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+
+    // Switch from forward to reverse
+    assert!(iter.seek_to_first().is_ok());
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_some());
+    assert!(iter.prev().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "b".as_bytes(), "b".as_bytes());
+
+    // Switch from reverse to forward
+    assert!(iter.seek_to_last().is_ok());
+    assert!(iter.prev().is_some());
+    assert!(iter.prev().is_some());
+    assert!(iter.next().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "b".as_bytes(), "b".as_bytes());
+}
+
