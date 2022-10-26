@@ -781,3 +781,68 @@ fn db_iter_with_multiple_values_can_switch_iteration_direction() {
     test_utils::assert_db_iterator_current_key_value(&iter, "b".as_bytes(), "b".as_bytes());
 }
 
+#[test]
+fn db_iter_with_multiple_values_remains_at_snapshot_even_after_database_updates() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "b".into(), "b".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "c".into(), "c".into())
+        .unwrap();
+
+    // When not provided, a snapshot of the current database state should be implicitly acquired
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+
+    // Do some random iterator operations
+    assert!(iter.seek_to_first().is_ok());
+    assert!(iter.next().is_some());
+    assert!(iter.prev().is_some());
+    assert!(iter.seek(&"b".as_bytes().to_vec()).is_ok());
+    assert!(iter.is_valid());
+    test_utils::assert_db_iterator_current_key_value(&iter, "b".as_bytes(), "b".as_bytes());
+
+    // Perform various operations to change database state
+    db.put(WriteOptions::default(), "a".into(), "a2".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "aa".into(), "aa".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "b".into(), "b2".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "c".into(), "c2".into())
+        .unwrap();
+    db.delete(WriteOptions::default(), "b".into()).unwrap();
+
+    // Assert iterator stability
+    iter.seek_to_first().unwrap();
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+
+    assert!(iter.next().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "b".as_bytes(), "b".as_bytes());
+
+    assert!(iter.next().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "c".as_bytes(), "c".as_bytes());
+
+    assert!(
+        iter.next().is_none(),
+        "Expected to be at the end of the database given the snapshot at iterator creation."
+    );
+
+    iter.seek_to_last().unwrap();
+    test_utils::assert_db_iterator_current_key_value(&iter, "c".as_bytes(), "c".as_bytes());
+
+    assert!(iter.prev().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "b".as_bytes(), "b".as_bytes());
+
+    assert!(iter.prev().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+
+    assert!(
+        iter.prev().is_none(),
+        "Expected to be at the start of the database given the snapshot at iterator creation."
+    );
+}
