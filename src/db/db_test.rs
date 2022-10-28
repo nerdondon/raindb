@@ -875,3 +875,35 @@ fn db_iter_with_deleted_values_will_skip_deleted_values() {
     assert!(iter.prev().is_some());
     test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
 }
+
+#[test]
+fn db_iter_with_values_spread_across_levels_iterates_as_expected() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "b".into(), "b".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "c".into(), "c".into())
+        .unwrap();
+    db.force_memtable_compaction().unwrap();
+    db.delete(WriteOptions::default(), "b".into()).unwrap();
+    assert_eq!(
+        db.get(ReadOptions::default(), "b".as_bytes())
+            .err()
+            .unwrap(),
+        RainDBError::KeyNotFound
+    );
+
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+
+    iter.seek(&"c".into()).unwrap();
+    test_utils::assert_db_iterator_current_key_value(&iter, "c".as_bytes(), "c".as_bytes());
+    assert!(iter.prev().is_some());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+    iter.seek(&"b".into()).unwrap();
+    test_utils::assert_db_iterator_current_key_value(&iter, "c".as_bytes(), "c".as_bytes());
+}
