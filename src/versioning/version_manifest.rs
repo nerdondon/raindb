@@ -38,12 +38,22 @@ This is synonymous to LevelDB's [`leveldb::VersionEdit`].
 */
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct VersionChangeManifest {
-    /// The file number for the write-ahead log for the new memtable.
+    /**
+    The file number for the write-ahead log for the new memtable.
+
+    # Legacy
+
+    This is analogous to LevelDB's `VersionEdit::log_number_number_` field.
+    */
     pub(crate) wal_file_number: Option<u64>,
 
     /**
     The file number for the write-ahead log backing the memtable that is currently being
     compacted.
+
+    # Legacy
+
+    This is analogous to LevelDB's `VersionEdit::prev_log_number_` field.
     */
     pub(crate) prev_wal_file_number: Option<u64>,
 
