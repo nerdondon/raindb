@@ -173,9 +173,8 @@ impl FileSystem for InMemoryFileSystem {
         let files = self.files.write();
         if files
             .keys()
-            .filter(|key| key.starts_with(path))
+            .find(|key| key.starts_with(path))
             .cloned()
-            .next()
             .is_some()
         {
             // There are still files in the "directory" so throw and error like the disk
