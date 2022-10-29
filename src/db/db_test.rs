@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use integer_encoding::FixedInt;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -906,4 +907,36 @@ fn db_iter_with_values_spread_across_levels_iterates_as_expected() {
     test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
     iter.seek(&"b".into()).unwrap();
     test_utils::assert_db_iterator_current_key_value(&iter, "c".as_bytes(), "c".as_bytes());
+}
+
+#[test]
+fn db_iter_after_compactions_remains_at_initial_snapshot() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+
+    // Write a bunch of values and force a compaction
+    for key in 0..500_usize {
+        db.put(
+            WriteOptions::default(),
+            key.encode_fixed_vec(),
+            "v".repeat(1000).into_bytes(),
+        )
+        .unwrap();
+    }
+    db.put(WriteOptions::default(), "a".into(), "a2".into())
+        .unwrap();
+    db.compact_range(None..None);
+
+    assert!(iter.seek_to_first().is_ok());
+    assert!(iter.is_valid());
+    test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
+    assert!(iter.next().is_none());
+    assert!(!iter.is_valid());
 }
