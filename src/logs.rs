@@ -410,9 +410,10 @@ impl LogReader {
     /**
     Read a record from the log file.
 
-    If the end of the log file has been reached, this method will return an empty [`Vec`].
+    Returns a `Vec<u8>` containing the data that was read and a boolean indicating if the end of
+    the file was reached.
     */
-    pub fn read_record(&mut self) -> LogIOResult<Vec<u8>> {
+    pub fn read_record(&mut self) -> LogIOResult<(Vec<u8>, bool)> {
         if self.current_cursor_position < self.initial_offset {
             self.current_cursor_position += self.seek_to_initial_block()? as usize;
         }
@@ -420,7 +421,7 @@ impl LogReader {
         if self.current_cursor_position > 0
             && (self.current_cursor_position as u64) >= self.len()?
         {
-            return Ok(vec![]);
+            return Ok((vec![], true));
         }
 
         // A buffer consolidating all of the fragments retrieved from the log file.
@@ -432,12 +433,12 @@ impl LogReader {
 
             match record.block_type {
                 BlockType::Full => {
-                    return Ok(data_buffer);
+                    return Ok((data_buffer, false));
                 }
                 BlockType::First => {}
                 BlockType::Middle => {}
                 BlockType::Last => {
-                    return Ok(data_buffer);
+                    return Ok((data_buffer, false));
                 }
             }
         }
@@ -585,26 +586,26 @@ mod tests {
         let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
         assert_eq!(
             b"here is a string.".to_vec(),
-            log_reader.read_record().unwrap()
+            log_reader.read_record().unwrap().0
         );
         assert_eq!(
             b"we got more strings over here".to_vec(),
-            log_reader.read_record().unwrap()
+            log_reader.read_record().unwrap().0
         );
-        assert_eq!(b"".to_vec(), log_reader.read_record().unwrap());
+        assert_eq!(b"".to_vec(), log_reader.read_record().unwrap().0);
         assert_eq!(
             b"there was an empty string somewhere".to_vec(),
-            log_reader.read_record().unwrap()
+            log_reader.read_record().unwrap().0
         );
 
         assert_eq!(
             Vec::<u8>::new(),
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             "The reader should be at the end of the file but received an unexpected record."
         );
         assert_eq!(
             Vec::<u8>::new(),
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             "The reader should be at the end of the file but received an unexpected record."
         );
     }
@@ -628,18 +629,18 @@ mod tests {
             if num >= 99_990 {
                 println!(
                     "Actual record read {}",
-                    std::str::from_utf8(actual_record.as_ref().unwrap()).unwrap()
+                    std::str::from_utf8(&actual_record.as_ref().unwrap().0).unwrap()
                 );
             }
             assert!(
-                actual_record.unwrap() == format!("{num}").as_bytes(),
+                actual_record.unwrap().0 == format!("{num}").as_bytes(),
                 "Failed to properly read at iteration {num}"
             );
         }
 
         assert_eq!(
             Vec::<u8>::new(),
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             "The reader should be at the end of the file but received an unexpected record."
         );
     }
@@ -659,18 +660,54 @@ mod tests {
             .unwrap();
 
         let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
-        assert_eq!(log_reader.read_record().unwrap(), b"small");
+        assert_eq!(log_reader.read_record().unwrap().0, b"small");
         assert_eq!(
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             generate_large_buffer("medium", 50_000)
         );
         assert_eq!(
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             generate_large_buffer("large", 100_000)
         );
         assert_eq!(
             Vec::<u8>::new(),
+            log_reader.read_record().unwrap().0,
+            "The reader should be at the end of the file but received an unexpected record."
+        );
+    }
+
+    #[test]
+    fn read_can_differentiate_an_empty_record_from_end_of_file() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        let mut log_writer = LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+
+        log_writer.append(b"small").unwrap();
+        log_writer
+            .append(&generate_large_buffer("medium", 50_000))
+            .unwrap();
+        log_writer.append(&[]).unwrap();
+        log_writer
+            .append(&generate_large_buffer("large", 100_000))
+            .unwrap();
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+        assert_eq!(
             log_reader.read_record().unwrap(),
+            (b"small".to_vec(), false)
+        );
+        assert_eq!(
+            log_reader.read_record().unwrap(),
+            (generate_large_buffer("medium", 50_000), false)
+        );
+        assert_eq!(log_reader.read_record().unwrap(), (vec![], false));
+        assert_eq!(
+            log_reader.read_record().unwrap(),
+            (generate_large_buffer("large", 100_000), false)
+        );
+        assert_eq!(
+            log_reader.read_record().unwrap(),
+            (vec![], true),
             "The reader should be at the end of the file but received an unexpected record."
         );
     }
@@ -695,14 +732,14 @@ mod tests {
 
         let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
         assert_eq!(
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             generate_large_buffer("foo", marginal_size)
         );
-        assert_eq!(log_reader.read_record().unwrap(), b"");
-        assert_eq!(log_reader.read_record().unwrap(), b"bar");
+        assert_eq!(log_reader.read_record().unwrap().0, b"");
+        assert_eq!(log_reader.read_record().unwrap().0, b"bar");
         assert_eq!(
             Vec::<u8>::new(),
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             "The reader should be at the end of the file but received an unexpected record."
         );
     }
@@ -718,11 +755,11 @@ mod tests {
         log_writer.append(b"bar").unwrap();
 
         let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
-        assert_eq!(log_reader.read_record().unwrap(), b"foo");
-        assert_eq!(log_reader.read_record().unwrap(), b"bar");
+        assert_eq!(log_reader.read_record().unwrap().0, b"foo");
+        assert_eq!(log_reader.read_record().unwrap().0, b"bar");
         assert_eq!(
             Vec::<u8>::new(),
-            log_reader.read_record().unwrap(),
+            log_reader.read_record().unwrap().0,
             "The reader should be at the end of the file but received an unexpected record."
         );
     }

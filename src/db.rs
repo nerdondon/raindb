@@ -1084,8 +1084,8 @@ impl DB {
         let mut use_new_manifest = false;
         let db_state = self.generate_portable_state();
 
-        let mut wal_record: Vec<u8> = wal_reader.read_record()?;
-        while !wal_record.is_empty() {
+        let (mut wal_record, mut is_eof) = wal_reader.read_record()?;
+        while !is_eof {
             if wal_record.len() < 12 {
                 // Ignore transactions that do not contain any operations
                 log::warn!(
@@ -1116,7 +1116,7 @@ impl DB {
                 memtable = Arc::new(Box::new(SkipListMemTable::new()));
             }
 
-            wal_record = wal_reader.read_record()?;
+            (wal_record, is_eof) = wal_reader.read_record()?;
         }
 
         let mut was_memtable_reused = false;

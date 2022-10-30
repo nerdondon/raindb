@@ -334,14 +334,18 @@ impl VersionSet {
         let mut version_builder = VersionBuilder::new();
 
         let mut manifest_record: Vec<u8> = vec![];
+        let mut is_manifest_eof = false;
         let mut maybe_manifest_read_error: Option<RecoverError> = None;
         let mut manifest_records_read: usize = 0;
         match manifest_reader.read_record() {
-            Ok(record) => manifest_record = record,
+            Ok((record, is_eof)) => {
+                manifest_record = record;
+                is_manifest_eof = is_eof;
+            }
             Err(log_err) => maybe_manifest_read_error = Some(RecoverError::ManifestRead(log_err)),
         }
 
-        while maybe_manifest_read_error.is_none() && !manifest_record.is_empty() {
+        while maybe_manifest_read_error.is_none() && !is_manifest_eof {
             manifest_records_read += 1;
             match VersionChangeManifest::try_from(manifest_record.as_slice()) {
                 Err(err) => {
@@ -369,7 +373,10 @@ impl VersionSet {
                     }
 
                     match manifest_reader.read_record() {
-                        Ok(record) => manifest_record = record,
+                        Ok((record, is_eof)) => {
+                            manifest_record = record;
+                            is_manifest_eof = is_eof;
+                        }
                         Err(log_err) => {
                             maybe_manifest_read_error = Some(RecoverError::ManifestRead(log_err))
                         }
