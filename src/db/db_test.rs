@@ -3,6 +3,8 @@ use std::time::Duration;
 use integer_encoding::FixedInt;
 use pretty_assertions::assert_eq;
 
+use crate::fs::InMemoryFileSystem;
+
 use super::*;
 
 fn setup() {
@@ -939,4 +941,78 @@ fn db_iter_after_compactions_remains_at_initial_snapshot() {
     test_utils::assert_db_iterator_current_key_value(&iter, "a".as_bytes(), "a".as_bytes());
     assert!(iter.next().is_none());
     assert!(!iter.is_valid());
+}
+
+#[test]
+fn db_with_values_can_be_reopened() {
+    setup();
+
+    let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+
+    {
+        let options = DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            ..DbOptions::default()
+        };
+        let db = DB::open(options).unwrap();
+        db.put(WriteOptions::default(), "a".into(), "a".into())
+            .unwrap();
+        db.put(WriteOptions::default(), "b".into(), "b".into())
+            .unwrap();
+    }
+
+    {
+        let options = DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            ..DbOptions::default()
+        };
+        let db = DB::open(options).unwrap();
+
+        assert_eq!(
+            db.get(ReadOptions::default(), "a".as_bytes()).unwrap(),
+            "a".as_bytes()
+        );
+        assert_eq!(
+            db.get(ReadOptions::default(), "b".as_bytes()).unwrap(),
+            "b".as_bytes()
+        );
+
+        assert!(db
+            .put(WriteOptions::default(), "a".into(), "a1".into())
+            .is_ok());
+        assert!(db
+            .put(WriteOptions::default(), "c".into(), "c".into())
+            .is_ok());
+    }
+
+    {
+        let options = DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            ..DbOptions::default()
+        };
+        let db = DB::open(options).unwrap();
+
+        assert_eq!(
+            db.get(ReadOptions::default(), "a".as_bytes()).unwrap(),
+            "a1".as_bytes()
+        );
+
+        assert!(db
+            .put(WriteOptions::default(), "a".into(), "a2".into())
+            .is_ok());
+        assert_eq!(
+            db.get(ReadOptions::default(), "a".as_bytes()).unwrap(),
+            "a2".as_bytes()
+        );
+
+        assert_eq!(
+            db.get(ReadOptions::default(), "b".as_bytes()).unwrap(),
+            "b".as_bytes()
+        );
+        assert_eq!(
+            db.get(ReadOptions::default(), "c".as_bytes()).unwrap(),
+            "c".as_bytes()
+        );
+    }
 }
