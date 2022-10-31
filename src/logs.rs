@@ -493,9 +493,6 @@ impl LogReader {
         if BLOCK_SIZE_BYTES - self.current_block_offset < HEADER_LENGTH_BYTES {
             // There are not enough bytes left in the current block to form a header. This might
             // be a trailer so read up bytes until we hit the next record.
-            log::debug!(
-                "Trailers read {}",
-                BLOCK_SIZE_BYTES - self.current_block_offset
             let mut trailer = vec![0u8; BLOCK_SIZE_BYTES - self.current_block_offset];
             if !trailer.is_empty() {
                 self.log_file.read_exact(&mut trailer)?;
