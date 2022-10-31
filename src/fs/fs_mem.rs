@@ -307,13 +307,13 @@ impl Read for LockableInMemoryFile {
         } else {
             buf_length
         };
-        buf.copy_from_slice(
+        buf[..num_bytes_to_read].copy_from_slice(
             &file.contents[(file.cursor as usize)..(file.cursor as usize) + num_bytes_to_read],
         );
 
         file.cursor += num_bytes_to_read as u64;
 
-        Ok(buf_length)
+        Ok(num_bytes_to_read)
     }
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn can_read_and_write_a_multiple_values_to_a_file() {
+    fn can_read_and_write_multiple_values_to_a_file() {
         let fs = InMemoryFileSystem::new();
         let file_path = PathBuf::from("/some/database/wal-123.log");
 
@@ -572,6 +572,20 @@ mod tests {
         let bytes_read = file.read_from(&mut buf, 38).unwrap();
         assert_eq!(bytes_read, 14);
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "the last thing");
+    }
+
+    #[test]
+    fn can_read_an_empty_file() {
+        let fs = InMemoryFileSystem::new();
+        let file_path = PathBuf::from("/some/database/wal-123.log");
+
+        fs.create_file(&file_path, false).unwrap();
+        assert_eq!(fs.get_file_size(&file_path).unwrap(), 0);
+
+        let mut file = fs.open_file(&file_path).unwrap();
+        let mut buf: [u8; 14] = [0; 14];
+        let bytes_read = file.read(&mut buf).unwrap();
+        assert_eq!(bytes_read, 0);
     }
 
     #[test]
