@@ -428,17 +428,27 @@ impl LogReader {
         let mut data_buffer: Vec<u8> = vec![];
 
         loop {
-            let record = self.read_physical_record()?;
-            data_buffer.extend(record.data);
-
-            match record.block_type {
-                BlockType::Full => {
-                    return Ok((data_buffer, false));
+            let maybe_record = self.read_physical_record();
+            if let Err(physical_read_err) = maybe_record {
+                if let LogIOError::IO(db_io_error) = &physical_read_err {
+                    match db_io_error.kind() {
+                        ErrorKind::UnexpectedEof => return Ok((vec![], true)),
+                        _ => return Err(physical_read_err),
+                    }
                 }
-                BlockType::First => {}
-                BlockType::Middle => {}
-                BlockType::Last => {
-                    return Ok((data_buffer, false));
+            } else {
+                let record = maybe_record.unwrap();
+                data_buffer.extend(record.data);
+
+                match record.block_type {
+                    BlockType::Full => {
+                        return Ok((data_buffer, false));
+                    }
+                    BlockType::First => {}
+                    BlockType::Middle => {}
+                    BlockType::Last => {
+                        return Ok((data_buffer, false));
+                    }
                 }
             }
         }
@@ -483,6 +493,9 @@ impl LogReader {
         if BLOCK_SIZE_BYTES - self.current_block_offset < HEADER_LENGTH_BYTES {
             // There are not enough bytes left in the current block to form a header. This might
             // be a trailer so read up bytes until we hit the next record.
+            log::debug!(
+                "Trailers read {}",
+                BLOCK_SIZE_BYTES - self.current_block_offset
             let mut trailer = vec![0u8; BLOCK_SIZE_BYTES - self.current_block_offset];
             if !trailer.is_empty() {
                 self.log_file.read_exact(&mut trailer)?;
@@ -710,6 +723,17 @@ mod tests {
             (vec![], true),
             "The reader should be at the end of the file but received an unexpected record."
         );
+    }
+
+    #[test]
+    fn read_returns_eof_when_encountering_an_empty_log() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+        let path = "wal-123.log";
+        LogWriter::new(Arc::clone(&fs), path, false).unwrap();
+
+        let mut log_reader = LogReader::new(Arc::clone(&fs), path, 0).unwrap();
+
+        assert_eq!(log_reader.read_record().unwrap(), (vec![], true));
     }
 
     #[test]
