@@ -688,6 +688,7 @@ impl CompactionWorker {
         let mut compaction_error: Option<RainDBError> = None;
         if let Ok(mut file_iterator) = compaction_result {
             if db_state.is_shutting_down.load(Ordering::Acquire) {
+                log::debug!("The database is shutting down during a compaction.");
                 compaction_error = Some(
                     CompactionWorkerError::UnexpectedState(
                         "The database is shutting down during a compaction.".to_owned(),
@@ -734,6 +735,7 @@ impl CompactionWorker {
         }
 
         if let Some(error) = compaction_error {
+            log::error!("Setting compaction error: {}", &error);
             DB::set_bad_database_state(db_state, db_fields_guard, error);
         }
 
