@@ -103,7 +103,7 @@ impl FileSystem for OsFileSystem {
 
     fn create_file(&self, path: &Path, append: bool) -> io::Result<Box<dyn RandomAccessFile>> {
         let mut open_options = OpenOptions::new();
-        open_options.create(true).read(true);
+        open_options.create(true).write(true).read(true);
 
         if append {
             open_options.append(true);
@@ -231,7 +231,7 @@ impl FileSystem for TmpFileSystem {
 
     fn create_file(&self, path: &Path, append: bool) -> io::Result<Box<dyn RandomAccessFile>> {
         let mut open_options = OpenOptions::new();
-        open_options.create(true).read(true);
+        open_options.create(true).write(true).read(true);
 
         if append {
             open_options.append(true);
