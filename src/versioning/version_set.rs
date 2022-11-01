@@ -776,6 +776,13 @@ impl VersionSet {
     This method will panic if the version set is already using a manifest file.
     */
     fn maybe_reuse_manifest(&mut self, manifest_path: &Path) -> bool {
+        if !self.options.reuse_log_files() {
+            log::info!(
+                "Not reusing manifest because `DbOptions::reuse_log_files` was set to false."
+            );
+            return false;
+        }
+
         log::info!(
             "Checking if the manifest at the provided path can be reused. Provided path: {path:?}",
             path = manifest_path

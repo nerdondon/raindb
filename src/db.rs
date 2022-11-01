@@ -1120,7 +1120,7 @@ impl DB {
         }
 
         let mut was_memtable_reused = false;
-        if is_last_wal && num_compactions == 0 {
+        if self.options.reuse_log_files() && is_last_wal && num_compactions == 0 {
             log::info!("Reusing WAL file: {wal_path:?}.", wal_path = &wal_path);
             drop(wal_reader);
             if let Ok(wal_writer) =

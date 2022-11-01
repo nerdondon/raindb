@@ -92,6 +92,13 @@ pub struct DbOptions {
 
     /// If true, an error is raised if the database already exists.
     pub error_if_exists: bool,
+
+    /**
+    If true, append to existing manifest and write-ahead logs when opening a database.
+
+    **This defaults to true (unlike in LevelDB that defaults to false).**
+    */
+    pub reuse_log_files: bool,
 }
 
 /// Public methods
@@ -122,6 +129,11 @@ impl DbOptions {
     /// Get the maximum block size.
     pub fn max_block_size(&self) -> usize {
         self.max_block_size
+    }
+
+    /// Get the whether the database is reusing log files.
+    pub fn reuse_log_files(&self) -> bool {
+        self.reuse_log_files
     }
 
     /// Get a strong reference to the file system provider.
@@ -168,6 +180,7 @@ impl Default for DbOptions {
             )),
             create_if_missing: false,
             error_if_exists: false,
+            reuse_log_files: true,
         }
     }
 }
