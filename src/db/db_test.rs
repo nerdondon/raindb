@@ -1016,3 +1016,78 @@ fn db_with_values_can_be_reopened() {
         );
     }
 }
+
+#[test]
+fn db_while_undergoing_a_minor_compaction_can_be_reopened() {
+    setup();
+
+    const MEMTABLE_MAX_SIZE_BYTES: usize = 1_000_000;
+
+    let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+    let test_options = DbOptions {
+        filesystem_provider: Arc::clone(&mem_fs),
+        create_if_missing: true,
+        max_memtable_size: MEMTABLE_MAX_SIZE_BYTES,
+        ..DbOptions::default()
+    };
+
+    {
+        let db = DB::open(test_options.clone()).unwrap();
+        // Initial value in memtable
+        db.put(WriteOptions::default(), "initial".into(), "initial".into())
+            .unwrap();
+
+        // Fill memtable
+        db.put(
+            WriteOptions::default(),
+            "large".into(),
+            "l".repeat(MEMTABLE_MAX_SIZE_BYTES).into_bytes(),
+        )
+        .unwrap();
+
+        // Force compaction with write
+        db.put(
+            WriteOptions::default(),
+            "large2".into(),
+            "z".repeat(1000).into_bytes(),
+        )
+        .unwrap();
+
+        // Put value into new memtable
+        db.put(
+            WriteOptions::default(),
+            "second_memtable".into(),
+            "second_memtable".into(),
+        )
+        .unwrap();
+    }
+
+    {
+        let db = DB::open(test_options).unwrap();
+
+        assert_eq!(
+            db.get(ReadOptions::default(), "initial".as_bytes())
+                .unwrap(),
+            "initial".as_bytes()
+        );
+        assert_eq!(
+            db.get(ReadOptions::default(), "second_memtable".as_bytes())
+                .unwrap(),
+            "second_memtable".as_bytes()
+        );
+
+        let read_result = db.get(ReadOptions::default(), "large".as_bytes()).unwrap();
+        assert!(
+            read_result == "l".repeat(MEMTABLE_MAX_SIZE_BYTES).as_bytes(),
+            "Expected to find slice of {MEMTABLE_MAX_SIZE_BYTES} l's but got {} l's",
+            read_result.len()
+        );
+
+        let read_result = db.get(ReadOptions::default(), "large2".as_bytes()).unwrap();
+        assert!(
+            read_result == "z".repeat(1000).as_bytes(),
+            "Expected to find slice of 1000 z's but got {} z's",
+            read_result.len()
+        );
+    }
+}
