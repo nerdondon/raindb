@@ -304,7 +304,7 @@ impl FileSystem for TmpFileSystem {
             .create(true)
             .truncate(true)
             .open(self.get_rooted_path(path))?;
-        file.lock_exclusive()?;
+        file.try_lock_exclusive()?;
 
         Ok(FileLock::new(Box::new(file)))
     }
