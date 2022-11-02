@@ -142,7 +142,7 @@ impl FileSystem for OsFileSystem {
             .create(true)
             .truncate(true)
             .open(path)?;
-        file.lock_exclusive()?;
+        file.try_lock_exclusive()?;
 
         Ok(FileLock::new(Box::new(file)))
     }
