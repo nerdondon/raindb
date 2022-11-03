@@ -236,12 +236,7 @@ impl DB {
         let db_path = options.db_path();
         let file_name_handler = Arc::new(FileNameHandler::new(db_path.to_string()));
 
-        log::info!("Creating DB root directory at {}.", db_path);
-        fs.create_dir_all(&file_name_handler.get_db_path())?;
-
-        log::info!("Creating supporting database paths.");
-        fs.create_dir(&file_name_handler.get_wal_dir())?;
-        fs.create_dir(&file_name_handler.get_data_dir())?;
+        DB::create_database_directories(&fs, &*file_name_handler, db_path)?;
 
         // Create WAL
         let wal_file_number = 0;
@@ -1592,6 +1587,52 @@ impl DB {
                 options
                     .filesystem_provider()
                     .remove_file(&table_file_name)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create the directory structure that the database depends on.
+    fn create_database_directories(
+        fs: &Arc<dyn FileSystem>,
+        file_name_handler: &FileNameHandler,
+        db_path: &str,
+    ) -> RainDBResult<()> {
+        log::info!("Creating DB root directory at {db_path}.");
+        if let Err(dir_creation_err) = fs.create_dir_all(&file_name_handler.get_db_path()) {
+            if dir_creation_err.kind() == io::ErrorKind::AlreadyExists {
+                log::warn!(
+                    "{db_path} already exists. This can happen if a previous database \
+                    creation attempt failed."
+                );
+            } else {
+                return Err(dir_creation_err.into());
+            }
+        }
+
+        log::info!("Creating supporting database paths.");
+        if let Err(dir_creation_err) = fs.create_dir(&file_name_handler.get_wal_dir()) {
+            if dir_creation_err.kind() == io::ErrorKind::AlreadyExists {
+                log::warn!(
+                    "{} already exists. This can happen if a previous database \
+                    creation attempt failed.",
+                    file_name_handler.get_wal_dir().display()
+                );
+            } else {
+                return Err(dir_creation_err.into());
+            }
+        }
+
+        if let Err(dir_creation_err) = fs.create_dir(&file_name_handler.get_data_dir()) {
+            if dir_creation_err.kind() == io::ErrorKind::AlreadyExists {
+                log::warn!(
+                    "{} already exists. This can happen if a previous database \
+                    creation attempt failed.",
+                    file_name_handler.get_data_dir().display()
+                );
+            } else {
+                return Err(dir_creation_err.into());
             }
         }
 
