@@ -286,9 +286,13 @@ impl DB {
         };
         let compaction_worker = Arc::new(CompactionWorker::new(portable_state)?);
 
+        log::info!("Attempting to acquire database lock.");
+        let lock_file_path = file_name_handler.get_lock_file_path();
+        let db_lock = Some(options.filesystem_provider().lock_file(&lock_file_path)?);
+
         let db = DB {
             options,
-            db_lock: None,
+            db_lock,
             memtable_ptr,
             wal: wal_ptr,
             table_cache,
@@ -814,22 +818,18 @@ impl DB {
 
     # Panics
 
-    This method panics if this client has already obtained a database lock.
+    This method panics if the caller does not have a lock on the database.
     */
     fn recover(
         &self,
         db_fields_guard: &mut MutexGuard<GuardedDbFields>,
     ) -> RainDBResult<(VersionChangeManifest, bool)> {
-        assert!(self.db_lock.is_none());
+        assert!(self.db_lock.is_some());
 
         log::info!(
             "Checking for uncommitted entries of persistent log files as part of initialization."
         );
-        log::info!("Attempting to acquire database lock.");
         let filesystem = self.options.filesystem_provider();
-        let lock_file_path = self.file_name_handler.get_lock_file_path();
-        filesystem.lock_file(&lock_file_path)?;
-
         let current_file_path = self.file_name_handler.get_current_file_path();
         match filesystem.open_file(&current_file_path) {
             Err(io_error) => {
