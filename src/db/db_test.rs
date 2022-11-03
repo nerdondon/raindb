@@ -1,11 +1,16 @@
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use integer_encoding::FixedInt;
 use pretty_assertions::assert_eq;
 
-use crate::fs::InMemoryFileSystem;
+use crate::errors::DBIOError;
+use crate::fs::{InMemoryFileSystem, TmpFileSystem};
 
 use super::*;
+
+const BASE_TESTING_DIR_NAME: &str = "testing_files/";
 
 fn setup() {
     let _ = env_logger::builder()
@@ -15,6 +20,12 @@ fn setup() {
         .is_test(true)
         // Ignore errors initializing the logger if tests race to configure it
         .try_init();
+
+    // Ensure that the base testing directory exists
+    let base_path = Path::new(BASE_TESTING_DIR_NAME);
+    if !base_path.exists() {
+        fs::create_dir_all(&base_path).unwrap();
+    };
 }
 
 #[test]
@@ -1090,4 +1101,36 @@ fn db_while_undergoing_a_minor_compaction_can_be_reopened() {
             read_result.len()
         );
     }
+}
+
+#[test]
+fn database_cannot_be_reopened_if_it_is_already_open_elsewhere() {
+    setup();
+
+    let tmp_fs_root = PathBuf::from(BASE_TESTING_DIR_NAME);
+    let tmp_fs = TmpFileSystem::new(Some(&tmp_fs_root));
+    let db_path = tmp_fs.get_root_path().join("destroy_me");
+    let shared_tmp_fs: Arc<dyn FileSystem> = Arc::new(tmp_fs);
+    let _db = DB::open(DbOptions {
+        filesystem_provider: Arc::clone(&shared_tmp_fs),
+        create_if_missing: true,
+        db_path: db_path.to_str().unwrap().to_owned(),
+        ..DbOptions::default()
+    })
+    .unwrap();
+
+    let maybe_db2 = DB::open(DbOptions {
+        filesystem_provider: Arc::clone(&shared_tmp_fs),
+        create_if_missing: true,
+        db_path: db_path.to_str().unwrap().to_owned(),
+        ..DbOptions::default()
+    });
+    assert_eq!(
+        maybe_db2.err().unwrap(),
+        RainDBError::IO(DBIOError::new(
+            io::ErrorKind::WouldBlock,
+            "Resource temporarily unavailable (os error 11)".to_owned()
+        )),
+        "Expected there to be an error acquiring a lock on the database"
+    );
 }
