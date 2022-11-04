@@ -20,3 +20,13 @@ pub(crate) fn assert_db_iterator_current_key_value(
     assert_eq!(curr_key, expected_key);
     assert_eq!(curr_val, expected_value);
 }
+
+/// Get the total number of table files that make up the database.
+pub(crate) fn total_table_files(db: &DB) -> usize {
+    let mut total: usize = 0;
+    for level in 0..MAX_NUM_LEVELS {
+        total += num_files_at_level(db, level);
+    }
+
+    total
+}

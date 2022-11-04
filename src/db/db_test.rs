@@ -1134,3 +1134,62 @@ fn database_cannot_be_reopened_if_it_is_already_open_elsewhere() {
         "Expected there to be an error acquiring a lock on the database"
     );
 }
+
+#[test]
+fn db_when_the_memtable_gets_filled_up_triggers_a_minor_compaction() {
+    setup();
+
+    const MEMTABLE_MAX_SIZE_BYTES: usize = 10_000;
+
+    let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            max_memtable_size: MEMTABLE_MAX_SIZE_BYTES,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        let starting_num_table_files = test_utils::total_table_files(&db);
+        for key in 0..500_usize {
+            db.put(
+                WriteOptions::default(),
+                key.encode_fixed_vec(),
+                "v".repeat(1000).into_bytes(),
+            )
+            .unwrap();
+        }
+
+        let ending_num_table_files = test_utils::total_table_files(&db);
+        assert!(ending_num_table_files > starting_num_table_files);
+
+        // Ensure that we can still read the values after compaction
+        for key in 0..500_usize {
+            assert_eq!(
+                db.get(ReadOptions::default(), &key.encode_fixed_vec())
+                    .unwrap(),
+                "v".repeat(1000).into_bytes()
+            );
+        }
+    }
+
+    {
+        // Ensure that we can still read the values after reopening the database
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            max_memtable_size: MEMTABLE_MAX_SIZE_BYTES,
+            ..DbOptions::default()
+        })
+        .unwrap();
+
+        for key in 0..500_usize {
+            assert_eq!(
+                db.get(ReadOptions::default(), &key.encode_fixed_vec())
+                    .unwrap(),
+                "v".repeat(1000).into_bytes()
+            );
+        }
+    }
+}
