@@ -148,7 +148,7 @@ impl Drop for FileLock {
 }
 
 /// A file that can be unlocked.
-pub trait UnlockableFile {
+pub trait UnlockableFile: Send + Sync {
     /// Unlock the file.
     fn unlock(&self) -> Result<()>;
 }
