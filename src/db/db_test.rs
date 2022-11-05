@@ -1276,3 +1276,66 @@ fn db_when_sizing_down_the_memtable_size_can_reopen_from_larger_wal_file() {
         );
     }
 }
+
+#[test]
+fn manual_compactions_work_as_expected() {
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    test_utils::make_tables(&db, 3, "p".as_bytes(), "q".as_bytes());
+    assert_eq!(
+        vec![1, 1, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Compaction of key range before the full database key range should not do anything
+    db.compact_range(Some("".as_bytes())..Some("c".as_bytes()));
+    assert_eq!(
+        vec![1, 1, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Compaction of key range after the full database key range should not do anything
+    db.compact_range(Some("r".as_bytes())..Some("z".as_bytes()));
+    assert_eq!(
+        vec![1, 1, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Compaction of key range overlapping the table files will compact them
+    db.compact_range(Some("p1".as_bytes())..Some("p9".as_bytes()));
+    assert_eq!(
+        vec![0, 0, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Create another set of files with a different range
+    test_utils::make_tables(&db, 3, "c".as_bytes(), "e".as_bytes());
+    assert_eq!(
+        vec![1, 1, 2, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Compact the new range
+    db.compact_range(Some("b".as_bytes())..Some("f".as_bytes()));
+    assert_eq!(
+        vec![0, 0, 2, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Compact everything
+    test_utils::make_tables(&db, 1, "a".as_bytes(), "z".as_bytes());
+    assert_eq!(
+        vec![0, 1, 2, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    db.compact_range(None..None);
+    assert_eq!(
+        vec![0, 0, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+}
