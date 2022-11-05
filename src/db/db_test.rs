@@ -1193,3 +1193,86 @@ fn db_when_the_memtable_gets_filled_up_triggers_a_minor_compaction() {
         }
     }
 }
+
+#[test]
+fn db_when_sizing_down_the_memtable_size_can_reopen_from_larger_wal_file() {
+    setup();
+
+    let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(
+            WriteOptions::default(),
+            "big1".into(),
+            "1".repeat(200_000).into_bytes(),
+        )
+        .unwrap();
+        db.put(
+            WriteOptions::default(),
+            "big2".into(),
+            "2".repeat(200_000).into_bytes(),
+        )
+        .unwrap();
+        db.put(
+            WriteOptions::default(),
+            "small3".into(),
+            "3".repeat(10).into_bytes(),
+        )
+        .unwrap();
+        db.put(
+            WriteOptions::default(),
+            "small4".into(),
+            "4".repeat(10).into_bytes(),
+        )
+        .unwrap();
+
+        assert_eq!(test_utils::num_files_at_level(&db, 0), 0);
+    }
+
+    {
+        // Ensure that we can still read the values after reopening the database
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            max_memtable_size: 100_000,
+            ..DbOptions::default()
+        })
+        .unwrap();
+
+        assert_eq!(test_utils::num_files_at_level(&db, 0), 3);
+
+        let read_result = db.get(ReadOptions::default(), "big1".as_bytes()).unwrap();
+        assert!(
+            read_result == "1".repeat(200_000).as_bytes(),
+            "Expected to find slice of 200,000 1's but got {} 1's",
+            read_result.len()
+        );
+
+        let read_result = db.get(ReadOptions::default(), "big2".as_bytes()).unwrap();
+        assert!(
+            read_result == "2".repeat(200_000).as_bytes(),
+            "Expected to find slice of 200,000 2's but got {} 2's",
+            read_result.len()
+        );
+
+        let read_result = db.get(ReadOptions::default(), "small3".as_bytes()).unwrap();
+        assert!(
+            read_result == "3".repeat(10).as_bytes(),
+            "Expected to find slice of 10 3's but got {} 3's",
+            read_result.len()
+        );
+
+        let read_result = db.get(ReadOptions::default(), "small4".as_bytes()).unwrap();
+        assert!(
+            read_result == "4".repeat(10).as_bytes(),
+            "Expected to find slice of 10 4's but got {} 4's",
+            read_result.len()
+        );
+    }
+}
