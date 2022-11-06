@@ -25,7 +25,7 @@ use super::errors::{RecoverResult, WriteResult};
 use super::file_metadata::FileMetadata;
 use super::version::Version;
 use super::version_builder::VersionBuilder;
-use super::VersionChangeManifest;
+use super::{utils, VersionChangeManifest};
 
 /// Manages the versions of the database.
 #[derive(Debug)]
@@ -755,6 +755,30 @@ impl VersionSet {
             .read()
             .element
             .get_level_size(level)
+    }
+
+    /**
+    Get the maximum amount of data (in bytes) with overlaps in the next level for any file at
+    levels >= 1.
+    */
+    pub fn max_next_level_overlapping_bytes(&self) -> u64 {
+        let curr_version = &self.current_version.read().element;
+        let mut result: u64 = 0;
+        for level in 1..(MAX_NUM_LEVELS - 1) {
+            for file in curr_version.files[level].iter() {
+                let overlapping_files = curr_version.get_overlapping_compaction_inputs(
+                    level + 1,
+                    Some(file.smallest_key())..Some(file.largest_key()),
+                );
+                let total_overlapping_size = utils::sum_file_sizes(&overlapping_files);
+
+                if total_overlapping_size > result {
+                    result = total_overlapping_size;
+                }
+            }
+        }
+
+        result
     }
 }
 

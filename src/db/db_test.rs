@@ -1339,3 +1339,64 @@ fn manual_compactions_work_as_expected() {
         test_utils::num_files_per_level(&db)
     );
 }
+
+#[cfg(feature = "large_tests")]
+#[test]
+fn compactions_do_not_create_files_with_excessive_overlap() {
+    // This is the same as LevelDB's `SparseMerge` test to ensure that there isn't excessive overlap
+    // of files between levels. Per LevelDB:
+    //
+    // ```
+    // Suppose there is:
+    //    small amount of data with prefix A
+    //    large amount of data with prefix B
+    //    small amount of data with prefix C
+    // and that recent updates have made small changes to all three prefixes.
+    // Check that we do not do a compaction that merges all of B in one shot.
+    // ```
+    //
+    // If all of the `B` prefixed values are mereged together, there would be a large amout of
+    // overlap for files between levels.
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    test_utils::fill_levels(&db, "a".as_bytes(), "z".as_bytes());
+    db.put(WriteOptions::default(), "a".into(), "a".into())
+        .unwrap();
+
+    // Write approximately 100MB of "B" prefixed values
+    for idx in 0..100_000_usize {
+        let key = format!("b{idx:010}");
+        db.put(WriteOptions::default(), key.into(), "x".repeat(1000).into())
+            .unwrap();
+    }
+
+    db.put(WriteOptions::default(), "c".into(), "c".into())
+        .unwrap();
+    db.force_memtable_compaction().unwrap();
+    db.force_level_compaction(0, &(None..None));
+
+    // Make sparse updates
+    db.put(WriteOptions::default(), "a".into(), "a2".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "b100".into(), "b2".into())
+        .unwrap();
+    db.put(WriteOptions::default(), "c".into(), "c2".into())
+        .unwrap();
+    db.force_memtable_compaction().unwrap();
+
+    // Compactions should not create files that overlap too much data at the next level
+    /// Default max overlapping bytes for level 1 is 20 MB
+    /// (see `[raindb::compaction:utils::max_grandparent_overlap_bytes_from_options]`)
+    const MAX_OVERLAPPING_BYTES: u64 = 20 * 1024 * 1024;
+    assert!(db.max_next_level_overlapping_bytes() < MAX_OVERLAPPING_BYTES);
+
+    db.force_level_compaction(0, &(None..None));
+    assert!(db.max_next_level_overlapping_bytes() < MAX_OVERLAPPING_BYTES);
+
+    db.force_level_compaction(1, &(None..None));
+    assert!(db.max_next_level_overlapping_bytes() < MAX_OVERLAPPING_BYTES);
+}

@@ -30,3 +30,4 @@ pretty_assertions = "1.0.0"
 # Enables strict mode i.e. tries to adhere to LevelDB binary format more and removes easter eggs.
 # Strict mode is not backwards compatible with an existing database that had strict mode off.
 strict = []
+large_tests = []

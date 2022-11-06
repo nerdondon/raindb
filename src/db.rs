@@ -1638,6 +1638,15 @@ impl DB {
 
         Ok(())
     }
+
+    /// For any level >= 1 and any file in the current version get the maximum number of bytes
+    /// overlapping with next level.
+    fn max_next_level_overlapping_bytes(&self) -> u64 {
+        self.guarded_fields
+            .lock()
+            .version_set
+            .max_next_level_overlapping_bytes()
+    }
 }
 
 /// Crate-only methods
