@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::TrySendError;
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -33,6 +34,14 @@ const COMPACTION_THREAD_NAME: &str = "raindb-tumtum";
 #[cfg(feature = "strict")]
 const COMPACTION_THREAD_NAME: &str = "raindb-compact";
 
+/**
+When Tumtum is getting too full to eat anymore, warning logs will be emitted.
+
+Seriously though, this is the amount of compaction tasks that can be buffered before warnings are
+logged.
+*/
+const TASK_BUFFER_WARNING_THRESHOLD: usize = 2_000;
+
 /// The kinds of tasks that the compaction worker can schedule.
 #[derive(Debug)]
 pub(crate) enum TaskKind {
@@ -59,7 +68,7 @@ pub(crate) struct CompactionWorker {
     maybe_background_compaction_handle: Option<JoinHandle<()>>,
 
     /// Sender end of the channel that the worker utilizes to schedule tasks.
-    task_sender: mpsc::Sender<TaskKind>,
+    task_sender: mpsc::SyncSender<TaskKind>,
 }
 
 /// Crate-only methods
@@ -67,7 +76,7 @@ impl CompactionWorker {
     /// Create a new instance of [`CompactionWorker`].
     pub(crate) fn new(db_state: PortableDatabaseState) -> CompactionWorkerResult<Self> {
         // Create a channel for sending tasks
-        let (task_sender, receiver) = mpsc::channel();
+        let (task_sender, receiver) = mpsc::sync_channel(1000);
 
         log::info!("Starting up the background compaction thread.");
         let background_thread_handle = thread::Builder::new()
@@ -101,16 +110,34 @@ impl CompactionWorker {
                             }
                         }
 
-                        // Check the channel for new commands before proceeding with internal
+                        // Check the channel for new commands before proceeding with internally
                         // scheduled events
-                        match receiver.try_recv() {
-                            Ok(new_external_task) => {
-                                // Prioritize external tasks
-                                task_queue.push_front(new_external_task);
-                            }
-                            Err(_err) => {
-                                // TODO: Handle if the error is a disconnect vs an empty buffer
-                            }
+                        let pending_tasks = receiver.try_iter();
+                        let mut pending_tasks_counter: usize = 0;
+                        for new_external_task in pending_tasks {
+                            // Prioritize external tasks by pushing to the front of the
+                            // task queue. The iterator is used to clear the channel's internal
+                            // buffer. This is fine because RainDB will pause writes and
+                            // wait for compactions (see `DB::make_room_for_write`).
+                            task_queue.push_front(new_external_task);
+                            pending_tasks_counter += 1;
+                        }
+
+                        if pending_tasks_counter > 1 {
+                            log::debug!(
+                                "Compaction worker found {pending_tasks_counter} pending tasks \
+                                and added them to the thread-internal task buffer. There are a \
+                                total of {} pending tasks.",
+                                task_queue.len()
+                            );
+                        }
+
+                        if task_queue.len() >= TASK_BUFFER_WARNING_THRESHOLD {
+                            log::warn!(
+                                "Compaction worker task buffer is at {} tasks. The warning \
+                                theshold is {TASK_BUFFER_WARNING_THRESHOLD}.",
+                                task_queue.len()
+                            );
                         }
                     }
 
@@ -138,8 +165,24 @@ impl CompactionWorker {
 
     /// Schedule a task in the background thread.
     pub(crate) fn schedule_task(&self, task_kind: TaskKind) {
-        // TODO: restart the compaction thread on error
-        self.task_sender.send(task_kind).unwrap();
+        if let Err(try_send_err) = self.task_sender.try_send(task_kind) {
+            match try_send_err {
+                TrySendError::Full(sent_task_kind) => {
+                    log::warn!(
+                        "The compaction worker task channel is full and needs to block until the \
+                        receiver clears the buffer."
+                    );
+                    self.task_sender.send(sent_task_kind).unwrap();
+                }
+                TrySendError::Disconnected(sent_task_kind) => {
+                    // TODO: restart the compaction thread on disconnect error
+                    log::error!(
+                        "The receiver for the compaction thread was disconnected when sending \
+                        the following command: {sent_task_kind:?}"
+                    );
+                }
+            }
+        }
     }
 
     /**
