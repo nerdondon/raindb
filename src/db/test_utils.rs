@@ -30,3 +30,39 @@ pub(crate) fn total_table_files(db: &DB) -> usize {
 
     total
 }
+
+/**
+Do `n` memtable compactions, each of which produces a table file covering the provided key range.
+*/
+pub(crate) fn make_tables(db: &DB, n: usize, start_user_key: &[u8], end_user_key: &[u8]) {
+    for _ in 0..n {
+        db.put(
+            WriteOptions::default(),
+            start_user_key.into(),
+            "begin".into(),
+        )
+        .unwrap();
+        db.put(WriteOptions::default(), end_user_key.into(), "end".into())
+            .unwrap();
+        db.force_memtable_compaction().unwrap();
+    }
+}
+
+/**
+Fill every level of the database with a table file that covers the provided range.
+
+This method is to prevent compactions from pushing produced table files into deeper levels.
+*/
+pub(crate) fn fill_levels(db: &DB, start_user_key: &[u8], end_user_key: &[u8]) {
+    make_tables(db, MAX_NUM_LEVELS, start_user_key, end_user_key);
+}
+
+/// Return a vector where each index contains the number of table files at that level.
+pub(crate) fn num_files_per_level(db: &DB) -> Vec<usize> {
+    let mut num_files_per_level: Vec<usize> = vec![0; MAX_NUM_LEVELS];
+    for level in 0..MAX_NUM_LEVELS {
+        num_files_per_level[level] = num_files_at_level(db, level);
+    }
+
+    num_files_per_level
+}
