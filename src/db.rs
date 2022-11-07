@@ -1478,6 +1478,7 @@ impl DB {
         let mut writer_iter = mutex_guard.writer_queue.iter();
         // Skip the first writer since we used it to bootstrap the group commit.
         writer_iter.next();
+        let mut num_writers_in_batch: usize = 1;
         for writer in writer_iter {
             if writer.is_synchronous_write() && !first_writer.is_synchronous_write() {
                 // Do not include a synchronous write into a batch handled by a non-synchronous
@@ -1501,8 +1502,10 @@ impl DB {
 
             group_commit_batch.append_batch(curr_writer_batch);
             last_writer = writer;
+            num_writers_in_batch += 1;
         }
 
+        log::debug!("Created a group commit with operations from {num_writers_in_batch} writers");
         Ok((group_commit_batch, Arc::clone(last_writer)))
     }
 
