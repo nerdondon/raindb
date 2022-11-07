@@ -1400,3 +1400,109 @@ fn compactions_do_not_create_files_with_excessive_overlap() {
     db.force_level_compaction(1, &(None..None));
     assert!(db.max_next_level_overlapping_bytes() < MAX_OVERLAPPING_BYTES);
 }
+
+#[test]
+fn compactions_when_there_are_overlaps_in_level0_do_not_expose_older_version_of_keys() {
+    // In LevelDB this test was related to a bug in `Version::some_file_overlaps_range` that was
+    // fixed in this commit:
+    // https://github.com/google/leveldb/commit/299ccedfeca1fb3497978c288e76008a5c08e899
+    // RainDB's `Version::some_file_overlaps_range` already has a lot of testing but we use this
+    // integration check to double check overall DB behavior.
+    setup();
+
+    let mut options = DbOptions::with_memory_env();
+    options.create_if_missing = true;
+    let db = DB::open(options).unwrap();
+
+    // Fill levels 1 and 2 to prevent pushing new table files past level 0
+    db.put(
+        WriteOptions::default(),
+        "100".as_bytes().to_vec(),
+        "100".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.put(
+        WriteOptions::default(),
+        "999".as_bytes().to_vec(),
+        "999".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.force_memtable_compaction().unwrap();
+    db.delete(WriteOptions::default(), "100".into()).unwrap();
+    db.delete(WriteOptions::default(), "999".into()).unwrap();
+    db.force_memtable_compaction().unwrap();
+    assert_eq!(
+        vec![0, 1, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Create overlapping files in level 0
+    db.put(
+        WriteOptions::default(),
+        "300".as_bytes().to_vec(),
+        "300".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.put(
+        WriteOptions::default(),
+        "500".as_bytes().to_vec(),
+        "500".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.force_memtable_compaction().unwrap();
+
+    db.put(
+        WriteOptions::default(),
+        "200".as_bytes().to_vec(),
+        "200".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.put(
+        WriteOptions::default(),
+        "600".as_bytes().to_vec(),
+        "600".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.put(
+        WriteOptions::default(),
+        "900".as_bytes().to_vec(),
+        "900".as_bytes().to_vec(),
+    )
+    .unwrap();
+    db.force_memtable_compaction().unwrap();
+    assert_eq!(
+        vec![2, 1, 1, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Compact away the placeholder files in levels 1 and 2. The values are deleted so nothing
+    // should be retained.
+    db.force_level_compaction(1, &(None..None));
+    db.force_level_compaction(2, &(None..None));
+    assert_eq!(
+        vec![2, 0, 0, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    // Do a memtable compaction and ensure that the overlapping value does not get pushed to a
+    // level greater than 0
+    db.delete(WriteOptions::default(), "600".into()).unwrap();
+    db.force_memtable_compaction().unwrap();
+    assert_eq!(
+        vec![3, 0, 0, 0, 0, 0, 0],
+        test_utils::num_files_per_level(&db)
+    );
+
+    let actual_read = db
+        .get(ReadOptions::default(), "600".as_bytes())
+        .err()
+        .unwrap();
+    assert_eq!(actual_read, RainDBError::KeyNotFound);
+
+    let compaction_result = db.force_memtable_compaction();
+    assert!(
+        compaction_result.is_ok(),
+        "Error forcing compaction of the memtable: {}",
+        compaction_result.err().unwrap(),
+    );
+}
