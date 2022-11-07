@@ -365,11 +365,12 @@ impl CompactionWorker {
                         .unwrap(),
                 );
                 log::info!(
-                    "Moved file with number {file_num} ({file_size} bytes) to level \
-                    {parent_level}. Level summary: {level_summary}",
+                    "Moved file with number {file_num} ({file_size} bytes) from level \
+                    {parent_level} to level {new_level}. Level summary: {level_summary}",
                     file_num = file_to_compact.file_number(),
                     file_size = file_to_compact.get_file_size(),
                     parent_level = compaction_manifest.level(),
+                    new_level = compaction_manifest.level() + 1,
                     level_summary = db_fields_guard.version_set.level_summary()
                 );
             } else {

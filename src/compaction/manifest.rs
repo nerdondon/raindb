@@ -468,12 +468,14 @@ impl CompactionManifest {
     */
     pub(crate) fn set_change_manifest_for_trivial_move(&mut self) {
         let file_to_compact = Arc::clone(self.get_compaction_level_files().first().unwrap());
+        self.change_manifest
+            .remove_file(self.level, file_to_compact.file_number());
         self.change_manifest.add_file(
-            self.level,
+            self.level + 1,
             file_to_compact.file_number(),
             file_to_compact.get_file_size(),
             file_to_compact.clone_key_range(),
-        )
+        );
     }
 
     /// Release the input version once a compaction is complete.
