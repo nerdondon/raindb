@@ -1187,10 +1187,11 @@ impl DB {
             .writer_queue
             .push_back(Arc::clone(&writer));
 
-        let is_first_writer = self.is_first_writer(&mut fields_mutex_guard, &writer);
+        let mut is_first_writer = self.is_first_writer(&mut fields_mutex_guard, &writer);
         // Wait until it is the current writer's turn to write
         while !writer.is_operation_complete() && !is_first_writer {
             writer.wait_for_turn(&mut fields_mutex_guard);
+            is_first_writer = self.is_first_writer(&mut fields_mutex_guard, &writer);
         }
 
         // Check if the work for this thread was already completed as part of a group commit and
