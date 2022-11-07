@@ -1292,7 +1292,12 @@ impl DB {
     ) -> bool {
         // We want to check shallow/reference equality of the writers so we use `Arc::ptr_eq`.
         let maybe_first_writer = mutex_guard.writer_queue.front();
-        maybe_first_writer.is_some() && Arc::ptr_eq(writer, maybe_first_writer.unwrap())
+        if let Some(first_writer) = maybe_first_writer {
+            let is_first_writer = Arc::ptr_eq(writer, first_writer);
+            return is_first_writer;
+        }
+
+        false
     }
 
     /**
