@@ -475,7 +475,7 @@ impl CompactionWorker {
         // Do periodic check for shutdown state before proceeding to the next major compaction
         // operation
         if db_state.is_shutting_down.load(Ordering::Acquire) {
-            log::error!(
+            log::warn!(
                 "Compaction thread discovered that the database was shutting down. Halting \
                 compaction work. Recording background error to stop other writes from occurring."
             );
