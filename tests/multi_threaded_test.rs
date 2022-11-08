@@ -127,12 +127,13 @@ impl Worker {
 
                                 // Check that the counter value stored in the database is less than
                                 // the current counter value of the thread that stored that value
-                                let expected_counter_value = worker_ops_counter[stored_thread_id].load(Ordering::Acquire);
+                                let expected_counter_value =
+                                    worker_ops_counter[stored_thread_id].load(Ordering::Acquire);
                                 assert!(
-                                    stored_counter < expected_counter_value,
+                                    stored_counter <= expected_counter_value,
                                     "The stored counter value ({stored_counter}) should be less \
-                                    than the current counter value ({expected_counter_value}) of \
-                                    the thread that stored it."
+                                    than or equal to the current counter value \
+                                    ({expected_counter_value}) of the thread that stored it."
                                 );
                             }
                         }
