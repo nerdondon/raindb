@@ -15,6 +15,7 @@ use crate::versioning::errors::RecoverError;
 
 // TODO: consider using snafu (https://docs.rs/snafu/0.6.10/snafu/guide/index.html) to have less boilerplate
 
+/// A specialized [`Result`] type for RainDB errors.
 pub type RainDBResult<T> = Result<T, RainDBError>;
 
 /**
@@ -168,7 +169,10 @@ WAL.
 */
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogSerializationErrorKind {
+    /// Serialization errors that occur when trying to convert an integer.
     FromInt(TryFromIntError),
+
+    /// General serialization errors.
     Other(String),
 }
 

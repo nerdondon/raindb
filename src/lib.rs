@@ -16,11 +16,13 @@ database.
 pub mod db;
 pub use db::DB;
 
+pub mod errors;
+pub use errors::{RainDBError, RainDBResult};
+
 pub mod fs;
 
 mod compaction;
 mod config;
-mod errors;
 mod file_names;
 mod logs;
 mod memtable;
