@@ -1506,3 +1506,236 @@ fn compactions_when_there_are_overlaps_in_level0_do_not_expose_older_version_of_
         compaction_result.err().unwrap(),
     );
 }
+
+#[test]
+fn compactions_of_level0_when_there_are_deleted_keys_and_overlapping_files_does_not_expose_older_version_of_keys(
+) {
+    // This is related to the bug described in https://github.com/google/leveldb/issues/50 and was
+    // fixed in LevelDB in this commit
+    // https://github.com/google/leveldb/commit/36a5f8ed7f9fb3373236d5eace4f5fea369856ee
+    setup();
+    let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "b".into(), "b".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.delete(WriteOptions::default(), "b".into()).unwrap();
+        db.delete(WriteOptions::default(), "a".into()).unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.delete(WriteOptions::default(), "a".into()).unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "a".into(), "a".into())
+            .unwrap();
+    }
+
+    {
+        DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+
+        // Trigger compaction with reads
+        let contents = test_utils::get_and_validate_database_contents(&db);
+        assert_eq!(
+            contents,
+            vec![("a".as_bytes().to_vec(), "a".as_bytes().to_vec())]
+        );
+
+        // Wait for compactions to finish
+        thread::sleep(Duration::from_millis(1000));
+
+        assert_eq!(
+            contents,
+            vec![("a".as_bytes().to_vec(), "a".as_bytes().to_vec())]
+        );
+    }
+}
+
+#[test]
+fn compactions_of_level0_when_there_are_empty_kv_pairs_and_there_are_deleted_keys_and_overlapping_files_does_not_expose_older_version_of_keys(
+) {
+    // This is related to the bug described in https://github.com/google/leveldb/issues/50 and was
+    // fixed in LevelDB in this commit
+    // https://github.com/google/leveldb/commit/36a5f8ed7f9fb3373236d5eace4f5fea369856ee
+    setup();
+    let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "".into(), "".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.delete(WriteOptions::default(), "e".into()).unwrap();
+        db.put(WriteOptions::default(), "".into(), "".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "c".into(), "c".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "".into(), "".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "".into(), "".into())
+            .unwrap();
+
+        // Wait for compactions to finish
+        thread::sleep(Duration::from_millis(1000));
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "d".into(), "d".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.put(WriteOptions::default(), "".into(), "".into())
+            .unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+        db.delete(WriteOptions::default(), "d".into()).unwrap();
+        db.delete(WriteOptions::default(), "b".into()).unwrap();
+    }
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&mem_fs),
+            create_if_missing: true,
+            reuse_log_files: false,
+            ..DbOptions::default()
+        })
+        .unwrap();
+
+        // Trigger compaction with reads
+        let contents = test_utils::get_and_validate_database_contents(&db);
+        assert_eq!(
+            contents,
+            vec![
+                ("".as_bytes().to_vec(), "".as_bytes().to_vec()),
+                ("c".as_bytes().to_vec(), "c".as_bytes().to_vec())
+            ]
+        );
+
+        // Wait for compactions to finish
+        thread::sleep(Duration::from_millis(1000));
+
+        assert_eq!(
+            contents,
+            vec![
+                ("".as_bytes().to_vec(), "".as_bytes().to_vec()),
+                ("c".as_bytes().to_vec(), "c".as_bytes().to_vec())
+            ]
+        );
+    }
+}

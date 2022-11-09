@@ -66,3 +66,40 @@ pub(crate) fn num_files_per_level(db: &DB) -> Vec<usize> {
 
     num_files_per_level
 }
+
+pub(crate) fn get_and_validate_database_contents(db: &DB) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut iter = db.new_iterator(ReadOptions::default()).unwrap();
+    let mut db_contents: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+
+    iter.seek_to_first().unwrap();
+    while iter.is_valid() {
+        let (curr_key, curr_val) = iter.current().unwrap();
+        db_contents.push((curr_key.to_vec(), curr_val.to_vec()));
+        iter.next();
+    }
+
+    // Check that reverse iteration results are the reverse of forward results
+    let mut matched: usize = 0;
+    iter.seek_to_last().unwrap();
+    while iter.is_valid() {
+        assert!(
+            matched < db_contents.len(),
+            "Reverse iteration is taking more iterations than expected. Expected {}; Got: \
+            {matched}",
+            db_contents.len()
+        );
+        let (curr_key, curr_val) = iter.current().unwrap();
+        assert!(
+            (curr_key.to_vec(), curr_val.to_vec()) == db_contents[db_contents.len() - matched - 1],
+            "Expected current reverse iteration k-v to match the k-v retrieved during forward
+            iteration."
+        );
+
+        matched += 1;
+        iter.prev();
+    }
+
+    assert_eq!(matched, db_contents.len());
+
+    db_contents
+}
