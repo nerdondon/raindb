@@ -47,10 +47,11 @@ impl Worker {
             .name(thread_id.to_string())
             .spawn(move || {
                 let mut rng = rand::thread_rng();
-                let uniform_dist= distributions::Uniform::from(0..PREFIX_KEY_RANGE);
-                let bernoulli_dist =  distributions::Bernoulli::new(0.5).unwrap();
+                let uniform_dist = distributions::Uniform::from(0..PREFIX_KEY_RANGE);
+                let bernoulli_dist = distributions::Bernoulli::new(0.5).unwrap();
                 let mut counter: usize = 0;
-                let value_regex = Regex::new(r"(?P<key>\d+)\.(?P<thread_id>\d+).(?P<counter>\d+)").unwrap();
+                let value_regex =
+                    Regex::new(r"(?P<key>\d+)\.(?P<thread_id>\d+).(?P<counter>\d+)").unwrap();
 
                 loop {
                     worker_ops_counter[thread_id].store(counter, Ordering::Release);
@@ -65,17 +66,15 @@ impl Worker {
                                 break;
                             }
                         }
-                        Err(err) => {
-                            match err {
-                                TryRecvError::Empty => {}
-                                _ => {
-                                    log::warn!(
-                                        "Thread {thread_id} received an error when checking the \
+                        Err(err) => match err {
+                            TryRecvError::Empty => {}
+                            _ => {
+                                log::warn!(
+                                    "Thread {thread_id} received an error when checking the \
                                         task channel for new tasks. Error: {err}"
-                                    );
-                                }
+                                );
                             }
-                        }
+                        },
                     };
 
                     let key = uniform_dist.sample(&mut rng);
@@ -83,12 +82,9 @@ impl Worker {
                     if bernoulli_dist.sample(&mut rng) {
                         log::debug!("Thread {thread_id} putting key {key} into the database");
                         let value = Worker::create_test_value(&formatted_key, thread_id, counter);
-                        assert!(db.put(
-                            WriteOptions::default(),
-                            formatted_key.into(),
-                            value.into(),
-                        )
-                        .is_ok());
+                        assert!(db
+                            .put(WriteOptions::default(), formatted_key.into(), value.into())
+                            .is_ok());
                         log::debug!("Thread {thread_id} put key {key} successfully");
                     } else {
                         // Read a value and verify that it contains the expected information
@@ -99,14 +95,18 @@ impl Worker {
                                 if read_err == RainDBError::KeyNotFound {
                                     // The key was not yet written to the database, keep the test going
                                 } else {
-                                    panic!("There was an error writing to the database in thread {thread_id}. Error: {read_err}")   ;
+                                    panic!(
+                                        "There was an error reading from the database in \
+                                        thread {thread_id}. Error: {read_err}"
+                                    );
                                 }
                             }
                             Ok(encoded_value) => {
                                 let value = str::from_utf8(&encoded_value).unwrap();
                                 let captures = value_regex.captures(value).unwrap();
                                 let stored_key = captures["key"].parse::<usize>().unwrap();
-                                let stored_thread_id = captures["thread_id"].parse::<usize>().unwrap();
+                                let stored_thread_id =
+                                    captures["thread_id"].parse::<usize>().unwrap();
                                 let stored_counter = captures["counter"].parse::<usize>().unwrap();
                                 log::info!(
                                     "Thread {thread_id} used {key} to get ({stored_key}, \
@@ -114,8 +114,7 @@ impl Worker {
                                 );
 
                                 assert_eq!(
-                                    stored_key,
-                                    key,
+                                    stored_key, key,
                                     "Expected the key in the value ({stored_key}) to be the same \
                                     as the key ({key}) that we used to retrieve the value."
                                 );
