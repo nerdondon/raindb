@@ -24,17 +24,72 @@ RainDB's storage engine is an LSM tree and has/will have the traditional compone
 the fact:
 
 1. Memtable - Initially a skip list but will be swappable in the future with other data structures
-1. SSTables (sorted string tables)
+1. Table files
 1. Write-ahead log
 
+As can be seen from the list above, RainDB's LSM tree is a two-layer system with an in-memory
+memtable and table files persistable to a single storage medium. The table file store can be on disk
+but an in-memory store is also provided (and usually used for testing purposes).
+
 See the [docs](./docs) folder for more information on architecture and design.
+
+## Usage
+
+```rust
+use raindb::{DbOptions, ReadOptions, WriteOptions, DB};
+
+// Use the default options to create a database that uses disk to store table files
+let options = DbOptions {
+    create_if_missing: true,
+    ..DbOptions::default()
+};
+
+// Optionally handle any errors that can occur when opening the database
+let db = DB::open(options).unwrap();
+
+db.put(
+    WriteOptions::default(),
+    "some_key".into(),
+    "some_value".into(),
+).unwrap();
+
+let read_result = db.get(ReadOptions::default(), "some_key".as_bytes()).unwrap();
+```
+
+### Using an in-memory store
+
+```rust
+use raindb::{DbOptions, DB};
+use raindb::fs::{FileSystem, InMemoryFileSystem};
+
+let options = DbOptions {
+    create_if_missing: true,
+    ..DbOptions::with_memory_env()
+};
+
+// OR
+let mem_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFileSystem::new());
+let options = DbOptions {
+    filesystem_provider: Arc::clone(&mem_fs),
+    create_if_missing: true,
+    ..DbOptions::default()
+};
+
+let db = DB::open(options).unwrap();
+```
+
+### Other usage examples
+
+The [examples](./examples) folder has some examples of how to embed RainDB in an application. I
+usually hate having to look through source code for examples but the
+[`db/db_test.rs`](./src/db/db_test.rs) module contains a lot of example usage of the public API.
 
 ## Pedigree
 
 The work here builds heavily on the existing work of [LevelDB](https://github.com/google/leveldb). A
-big thank you goes to the creators for making so much of their design documentation available along
-side the code itself. Because of the heavy basis in these projects, some of the options and
-documentation is pulled from these projects.
+big thank you goes to the creators for making so much of their design documentation available
+alongside the code itself. Because of the heavy basis in this project, some of the options and
+documentation is pulled directly from it.
 
 Inspiration was also drawn from the [Go port of LevelDB](https://github.com/golang/leveldb) and
 [dermesser's Rust port](https://github.com/dermesser/leveldb-rs).
