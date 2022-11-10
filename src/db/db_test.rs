@@ -1739,3 +1739,80 @@ fn compactions_of_level0_when_there_are_empty_kv_pairs_and_there_are_deleted_key
         );
     }
 }
+
+#[test]
+fn destroy_db_when_the_database_has_values_succeeds() {
+    setup();
+
+    let tmp_fs_root = PathBuf::from(BASE_TESTING_DIR_NAME);
+    let tmp_fs = TmpFileSystem::new(Some(&tmp_fs_root));
+    let db_path = tmp_fs.get_root_path().join("destroy_me");
+    let shared_tmp_fs: Arc<dyn FileSystem> = Arc::new(tmp_fs);
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&shared_tmp_fs),
+            create_if_missing: true,
+            db_path: db_path.to_str().unwrap().to_owned(),
+            ..DbOptions::default()
+        })
+        .unwrap();
+
+        assert!(db_path.exists());
+        assert!(db
+            .put(WriteOptions::default(), "a".into(), "a".into())
+            .is_ok());
+    }
+
+    let maybe_destroy_db = DB::destroy_database(DbOptions {
+        filesystem_provider: Arc::clone(&shared_tmp_fs),
+        db_path: db_path.to_str().unwrap().to_owned(),
+        ..DbOptions::default()
+    });
+    assert!(maybe_destroy_db.is_ok());
+    assert!(!db_path.exists());
+}
+
+#[test]
+fn destroy_db_when_the_database_is_still_open_does_not_succeed() {
+    setup();
+
+    let tmp_fs_root = PathBuf::from(BASE_TESTING_DIR_NAME);
+    let tmp_fs = TmpFileSystem::new(Some(&tmp_fs_root));
+    let db_path = tmp_fs.get_root_path().join("destroy_me");
+    let shared_tmp_fs: Arc<dyn FileSystem> = Arc::new(tmp_fs);
+
+    {
+        let db = DB::open(DbOptions {
+            filesystem_provider: Arc::clone(&shared_tmp_fs),
+            create_if_missing: true,
+            db_path: db_path.to_str().unwrap().to_owned(),
+            ..DbOptions::default()
+        })
+        .unwrap();
+
+        assert!(db_path.exists());
+
+        let maybe_destroy_db = DB::destroy_database(DbOptions {
+            filesystem_provider: Arc::clone(&shared_tmp_fs),
+            db_path: db_path.to_str().unwrap().to_owned(),
+            ..DbOptions::default()
+        });
+        assert_eq!(
+            maybe_destroy_db.err().unwrap(),
+            RainDBError::Destruction("Resource temporarily unavailable (os error 11)".to_owned())
+        );
+        assert!(db_path.exists());
+        assert!(db
+            .put(WriteOptions::default(), "a".into(), "a".into())
+            .is_ok());
+    }
+
+    let maybe_destroy_db = DB::destroy_database(DbOptions {
+        filesystem_provider: Arc::clone(&shared_tmp_fs),
+        db_path: db_path.to_str().unwrap().to_owned(),
+        ..DbOptions::default()
+    });
+    assert!(maybe_destroy_db.is_ok());
+    assert!(!db_path.exists());
+}
