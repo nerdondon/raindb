@@ -1348,7 +1348,7 @@ impl DB {
             } else if !force_compaction
                 && (self.memtable().approximate_memory_usage() <= self.options.max_memtable_size())
             {
-                log::info!("There is room in the memtable for writes. Proceeding with write.");
+                log::debug!("There is room in the memtable for writes. Proceeding with write.");
                 return Ok(());
             } else if mutex_guard.maybe_immutable_memtable.is_some() {
                 /*
