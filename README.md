@@ -121,3 +121,7 @@ A lot of the tests are also taken from LevelDB to ensure behavioral fidelity.
   - This is in Chinese but Google translate actually does a good job here. Only skimmed a bit of the
     compaction article but it was very well done and seems like a great learning resource for
     understanding LevelDB.
+
+## Disclaimer
+
+This is not an officially supported Google product.
