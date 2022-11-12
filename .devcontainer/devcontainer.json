@@ -14,7 +14,8 @@
     "files.watcherExclude": {
       "**/target/**": true
     },
-    "rust-analyzer.checkOnSave.command": "clippy"
+    "rust-analyzer.checkOnSave.command": "clippy",
+    "terminal.integrated.defaultProfile.linux": "zsh"
   },
 
   // Add the IDs of extensions you want installed when the container is created.
@@ -27,7 +28,8 @@
     "DavidAnson.vscode-markdownlint",
     "esbenp.prettier-vscode",
     "albert.tabout",
-    "eamodio.gitlens"
+    "eamodio.gitlens",
+    "donjayamanne.githistory"
   ],
 
   // Use 'forwardPorts' to make a list of ports inside the container available locally.
