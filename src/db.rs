@@ -2168,7 +2168,7 @@ impl DB {
             && db_fields_guard.maybe_bad_database_state.is_none()
         {
             if db_fields_guard.maybe_manual_compaction.is_none() {
-                // A manual compaction is not already being processed
+                // A manual compaction is not currently being processed
                 db_fields_guard.maybe_manual_compaction =
                     Some(Arc::clone(&wrapped_manual_compaction));
 
@@ -2270,7 +2270,7 @@ impl Drop for DB {
         {
             if let Err(thread_panic_val) = compaction_worker_join_handle.join() {
                 log::error!(
-                    "The compaction worker thread panicked while exiting unwinding the \
+                    "The compaction worker thread panicked while exiting. Unwinding the \
                     stack with the panicked value."
                 );
 
