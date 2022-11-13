@@ -1,3 +1,5 @@
+//! Snapshots are used to scope a request to the state of a database at a point in time.
+
 use std::sync::Arc;
 
 use crate::utils::linked_list::{LinkedList, SharedNode};
