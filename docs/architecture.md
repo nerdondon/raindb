@@ -14,7 +14,8 @@ details on intentions.
 
 We do not aim to create a highly performant and production ready database off the bat...at least
 starting out. Currently, this is more of a learning tool for those trying to get more familiar with
-database concepts.
+database concepts.The following paragraph describes a situation where we choose simplicity and
+readability over performance.
 
 LevelDB tends to only keep around byte buffers instead of deserializing those buffers into structs.
 LevelDB primarily works with this data using pointers to ranges within those buffers and doing
@@ -38,12 +39,12 @@ log-structured merge-tree (LSM tree) based storage systems in general. The syste
 the following high-level components:
 
 1. Memtable - Initially a skip list but will be swappable in the future with other data structures
-1. SSTable (sorted string tables) - A durable storage format for values pushed out of memory
+1. Tables files - A durable storage format for values pushed out of memory
 1. Write-ahead log (WAL) - A persistent log of operations
 
 LSM trees are append-only structures where different kinds of storage are used for each tier of the
 system. Data is written to the memory layer (memtable) and that initial data is pushed down to
-slower storage mediums as more writes are received.
+slower storage mediums (SSD's or hard disks) as more writes are received.
 
 Write's are always done to the memtable. Because the memtable resides in memory, we need a more
 durable structure to persist operations in the event of a crash. As is traditional in database
