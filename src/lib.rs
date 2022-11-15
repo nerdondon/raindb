@@ -1,3 +1,9 @@
+// Copyright (c) 2021 Google LLC
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 /*!
 RainDB is a key-value store that is based on [LevelDB]. This project aims to be a learning tool for
 those looking to take a deep dive on databases. It strives to uphold a high standard of code clarity

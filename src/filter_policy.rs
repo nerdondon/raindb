@@ -1,3 +1,9 @@
+// Copyright (c) 2021 Google LLC
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 /*!
 This module provides a common interface for filter policies that can be provided at database
 startup. A filter policy is an object used to create a small filter from a set of keys. These

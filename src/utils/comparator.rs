@@ -1,3 +1,9 @@
+// Copyright (c) 2021 Google LLC
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 /*!
 Utilities to assist with comparing based on various characteristics. Useful for sorting by
 properties different from the natural ordering provided by ordering traits e.g. [`PartialOrd`].

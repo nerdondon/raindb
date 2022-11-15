@@ -1,3 +1,9 @@
+// Copyright (c) 2021 Google LLC
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 /*!
 This module provides a `Cache` trait for clients to provide their own cache implementations. A cache
 implementing a least-recently-used (LRU) eviction policy is provided.
