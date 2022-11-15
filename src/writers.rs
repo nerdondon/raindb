@@ -1,3 +1,9 @@
+// Copyright (c) 2021 Google LLC
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 /*!
 This module provides abstractions that represent threads performing write operations, specifically
 the [`Writer`] struct.

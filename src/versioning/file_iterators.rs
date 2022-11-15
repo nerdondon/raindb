@@ -1,3 +1,9 @@
+// Copyright (c) 2022 Google LLC
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 /*!
 This modules contains iterators and utilities for creating iterators that work over a set of table
 file metadata (i.e. [`FileMetadata`]).
