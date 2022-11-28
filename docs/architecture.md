@@ -380,7 +380,7 @@ The block descriptor is serialized as follows:
 ```rust
 struct BlockDescriptor {
     /// 1-byte enum representing the compression type of the block.
-    CompressionType compression_type,
+    compression_type: CompressionType,
 
     /// 32-bit CRC
     crc: u32,
