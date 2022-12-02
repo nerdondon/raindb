@@ -3,6 +3,7 @@
 A persistent key-value store based on an LSM tree implemented in Rust
 
 [![Build Status](https://github.com/nerdondon/raindb/actions/workflows/ci.yaml/badge.svg)](https://github.com/nerdondon/raindb/actions/workflows/ci.yaml)
+[![Crates.io](https://img.shields.io/crates/v/raindb?color=orange)](https://crates.io/crates/raindb)
 
 ## Motivation and goals
 
