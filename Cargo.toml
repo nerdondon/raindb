@@ -19,7 +19,7 @@ members = ["examples/*"]
 arc-swap = "1.5.0"
 crc = "3.0.0"
 fs2 = "0.4.3"
-integer-encoding = "3.0.0"
+integer-encoding = "4.0.0"
 log = "0.4"
 nerdondon-hopscotch = { version = "2.7.0", features = ["concurrent"] }
 parking_lot = "0.12.0"
